@@ -9,21 +9,36 @@ import {
   logout,
   parseError,
 } from "@/lib/api";
+import { IngredientCard, type Ingredient } from "@/components/ingredient-card";
+import { ReceiptReview } from "@/components/receipt-review";
 
 type TabId = "receipt" | "ingredients" | "meals" | "cookbook";
+
+type DraftItem = {
+  store_item_name: string;
+  ingredient_name: string;
+  quantity: string | null;
+  unit: string | null;
+  serving_size: string | null;
+  calories: number | null;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  fiber_g: number | null;
+  sodium_mg: number | null;
+  nutrition_notes: string | null;
+  is_manual: boolean;
+};
 
 type Receipt = {
   id: string;
   original_name: string;
+  store_name: string | null;
+  analysis_status: string;
+  analysis_error: string | null;
   uploaded_at: string;
-};
-
-type Ingredient = {
-  id: string;
-  name: string;
-  quantity: string | null;
-  unit: string | null;
-  created_at: string;
+  ingredients: Ingredient[];
+  draft_items: DraftItem[];
 };
 
 type Meal = {
@@ -131,18 +146,9 @@ export function Dashboard() {
           {activeTab === "ingredients" && (
             <ListTab<Ingredient>
               title="Your ingredients"
-              emptyMessage="No ingredients yet. Upload a receipt to get started."
+              emptyMessage="No ingredients yet. Upload a receipt to extract items and nutrition."
               endpoint="/api/ingredients"
-              renderItem={(item) => (
-                <div>
-                  <p className="font-medium text-stone-900">{item.name}</p>
-                  {(item.quantity || item.unit) && (
-                    <p className="text-sm text-stone-500">
-                      {[item.quantity, item.unit].filter(Boolean).join(" ")}
-                    </p>
-                  )}
-                </div>
-              )}
+              renderItem={(item) => <IngredientCard ingredient={item} />}
             />
           )}
           {activeTab === "meals" && (
@@ -186,6 +192,8 @@ export function Dashboard() {
 function UploadReceiptTab() {
   const [file, setFile] = useState<File | null>(null);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [reviewReceipt, setReviewReceipt] = useState<Receipt | null>(null);
+  const [savedIngredients, setSavedIngredients] = useState<Ingredient[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -201,7 +209,15 @@ function UploadReceiptTab() {
         throw new Error(await parseError(response, "Unable to load receipts."));
       }
 
-      setReceipts(await response.json());
+      const data: Receipt[] = await response.json();
+      setReceipts(data);
+
+      const pending = data.find(
+        (receipt) => receipt.analysis_status === "pending_review",
+      );
+      if (pending && !reviewReceipt) {
+        setReviewReceipt(pending);
+      }
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -215,17 +231,20 @@ function UploadReceiptTab() {
 
   useEffect(() => {
     loadReceipts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function handleUpload() {
     if (!file) {
-      setError("Choose a receipt file to upload.");
+      setError("Choose a receipt photo to upload.");
       return;
     }
 
     setUploading(true);
     setError("");
     setMessage("");
+    setReviewReceipt(null);
+    setSavedIngredients([]);
 
     try {
       const formData = new FormData();
@@ -236,12 +255,21 @@ function UploadReceiptTab() {
         body: formData,
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        throw new Error(await parseError(response, "Upload failed."));
+        const detail =
+          typeof data.detail === "string"
+            ? data.detail
+            : "Upload failed.";
+        throw new Error(detail);
       }
 
       setFile(null);
-      setMessage("Receipt uploaded successfully.");
+      setReviewReceipt(data);
+      setMessage(
+        `Found ${data.draft_items.length} item${data.draft_items.length === 1 ? "" : "s"} from ${data.store_name ?? "your receipt"}. Review them before saving.`,
+      );
       await loadReceipts();
     } catch (uploadError) {
       setError(
@@ -254,31 +282,43 @@ function UploadReceiptTab() {
     }
   }
 
+  function handleConfirmed(ingredients: Ingredient[]) {
+    setReviewReceipt(null);
+    setSavedIngredients(ingredients);
+    setMessage(
+      `Saved ${ingredients.length} ingredient${ingredients.length === 1 ? "" : "s"} with nutrition facts.`,
+    );
+    loadReceipts();
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-semibold text-stone-900">Upload a receipt</h2>
         <p className="mt-1 text-sm text-stone-500">
-          Upload a photo or PDF of your grocery receipt.
+          Upload a photo of your grocery receipt. Claude will read it and extract
+          items for you to review before saving.
         </p>
       </div>
 
-      <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-6">
-        <input
-          type="file"
-          accept="image/*,.pdf"
-          onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          className="block w-full text-sm text-stone-600 file:mr-4 file:rounded-lg file:border-0 file:bg-orange-500 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-orange-600"
-        />
-        <button
-          type="button"
-          onClick={handleUpload}
-          disabled={uploading || !file}
-          className="mt-4 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {uploading ? "Uploading..." : "Upload receipt"}
-        </button>
-      </div>
+      {!reviewReceipt && (
+        <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-6">
+          <input
+            type="file"
+            accept="image/*,.pdf"
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+            className="block w-full text-sm text-stone-600 file:mr-4 file:rounded-lg file:border-0 file:bg-orange-500 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-orange-600"
+          />
+          <button
+            type="button"
+            onClick={handleUpload}
+            disabled={uploading || !file}
+            className="mt-4 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {uploading ? "Analyzing receipt with AI..." : "Upload & analyze receipt"}
+          </button>
+        </div>
+      )}
 
       {error && (
         <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
@@ -291,6 +331,31 @@ function UploadReceiptTab() {
         </p>
       )}
 
+      {reviewReceipt && reviewReceipt.draft_items.length > 0 && (
+        <ReceiptReview
+          receiptId={reviewReceipt.id}
+          storeName={reviewReceipt.store_name}
+          initialItems={reviewReceipt.draft_items}
+          onConfirmed={handleConfirmed}
+          onCancel={() => setReviewReceipt(null)}
+        />
+      )}
+
+      {savedIngredients.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-stone-500">
+            Saved ingredients
+          </h3>
+          <ul className="space-y-3">
+            {savedIngredients.map((ingredient) => (
+              <li key={ingredient.id}>
+                <IngredientCard ingredient={ingredient} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div>
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">
           Uploaded receipts
@@ -301,19 +366,50 @@ function UploadReceiptTab() {
           <p className="text-sm text-stone-500">No receipts uploaded yet.</p>
         ) : (
           <ul className="divide-y divide-stone-100 rounded-2xl border border-stone-200">
-            {receipts.map((receipt) => (
-              <li
-                key={receipt.id}
-                className="flex items-center justify-between px-4 py-3"
-              >
-                <span className="text-sm font-medium text-stone-800">
-                  {receipt.original_name}
-                </span>
-                <span className="text-xs text-stone-400">
-                  {new Date(receipt.uploaded_at).toLocaleString()}
-                </span>
-              </li>
-            ))}
+            {receipts.map((receipt) => {
+              const itemCount =
+                receipt.analysis_status === "pending_review"
+                  ? receipt.draft_items.length
+                  : receipt.ingredients.length;
+
+              return (
+                <li key={receipt.id} className="px-4 py-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-medium text-stone-800">
+                        {receipt.original_name}
+                      </p>
+                      <p className="text-xs text-stone-500">
+                        {receipt.store_name ?? "Unknown store"} · {itemCount} item
+                        {itemCount === 1 ? "" : "s"}
+                        {receipt.analysis_status === "pending_review" &&
+                          " · awaiting review"}
+                      </p>
+                      {receipt.analysis_status === "failed" &&
+                        receipt.analysis_error && (
+                          <p className="mt-1 text-xs text-red-600">
+                            {receipt.analysis_error}
+                          </p>
+                        )}
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <span className="text-xs text-stone-400">
+                        {new Date(receipt.uploaded_at).toLocaleString()}
+                      </span>
+                      {receipt.analysis_status === "pending_review" && (
+                        <button
+                          type="button"
+                          onClick={() => setReviewReceipt(receipt)}
+                          className="rounded-lg bg-orange-100 px-2.5 py-1 text-xs font-medium text-orange-700 transition hover:bg-orange-200"
+                        >
+                          Continue review
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -377,11 +473,9 @@ function ListTab<T extends { id: string }>({
       ) : items.length === 0 ? (
         <p className="text-sm text-stone-500">{emptyMessage}</p>
       ) : (
-        <ul className="divide-y divide-stone-100 rounded-2xl border border-stone-200">
+        <ul className="space-y-3">
           {items.map((item) => (
-            <li key={item.id} className="px-4 py-3">
-              {renderItem(item)}
-            </li>
+            <li key={item.id}>{renderItem(item)}</li>
           ))}
         </ul>
       )}

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import Base, engine
+from app.db_migrate import run_migrations
 from app.routers import auth, cookbook, ingredients, meals, receipts
 
 app = FastAPI(title="Food API", version="1.0.0")
@@ -22,6 +23,7 @@ app.add_middleware(
 def on_startup() -> None:
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    run_migrations()
 
 
 @app.get("/api/health")

@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     auth_secret: str = "change-me-in-production"
     upload_dir: str = "uploads/receipts"
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-20250514"
 
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),
