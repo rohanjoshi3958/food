@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { IngredientCard, type Ingredient } from "@/components/ingredient-card";
+import { UnitSelect } from "@/components/unit-select";
 
 export type DraftIngredient = {
   clientKey: string;
@@ -135,6 +136,11 @@ export function ReceiptReview({
       return;
     }
 
+    if (!newUnit) {
+      setError("Select a unit.");
+      return;
+    }
+
     setItems((current) => [
       ...current,
       {
@@ -142,7 +148,7 @@ export function ReceiptReview({
         store_item_name: name,
         ingredient_name: name,
         quantity: newQuantity.trim(),
-        unit: newUnit.trim(),
+        unit: newUnit,
         serving_size: null,
         calories: null,
         protein_g: null,
@@ -166,6 +172,11 @@ export function ReceiptReview({
 
     if (validItems.length === 0) {
       setError("Add at least one ingredient before saving.");
+      return;
+    }
+
+    if (validItems.some((item) => !item.unit)) {
+      setError("Select a unit for every ingredient.");
       return;
     }
 
@@ -278,13 +289,11 @@ export function ReceiptReview({
                     <span className="mb-1 block font-medium text-stone-700">
                       Unit
                     </span>
-                    <input
+                    <UnitSelect
                       value={item.unit}
-                      onChange={(event) =>
-                        updateItem(item.clientKey, { unit: event.target.value })
+                      onChange={(nextUnit) =>
+                        updateItem(item.clientKey, { unit: nextUnit })
                       }
-                      placeholder="lb, oz, each"
-                      className={inputClassName}
                     />
                   </label>
                 </div>
@@ -324,12 +333,7 @@ export function ReceiptReview({
             placeholder="Quantity"
             className={inputClassName}
           />
-          <input
-            value={newUnit}
-            onChange={(event) => setNewUnit(event.target.value)}
-            placeholder="Unit"
-            className={inputClassName}
-          />
+          <UnitSelect value={newUnit} onChange={setNewUnit} />
         </div>
         <button
           type="button"

@@ -10,6 +10,7 @@ import {
   parseError,
 } from "@/lib/api";
 import { IngredientCard, type Ingredient } from "@/components/ingredient-card";
+import { ManualIngredientList } from "@/components/manual-ingredient-list";
 import { ReceiptReview } from "@/components/receipt-review";
 
 type TabId = "receipt" | "ingredients" | "meals" | "cookbook";
@@ -68,6 +69,11 @@ export function Dashboard() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("receipt");
   const [loading, setLoading] = useState(true);
+  const [ingredientsRefreshKey, setIngredientsRefreshKey] = useState(0);
+
+  function refreshIngredients() {
+    setIngredientsRefreshKey((current) => current + 1);
+  }
 
   useEffect(() => {
     getCurrentUser()
@@ -142,14 +148,11 @@ export function Dashboard() {
         </nav>
 
         <section className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
-          {activeTab === "receipt" && <UploadReceiptTab />}
+          {activeTab === "receipt" && (
+            <UploadReceiptTab onIngredientsChanged={refreshIngredients} />
+          )}
           {activeTab === "ingredients" && (
-            <ListTab<Ingredient>
-              title="Your ingredients"
-              emptyMessage="No ingredients yet. Upload a receipt to extract items and nutrition."
-              endpoint="/api/ingredients"
-              renderItem={(item) => <IngredientCard ingredient={item} />}
-            />
+            <IngredientsTab refreshKey={ingredientsRefreshKey} />
           )}
           {activeTab === "meals" && (
             <ListTab<Meal>
@@ -189,7 +192,11 @@ export function Dashboard() {
   );
 }
 
-function UploadReceiptTab() {
+function UploadReceiptTab({
+  onIngredientsChanged,
+}: {
+  onIngredientsChanged: () => void;
+}) {
   const [file, setFile] = useState<File | null>(null);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [reviewReceipt, setReviewReceipt] = useState<Receipt | null>(null);
@@ -249,6 +256,7 @@ function UploadReceiptTab() {
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("manual_items", "[]");
 
       const response = await apiFetch("/api/receipts/upload", {
         method: "POST",
@@ -268,7 +276,7 @@ function UploadReceiptTab() {
       setFile(null);
       setReviewReceipt(data);
       setMessage(
-        `Found ${data.draft_items.length} item${data.draft_items.length === 1 ? "" : "s"} from ${data.store_name ?? "your receipt"}. Review them before saving.`,
+        `Ready to review ${data.draft_items.length} item${data.draft_items.length === 1 ? "" : "s"} from ${data.store_name ?? "your receipt"}.`,
       );
       await loadReceipts();
     } catch (uploadError) {
@@ -288,6 +296,7 @@ function UploadReceiptTab() {
     setMessage(
       `Saved ${ingredients.length} ingredient${ingredients.length === 1 ? "" : "s"} with nutrition facts.`,
     );
+    onIngredientsChanged();
     loadReceipts();
   }
 
@@ -296,28 +305,41 @@ function UploadReceiptTab() {
       <div>
         <h2 className="text-xl font-semibold text-stone-900">Upload a receipt</h2>
         <p className="mt-1 text-sm text-stone-500">
-          Upload a photo of your grocery receipt. Claude will read it and extract
-          items for you to review before saving.
+          Add ingredients by hand and/or upload a receipt photo. Claude will read
+          the receipt, then you can review everything together before saving.
         </p>
       </div>
 
       {!reviewReceipt && (
-        <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-6">
-          <input
-            type="file"
-            accept="image/*,.pdf"
-            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-            className="block w-full text-sm text-stone-600 file:mr-4 file:rounded-lg file:border-0 file:bg-orange-500 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-orange-600"
+        <>
+          <ManualIngredientList
+            disabled={uploading}
+            onIngredientAdded={() => onIngredientsChanged()}
           />
-          <button
-            type="button"
-            onClick={handleUpload}
-            disabled={uploading || !file}
-            className="mt-4 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {uploading ? "Analyzing receipt with AI..." : "Upload & analyze receipt"}
-          </button>
-        </div>
+
+          <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50 p-6">
+            <h3 className="text-sm font-semibold text-stone-900">
+              Upload receipt photo
+            </h3>
+            <p className="mt-1 text-sm text-stone-500">
+              Claude will read your receipt and add items for you to review before saving.
+            </p>
+            <input
+              type="file"
+              accept="image/*,.pdf"
+              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              className="mt-4 block w-full text-sm text-stone-600 file:mr-4 file:rounded-lg file:border-0 file:bg-orange-500 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-orange-600"
+            />
+            <button
+              type="button"
+              onClick={handleUpload}
+              disabled={uploading || !file}
+              className="mt-4 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {uploading ? "Analyzing receipt with AI..." : "Upload & analyze receipt"}
+            </button>
+          </div>
+        </>
       )}
 
       {error && (
@@ -337,7 +359,9 @@ function UploadReceiptTab() {
           storeName={reviewReceipt.store_name}
           initialItems={reviewReceipt.draft_items}
           onConfirmed={handleConfirmed}
-          onCancel={() => setReviewReceipt(null)}
+          onCancel={() => {
+            setReviewReceipt(null);
+          }}
         />
       )}
 
@@ -417,15 +441,107 @@ function UploadReceiptTab() {
   );
 }
 
+function IngredientsTab({ refreshKey }: { refreshKey: number }) {
+  const [items, setItems] = useState<Ingredient[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadIngredients() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const response = await apiFetch("/api/ingredients");
+        if (!response.ok) {
+          throw new Error(await parseError(response, "Unable to load ingredients."));
+        }
+
+        setItems(await response.json());
+      } catch (loadError) {
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Unable to load ingredients.",
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadIngredients();
+  }, [refreshKey]);
+
+  async function removeIngredient(id: string) {
+    setRemovingId(id);
+    setError("");
+
+    try {
+      const response = await apiFetch(`/api/ingredients/${id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error(await parseError(response, "Unable to remove ingredient."));
+      }
+
+      setItems((current) => current.filter((item) => item.id !== id));
+    } catch (removeError) {
+      setError(
+        removeError instanceof Error
+          ? removeError.message
+          : "Unable to remove ingredient.",
+      );
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-xl font-semibold text-stone-900">Your ingredients</h2>
+
+      {error && (
+        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </p>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-stone-500">Loading...</p>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-stone-500">
+          No ingredients yet. Add one manually or upload a receipt.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {items.map((item) => (
+            <li key={item.id}>
+              <IngredientCard
+                ingredient={item}
+                onRemove={() => removeIngredient(item.id)}
+                removing={removingId === item.id}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function ListTab<T extends { id: string }>({
   title,
   emptyMessage,
   endpoint,
+  refreshKey = 0,
   renderItem,
 }: {
   title: string;
   emptyMessage: string;
   endpoint: string;
+  refreshKey?: number;
   renderItem: (item: T) => React.ReactNode;
 }) {
   const [items, setItems] = useState<T[]>([]);
@@ -456,7 +572,7 @@ function ListTab<T extends { id: string }>({
     }
 
     loadItems();
-  }, [endpoint]);
+  }, [endpoint, refreshKey]);
 
   return (
     <div className="space-y-4">

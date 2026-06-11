@@ -19,9 +19,13 @@ export type Ingredient = {
 export function IngredientCard({
   ingredient,
   compact = false,
+  onRemove,
+  removing = false,
 }: {
   ingredient: Ingredient;
   compact?: boolean;
+  onRemove?: () => void;
+  removing?: boolean;
 }) {
   const quantityLabel = [ingredient.quantity, ingredient.unit]
     .filter(Boolean)
@@ -44,11 +48,23 @@ export function IngredientCard({
                 </p>
               )}
           </div>
-          {quantityLabel && (
-            <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-stone-600 ring-1 ring-stone-200">
-              {quantityLabel}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {quantityLabel && (
+              <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-stone-600 ring-1 ring-stone-200">
+                {quantityLabel}
+              </span>
+            )}
+            {onRemove && (
+              <button
+                type="button"
+                onClick={onRemove}
+                disabled={removing}
+                className="rounded-lg px-2 py-1 text-sm text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {removing ? "Removing..." : "Remove"}
+              </button>
+            )}
+          </div>
         </div>
       )}
 

@@ -1,7 +1,8 @@
+import json
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
@@ -14,13 +15,48 @@ from app.schemas import (
     IngredientResponse,
     ReceiptResponse,
 )
+from app.services.ingredients import create_ingredient, resolve_item_nutrition
 from app.services.receipt_analyzer import (
     ReceiptAnalysisError,
     analyze_receipt_image,
-    estimate_ingredient_nutrition,
 )
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
+
+
+def _manual_draft_items(raw_items: list[dict]) -> list[dict]:
+    drafts: list[dict] = []
+    for raw in raw_items:
+        item = DraftIngredientItem.model_validate(
+            {
+                **raw,
+                "store_item_name": raw.get("store_item_name") or raw.get("ingredient_name", ""),
+                "is_manual": True,
+            }
+        )
+        drafts.append(item.model_dump())
+    return drafts
+
+
+def _parse_manual_items(manual_items: str) -> list[dict]:
+    if not manual_items.strip():
+        return []
+
+    try:
+        payload = json.loads(manual_items)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid manual ingredient data.",
+        ) from exc
+
+    if not isinstance(payload, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Manual ingredients must be a list.",
+        )
+
+    return _manual_draft_items(payload)
 
 
 def _draft_from_parsed_items(items: list) -> list[dict]:
@@ -66,36 +102,6 @@ def _receipt_response(receipt: Receipt) -> ReceiptResponse:
     )
 
 
-def _resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
-    if not item.is_manual:
-        return item
-
-    try:
-        estimated = estimate_ingredient_nutrition(
-            item.ingredient_name,
-            item.quantity,
-            item.unit,
-        )
-    except ReceiptAnalysisError:
-        return item
-
-    return DraftIngredientItem(
-        store_item_name=item.store_item_name or item.ingredient_name,
-        ingredient_name=item.ingredient_name,
-        quantity=item.quantity,
-        unit=item.unit,
-        serving_size=estimated.serving_size,
-        calories=estimated.calories,
-        protein_g=estimated.protein_g,
-        carbs_g=estimated.carbs_g,
-        fat_g=estimated.fat_g,
-        fiber_g=estimated.fiber_g,
-        sodium_mg=estimated.sodium_mg,
-        nutrition_notes=estimated.nutrition_notes,
-        is_manual=True,
-    )
-
-
 @router.get("", response_model=list[ReceiptResponse])
 def list_receipts(
     current_user: User = Depends(get_current_user),
@@ -133,6 +139,7 @@ def get_receipt(
 @router.post("/upload", response_model=ReceiptResponse, status_code=status.HTTP_201_CREATED)
 async def upload_receipt(
     file: UploadFile = File(...),
+    manual_items: str = Form(default="[]"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ReceiptResponse:
@@ -152,6 +159,8 @@ async def upload_receipt(
     contents = await file.read()
     destination.write_bytes(contents)
 
+    pre_manual_items = _parse_manual_items(manual_items)
+
     receipt = Receipt(
         user_id=current_user.id,
         filename=str(destination),
@@ -168,7 +177,12 @@ async def upload_receipt(
         receipt.store_name = parsed.store_name
         receipt.analysis_status = "pending_review"
         receipt.analysis_error = None
-        receipt.draft_items = _draft_from_parsed_items(parsed.items)
+        receipt.draft_items = pre_manual_items + _draft_from_parsed_items(parsed.items)
+
+        if not receipt.draft_items:
+            raise ReceiptAnalysisError(
+                "No ingredients found. Add items manually or try a clearer receipt photo."
+            )
 
         db.commit()
         db.refresh(receipt)
@@ -223,7 +237,7 @@ def confirm_receipt(
     for existing in list(receipt.ingredients):
         db.delete(existing)
 
-    resolved_items = [_resolve_item_nutrition(item) for item in payload.items]
+    resolved_items = [resolve_item_nutrition(item) for item in payload.items]
 
     for item in resolved_items:
         ingredient = Ingredient(

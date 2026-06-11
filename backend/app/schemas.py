@@ -64,6 +64,12 @@ class DraftIngredientItem(BaseModel):
     is_manual: bool = False
 
 
+class CreateManualIngredientRequest(BaseModel):
+    ingredient_name: str = Field(min_length=1)
+    quantity: str | None = None
+    unit: str | None = None
+
+
 class ConfirmReceiptRequest(BaseModel):
     items: list[DraftIngredientItem]
 
