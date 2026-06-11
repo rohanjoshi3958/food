@@ -46,6 +46,8 @@ type Meal = {
   id: string;
   name: string;
   description: string | null;
+  ingredients_used: string | null;
+  instructions: string | null;
   created_at: string;
 };
 
@@ -427,36 +429,78 @@ function UploadReceiptTab({
   );
 }
 
+function formatMealInstructions(text: string): string {
+  const parts = text.split(/\s+(?=\d+\.\s)/);
+  if (parts.length > 1) {
+    return parts.map((part) => part.trim()).join("\n");
+  }
+
+  return text;
+}
+
 function GenerateMealTab() {
-  const [meals, setMeals] = useState<Meal[]>([]);
+  const [meal, setMeal] = useState<Meal | null>(null);
   const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    async function loadMeals() {
-      setLoading(true);
-      setError("");
+  async function loadMeal() {
+    setLoading(true);
+    setError("");
 
-      try {
-        const response = await apiFetch("/api/meals");
-        if (!response.ok) {
-          throw new Error(await parseError(response, "Unable to load meals."));
-        }
-
-        setMeals(await response.json());
-      } catch (loadError) {
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : "Unable to load meals.",
-        );
-      } finally {
-        setLoading(false);
+    try {
+      const response = await apiFetch("/api/meals");
+      if (!response.ok) {
+        throw new Error(await parseError(response, "Unable to load meals."));
       }
-    }
 
-    loadMeals();
+      const meals: Meal[] = await response.json();
+      setMeal(meals[0] ?? null);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load meals.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadMeal();
   }, []);
+
+  async function handleGenerateMeal() {
+    setGenerating(true);
+    setError("");
+
+    try {
+      const response = await apiFetch("/api/meals/generate", {
+        method: "POST",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        const detail =
+          typeof data.detail === "string"
+            ? data.detail
+            : "Unable to generate a meal.";
+        throw new Error(detail);
+      }
+
+      setMeal(data as Meal);
+    } catch (generateError) {
+      setError(
+        generateError instanceof Error
+          ? generateError.message
+          : "Unable to generate a meal.",
+      );
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -469,9 +513,11 @@ function GenerateMealTab() {
 
       <button
         type="button"
-        className="rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600"
+        onClick={handleGenerateMeal}
+        disabled={generating}
+        className="rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        Generate meal
+        {generating ? "Generating meal..." : "Generate meal"}
       </button>
 
       {error && (
@@ -482,22 +528,32 @@ function GenerateMealTab() {
 
       {loading ? (
         <p className="text-sm text-stone-500">Loading...</p>
-      ) : meals.length > 0 ? (
-        <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-stone-800">Your meals</h3>
-          <ul className="space-y-3">
-            {meals.map((meal) => (
-              <li
-                key={meal.id}
-                className="rounded-2xl border border-stone-200 bg-stone-50 p-4"
-              >
-                <p className="font-medium text-stone-900">{meal.name}</p>
-                {meal.description && (
-                  <p className="mt-1 text-sm text-stone-500">{meal.description}</p>
-                )}
-              </li>
-            ))}
-          </ul>
+      ) : meal ? (
+        <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+          <p className="font-medium text-stone-900">{meal.name}</p>
+          {meal.description && (
+            <p className="mt-1 text-sm text-stone-600">{meal.description}</p>
+          )}
+          {meal.ingredients_used && (
+            <div className="mt-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                Ingredients to use
+              </p>
+              <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-stone-700">
+                {meal.ingredients_used}
+              </pre>
+            </div>
+          )}
+          {meal.instructions && (
+            <div className="mt-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                Instructions
+              </p>
+              <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-stone-700">
+                {formatMealInstructions(meal.instructions)}
+              </pre>
+            </div>
+          )}
         </div>
       ) : null}
     </div>

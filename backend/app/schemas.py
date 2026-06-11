@@ -93,6 +93,8 @@ class MealResponse(BaseModel):
     id: str
     name: str
     description: str | None
+    ingredients_used: str | None = None
+    instructions: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

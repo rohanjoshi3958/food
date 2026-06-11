@@ -17,6 +17,8 @@ MIGRATIONS = [
     "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS sodium_mg DOUBLE PRECISION",
     "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS nutrition_notes TEXT",
     "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS draft_items JSONB",
+    "ALTER TABLE meals ADD COLUMN IF NOT EXISTS ingredients_used TEXT",
+    "ALTER TABLE meals ADD COLUMN IF NOT EXISTS instructions TEXT",
 ]
 
 
