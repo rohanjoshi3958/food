@@ -36,25 +36,28 @@ type DraftItemInput = {
   sodium_mg?: number | null;
   nutrition_notes?: string | null;
   is_manual?: boolean;
+  is_food?: boolean;
 };
 
 function draftFromApi(items: DraftItemInput[]): DraftIngredient[] {
-  return items.map((item) => ({
-    clientKey: crypto.randomUUID(),
-    store_item_name: item.store_item_name ?? "",
-    ingredient_name: item.ingredient_name,
-    quantity: item.quantity ?? "",
-    unit: item.unit ?? "",
-    serving_size: item.serving_size ?? null,
-    calories: item.calories ?? null,
-    protein_g: item.protein_g ?? null,
-    carbs_g: item.carbs_g ?? null,
-    fat_g: item.fat_g ?? null,
-    fiber_g: item.fiber_g ?? null,
-    sodium_mg: item.sodium_mg ?? null,
-    nutrition_notes: item.nutrition_notes ?? null,
-    is_manual: item.is_manual ?? false,
-  }));
+  return items
+    .filter((item) => item.is_food !== false)
+    .map((item) => ({
+      clientKey: crypto.randomUUID(),
+      store_item_name: item.store_item_name ?? "",
+      ingredient_name: item.ingredient_name,
+      quantity: item.quantity ?? "",
+      unit: item.unit ?? "",
+      serving_size: item.serving_size ?? null,
+      calories: item.calories ?? null,
+      protein_g: item.protein_g ?? null,
+      carbs_g: item.carbs_g ?? null,
+      fat_g: item.fat_g ?? null,
+      fiber_g: item.fiber_g ?? null,
+      sodium_mg: item.sodium_mg ?? null,
+      nutrition_notes: item.nutrition_notes ?? null,
+      is_manual: item.is_manual ?? false,
+    }));
 }
 
 function toPayloadItem(item: DraftIngredient) {
@@ -72,7 +75,20 @@ function toPayloadItem(item: DraftIngredient) {
     sodium_mg: item.sodium_mg,
     nutrition_notes: item.nutrition_notes,
     is_manual: item.is_manual,
+    is_food: true,
   };
+}
+
+function formatMissingUnitError(items: DraftIngredient[]): string {
+  const names = items.map(
+    (item) => item.ingredient_name.trim() || "Unnamed ingredient",
+  );
+
+  if (names.length === 1) {
+    return `Select a unit for "${names[0]}".`;
+  }
+
+  return `Select a unit for: ${names.map((name) => `"${name}"`).join(", ")}.`;
 }
 
 function draftToPreview(item: DraftIngredient): Ingredient {
@@ -116,6 +132,9 @@ export function ReceiptReview({
   const [newUnit, setNewUnit] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [missingUnitKeys, setMissingUnitKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   function updateItem(clientKey: string, updates: Partial<DraftIngredient>) {
     setItems((current) =>
@@ -123,6 +142,21 @@ export function ReceiptReview({
         item.clientKey === clientKey ? { ...item, ...updates } : item,
       ),
     );
+
+    if (updates.unit) {
+      setMissingUnitKeys((current) => {
+        if (!current.has(clientKey)) {
+          return current;
+        }
+
+        const next = new Set(current);
+        next.delete(clientKey);
+        if (next.size === 0) {
+          setError("");
+        }
+        return next;
+      });
+    }
   }
 
   function removeItem(clientKey: string) {
@@ -175,10 +209,17 @@ export function ReceiptReview({
       return;
     }
 
-    if (validItems.some((item) => !item.unit)) {
-      setError("Select a unit for every ingredient.");
+    const itemsMissingUnit = validItems.filter((item) => !item.unit);
+
+    if (itemsMissingUnit.length > 0) {
+      setMissingUnitKeys(
+        new Set(itemsMissingUnit.map((item) => item.clientKey)),
+      );
+      setError(formatMissingUnitError(itemsMissingUnit));
       return;
     }
+
+    setMissingUnitKeys(new Set());
 
     setSaving(true);
     setError("");
@@ -236,10 +277,17 @@ export function ReceiptReview({
         </p>
       ) : (
         <ul className="space-y-4">
-          {items.map((item) => (
+          {items.map((item) => {
+            const missingUnit = missingUnitKeys.has(item.clientKey);
+
+            return (
             <li
               key={item.clientKey}
-              className="rounded-2xl border border-stone-200 bg-white p-4"
+              className={`rounded-2xl border p-4 ${
+                missingUnit
+                  ? "border-red-300 bg-red-50/40"
+                  : "border-stone-200 bg-white"
+              }`}
             >
               <div className="mb-3 flex items-start justify-between gap-3">
                 <div className="grid flex-1 gap-3 sm:grid-cols-2">
@@ -286,7 +334,11 @@ export function ReceiptReview({
                     />
                   </label>
                   <label className="block text-sm">
-                    <span className="mb-1 block font-medium text-stone-700">
+                    <span
+                      className={`mb-1 block font-medium ${
+                        missingUnit ? "text-red-700" : "text-stone-700"
+                      }`}
+                    >
                       Unit
                     </span>
                     <UnitSelect
@@ -294,7 +346,15 @@ export function ReceiptReview({
                       onChange={(nextUnit) =>
                         updateItem(item.clientKey, { unit: nextUnit })
                       }
+                      className={
+                        missingUnit ? unitErrorClassName : inputClassName
+                      }
                     />
+                    {missingUnit && (
+                      <p className="mt-1 text-xs text-red-600">
+                        Select a unit for this ingredient.
+                      </p>
+                    )}
                   </label>
                 </div>
                 <button
@@ -314,7 +374,8 @@ export function ReceiptReview({
                 <IngredientCard ingredient={draftToPreview(item)} compact />
               )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
 
@@ -374,3 +435,6 @@ export function ReceiptReview({
 
 const inputClassName =
   "w-full rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-900 outline-none transition focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100";
+
+const unitErrorClassName =
+  "w-full rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-stone-900 outline-none transition focus:border-red-400 focus:bg-white focus:ring-4 focus:ring-red-100";

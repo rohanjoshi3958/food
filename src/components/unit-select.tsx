@@ -29,8 +29,8 @@ export function UnitSelect({
       required={required}
       className={className}
     >
-      <option value="" disabled>
-        Select unit
+      <option value="" disabled={required}>
+        {required ? "Select unit" : "No unit"}
       </option>
       {extraOption.map((unit) => (
         <option key={unit.value} value={unit.value}>

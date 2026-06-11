@@ -20,13 +20,14 @@ SUPPORTED_MEDIA_TYPES = {
 
 RECEIPT_ANALYSIS_PROMPT = """Analyze this grocery store receipt image.
 
-Extract every food/grocery line item visible on the receipt. For each item return:
+Extract every line item visible on the receipt. For each item return:
 - store_item_name: the exact text printed on the receipt
 - ingredient_name: a clear normalized name (e.g. "Organic Bananas")
+- is_food: true for groceries/food, false for non-food (tax, bags, coupons, fees, etc.)
 - quantity and unit from the receipt when shown
-- serving_size: a reasonable standard serving (e.g. "1 medium banana (118g)")
-- nutritional facts PER serving: calories, protein_g, carbs_g, fat_g, fiber_g, sodium_mg
-- nutrition_notes: brief note if values are estimated from standard USDA/database data
+- serving_size: a reasonable standard serving (e.g. "1 medium banana (118g)") — null if is_food is false
+- nutritional facts PER serving: calories, protein_g, carbs_g, fat_g, fiber_g, sodium_mg — null if is_food is false
+- nutrition_notes: brief note if values are estimated from standard USDA/database data — null if is_food is false
 
 Also identify the store name if visible.
 
@@ -37,6 +38,7 @@ Respond with ONLY valid JSON in this exact shape:
     {
       "store_item_name": "ORGANIC BANANAS",
       "ingredient_name": "Organic Bananas",
+      "is_food": true,
       "quantity": "2.5",
       "unit": "lb",
       "serving_size": "1 medium (118g)",
@@ -51,7 +53,7 @@ Respond with ONLY valid JSON in this exact shape:
   ]
 }
 
-Skip non-food items like tax, bags, or coupons. Use null for unknown numeric nutrition values."""
+Include non-food receipt lines (tax, bags, coupons, etc.) with is_food set to false and nutrition fields null. Use null for unknown numeric nutrition values."""
 
 NUTRITION_ESTIMATE_PROMPT = """Estimate nutritional facts per standard serving for this grocery item:
 - Item: {ingredient_name}
@@ -75,6 +77,7 @@ Use null for unknown values. Base estimates on standard USDA or nutrition databa
 class ParsedReceiptItem(BaseModel):
     store_item_name: str
     ingredient_name: str
+    is_food: bool = True
     quantity: str | None = None
     unit: str | None = None
     serving_size: str | None = None

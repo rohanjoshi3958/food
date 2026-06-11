@@ -6,7 +6,7 @@ from app.services.receipt_analyzer import ReceiptAnalysisError, estimate_ingredi
 
 
 def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
-    if not item.is_manual:
+    if not item.is_food or not item.is_manual:
         return item
 
     try:
@@ -32,6 +32,7 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
         sodium_mg=estimated.sodium_mg,
         nutrition_notes=estimated.nutrition_notes,
         is_manual=True,
+        is_food=item.is_food,
     )
 
 

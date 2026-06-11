@@ -64,6 +64,7 @@ def _draft_from_parsed_items(items: list) -> list[dict]:
         DraftIngredientItem(
             store_item_name=item.store_item_name,
             ingredient_name=item.ingredient_name,
+            is_food=item.is_food,
             quantity=item.quantity,
             unit=item.unit,
             serving_size=item.serving_size,
@@ -77,6 +78,7 @@ def _draft_from_parsed_items(items: list) -> list[dict]:
             is_manual=False,
         ).model_dump()
         for item in items
+        if item.is_food
     ]
 
 
@@ -84,6 +86,7 @@ def _receipt_response(receipt: Receipt) -> ReceiptResponse:
     draft_items = [
         DraftIngredientItem.model_validate(item)
         for item in (receipt.draft_items or [])
+        if item.get("is_food", True)
     ]
 
     return ReceiptResponse(
@@ -231,7 +234,14 @@ def confirm_receipt(
     if not payload.items:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Add at least one ingredient before saving.",
+            detail="Add at least one line item before saving.",
+        )
+
+    food_items = [item for item in payload.items if item.is_food]
+    if food_items and any(not item.unit for item in food_items):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Select a unit for every food ingredient.",
         )
 
     for existing in list(receipt.ingredients):
@@ -240,6 +250,9 @@ def confirm_receipt(
     resolved_items = [resolve_item_nutrition(item) for item in payload.items]
 
     for item in resolved_items:
+        if not item.is_food:
+            continue
+
         ingredient = Ingredient(
             user_id=current_user.id,
             receipt_id=receipt.id,

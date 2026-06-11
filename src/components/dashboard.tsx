@@ -60,7 +60,7 @@ type CookbookEntry = {
 const tabs: { id: TabId; label: string }[] = [
   { id: "receipt", label: "Upload a receipt" },
   { id: "ingredients", label: "View ingredients" },
-  { id: "meals", label: "View meals" },
+  { id: "meals", label: "Generate meal" },
   { id: "cookbook", label: "View cookbook" },
 ];
 
@@ -154,21 +154,7 @@ export function Dashboard() {
           {activeTab === "ingredients" && (
             <IngredientsTab refreshKey={ingredientsRefreshKey} />
           )}
-          {activeTab === "meals" && (
-            <ListTab<Meal>
-              title="Your meals"
-              emptyMessage="No meals yet."
-              endpoint="/api/meals"
-              renderItem={(item) => (
-                <div>
-                  <p className="font-medium text-stone-900">{item.name}</p>
-                  {item.description && (
-                    <p className="text-sm text-stone-500">{item.description}</p>
-                  )}
-                </div>
-              )}
-            />
-          )}
+          {activeTab === "meals" && <GenerateMealTab />}
           {activeTab === "cookbook" && (
             <ListTab<CookbookEntry>
               title="Your cookbook"
@@ -437,6 +423,83 @@ function UploadReceiptTab({
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+function GenerateMealTab() {
+  const [meals, setMeals] = useState<Meal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function loadMeals() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const response = await apiFetch("/api/meals");
+        if (!response.ok) {
+          throw new Error(await parseError(response, "Unable to load meals."));
+        }
+
+        setMeals(await response.json());
+      } catch (loadError) {
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Unable to load meals.",
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadMeals();
+  }, []);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-xl font-semibold text-stone-900">Generate meal</h2>
+        <p className="mt-1 text-sm text-stone-600">
+          Create a meal suggestion from the ingredients in your kitchen.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        className="rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600"
+      >
+        Generate meal
+      </button>
+
+      {error && (
+        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </p>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-stone-500">Loading...</p>
+      ) : meals.length > 0 ? (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-stone-800">Your meals</h3>
+          <ul className="space-y-3">
+            {meals.map((meal) => (
+              <li
+                key={meal.id}
+                className="rounded-2xl border border-stone-200 bg-stone-50 p-4"
+              >
+                <p className="font-medium text-stone-900">{meal.name}</p>
+                {meal.description && (
+                  <p className="mt-1 text-sm text-stone-500">{meal.description}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -62,6 +62,7 @@ class DraftIngredientItem(BaseModel):
     sodium_mg: float | None = None
     nutrition_notes: str | None = None
     is_manual: bool = False
+    is_food: bool = True
 
 
 class CreateManualIngredientRequest(BaseModel):
