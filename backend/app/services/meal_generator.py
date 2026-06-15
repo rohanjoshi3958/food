@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.models import Ingredient
+from app.services.ingredient_deduction import clamp_meal_ingredients_to_pantry
 
 MEAL_GENERATION_PROMPT = """You are a helpful home chef. Given the ingredients available in the user's kitchen, suggest ONE practical meal they can make right now.
 
@@ -14,6 +15,8 @@ Available ingredients:
 
 Use each selected ingredient's quantity, unit, and serving size when deciding how much to use in the recipe. You do NOT need to use every available ingredient — choose a sensible subset that makes one cohesive, practical meal. Only include ingredients you actually use in ingredients_used. You may assume basic pantry staples (salt, pepper, cooking oil, butter, water) are available if needed.
 
+CRITICAL: For every ingredient you include, the amount in ingredients_used must be less than or equal to the maximum available quantity shown for that item. Never require more than the user has on hand. If they only have 1 g of tomatoes, use at most 1 g of tomatoes.
+
 Respond with ONLY valid JSON in this exact shape:
 {{
   "name": "Meal Name",
@@ -21,7 +24,7 @@ Respond with ONLY valid JSON in this exact shape:
   "ingredients_used": [
     {{
       "name": "Ingredient name from the list",
-      "amount": "How much to use, e.g. 2 cups"
+      "amount": "Numeric amount with unit matching the pantry item, e.g. 2 g or 1 cup"
     }}
   ],
   "instructions": [
@@ -82,7 +85,7 @@ def _format_ingredients(ingredients: list[Ingredient]) -> str:
         details = [f"- {ingredient.name}"]
 
         if quantity_label:
-            details.append(f"quantity on hand: {quantity_label}")
+            details.append(f"maximum available: {quantity_label} (do not exceed)")
         if ingredient.serving_size:
             details.append(f"serving size: {ingredient.serving_size}")
 
@@ -137,5 +140,10 @@ def generate_meal_from_ingredients(ingredients: list[Ingredient]) -> GeneratedMe
 
     if not parsed.name.strip() or not parsed.instructions.strip():
         raise MealGenerationError("The AI response did not include a complete meal.")
+
+    parsed.ingredients_used = clamp_meal_ingredients_to_pantry(
+        ingredients,
+        parsed.ingredients_used,
+    )
 
     return parsed

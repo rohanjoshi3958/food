@@ -47,17 +47,67 @@ export async function apiFetch(
   });
 }
 
+export async function readJsonResponse<T = unknown>(response: Response): Promise<T> {
+  const text = await response.text();
+
+  if (!text) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    if (text.startsWith("Internal Server Error")) {
+      throw new Error(
+        "The server timed out or restarted. Receipt analysis can take up to a minute — please try again.",
+      );
+    }
+
+    throw new Error(text.slice(0, 300));
+  }
+}
+
+export function errorDetailFromBody(data: unknown, fallback: string): string {
+  if (typeof data === "string" && data.trim()) {
+    return data;
+  }
+
+  if (data && typeof data === "object" && "detail" in data) {
+    const detail = (data as { detail?: unknown }).detail;
+    if (typeof detail === "string") {
+      return detail;
+    }
+  }
+
+  if (data && typeof data === "object" && "error" in data) {
+    const error = (data as { error?: unknown }).error;
+    if (typeof error === "string") {
+      return error;
+    }
+  }
+
+  return fallback;
+}
+
 export async function parseError(response: Response, fallback: string) {
   try {
-    const data = await response.json();
-    if (typeof data.detail === "string") {
-      return data.detail;
+    const text = await response.text();
+    if (!text) {
+      return fallback;
     }
-    if (typeof data.error === "string") {
-      return data.error;
+
+    try {
+      const data = JSON.parse(text);
+      return errorDetailFromBody(data, fallback);
+    } catch {
+      if (text.startsWith("Internal Server Error")) {
+        return "The server timed out or restarted. Please try again.";
+      }
+
+      return text.slice(0, 300);
     }
   } catch {
-    // Ignore JSON parse errors.
+    // Ignore read errors.
   }
 
   return fallback;

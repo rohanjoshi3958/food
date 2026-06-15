@@ -91,7 +91,15 @@ class Meal(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     ingredients_used: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ingredients_used_data: Mapped[list | None] = mapped_column(JSON, nullable=True)
     instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    photo_filename: Mapped[str | None] = mapped_column(String, nullable=True)
+    calories: Mapped[float | None] = mapped_column(Float, nullable=True)
+    protein_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    carbs_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fat_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fiber_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sodium_mg: Mapped[float | None] = mapped_column(Float, nullable=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
@@ -105,9 +113,20 @@ class CookbookEntry(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"))
+    meal_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("meals.id", ondelete="SET NULL"), nullable=True
+    )
     title: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     ingredients: Mapped[str | None] = mapped_column(Text, nullable=True)
     instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    photo_filename: Mapped[str | None] = mapped_column(String, nullable=True)
+    calories: Mapped[float | None] = mapped_column(Float, nullable=True)
+    protein_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    carbs_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fat_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fiber_g: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sodium_mg: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

@@ -22,6 +22,8 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup() -> None:
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.meal_upload_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.cookbook_upload_dir).mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
     run_migrations()
 

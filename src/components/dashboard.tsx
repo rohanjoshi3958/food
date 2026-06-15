@@ -5,13 +5,17 @@ import { useEffect, useState } from "react";
 import {
   apiFetch,
   AuthUser,
+  errorDetailFromBody,
   getCurrentUser,
   logout,
   parseError,
+  readJsonResponse,
 } from "@/lib/api";
 import { IngredientCard, type Ingredient } from "@/components/ingredient-card";
 import { ManualIngredientList } from "@/components/manual-ingredient-list";
+import { MealMacrosCard } from "@/components/meal-macros";
 import { ReceiptReview } from "@/components/receipt-review";
+import { formatMealInstructions, type Meal } from "@/lib/meals";
 
 type TabId = "receipt" | "ingredients" | "meals" | "cookbook";
 
@@ -42,20 +46,19 @@ type Receipt = {
   draft_items: DraftItem[];
 };
 
-type Meal = {
-  id: string;
-  name: string;
-  description: string | null;
-  ingredients_used: string | null;
-  instructions: string | null;
-  created_at: string;
-};
-
 type CookbookEntry = {
   id: string;
   title: string;
+  description: string | null;
   ingredients: string | null;
   instructions: string | null;
+  photo_url: string | null;
+  calories: number | null;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  fiber_g: number | null;
+  sodium_mg: number | null;
   created_at: string;
 };
 
@@ -157,23 +160,7 @@ export function Dashboard() {
             <IngredientsTab refreshKey={ingredientsRefreshKey} />
           )}
           {activeTab === "meals" && <GenerateMealTab />}
-          {activeTab === "cookbook" && (
-            <ListTab<CookbookEntry>
-              title="Your cookbook"
-              emptyMessage="No cookbook entries yet."
-              endpoint="/api/cookbook"
-              renderItem={(item) => (
-                <div>
-                  <p className="font-medium text-stone-900">{item.title}</p>
-                  {item.ingredients && (
-                    <p className="mt-1 text-sm text-stone-500">
-                      {item.ingredients}
-                    </p>
-                  )}
-                </div>
-              )}
-            />
-          )}
+          {activeTab === "cookbook" && <CookbookTab />}
         </section>
       </main>
     </div>
@@ -251,14 +238,10 @@ function UploadReceiptTab({
         body: formData,
       });
 
-      const data = await response.json();
+      const data = await readJsonResponse<Receipt>(response);
 
       if (!response.ok) {
-        const detail =
-          typeof data.detail === "string"
-            ? data.detail
-            : "Upload failed.";
-        throw new Error(detail);
+        throw new Error(errorDetailFromBody(data, "Upload failed."));
       }
 
       setFile(null);
@@ -429,16 +412,8 @@ function UploadReceiptTab({
   );
 }
 
-function formatMealInstructions(text: string): string {
-  const parts = text.split(/\s+(?=\d+\.\s)/);
-  if (parts.length > 1) {
-    return parts.map((part) => part.trim()).join("\n");
-  }
-
-  return text;
-}
-
 function GenerateMealTab() {
+  const router = useRouter();
   const [meal, setMeal] = useState<Meal | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -529,33 +504,204 @@ function GenerateMealTab() {
       {loading ? (
         <p className="text-sm text-stone-500">Loading...</p>
       ) : meal ? (
-        <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
-          <p className="font-medium text-stone-900">{meal.name}</p>
-          {meal.description && (
-            <p className="mt-1 text-sm text-stone-600">{meal.description}</p>
-          )}
-          {meal.ingredients_used && (
-            <div className="mt-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                Ingredients to use
-              </p>
-              <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-stone-700">
-                {meal.ingredients_used}
-              </pre>
-            </div>
-          )}
-          {meal.instructions && (
-            <div className="mt-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                Instructions
-              </p>
-              <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-stone-700">
-                {formatMealInstructions(meal.instructions)}
-              </pre>
-            </div>
-          )}
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
+            <p className="font-medium text-stone-900">{meal.name}</p>
+            {meal.description && (
+              <p className="mt-1 text-sm text-stone-600">{meal.description}</p>
+            )}
+            <MealMacrosCard macros={meal} />
+            {meal.ingredients_used && (
+              <div className="mt-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                  Ingredients to use
+                </p>
+                <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-stone-700">
+                  {meal.ingredients_used}
+                </pre>
+              </div>
+            )}
+            {meal.instructions && (
+              <div className="mt-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                  Instructions
+                </p>
+                <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-stone-700">
+                  {formatMealInstructions(meal.instructions)}
+                </pre>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => router.push(`/meals/${meal.id}`)}
+            className="rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600"
+          >
+            Proceed with meal
+          </button>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function CookbookPhoto({
+  entryId,
+  photoUrl,
+}: {
+  entryId: string;
+  photoUrl: string;
+}) {
+  const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+
+    async function loadPhoto() {
+      setLoading(true);
+
+      try {
+        const response = await apiFetch(`/api/cookbook/${entryId}/photo`);
+        if (!response.ok) {
+          throw new Error("Unable to load photo.");
+        }
+
+        const blob = await response.blob();
+        objectUrl = URL.createObjectURL(blob);
+
+        if (!cancelled) {
+          setImageSrc(objectUrl);
+        }
+      } catch {
+        if (!cancelled) {
+          setImageSrc(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadPhoto();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [entryId, photoUrl]);
+
+  if (loading) {
+    return <p className="text-sm text-stone-500">Loading photo...</p>;
+  }
+
+  if (!imageSrc) {
+    return null;
+  }
+
+  return (
+    <img
+      src={imageSrc}
+      alt="Cookbook meal"
+      className="max-h-64 w-full rounded-2xl object-cover ring-1 ring-stone-200"
+    />
+  );
+}
+
+function CookbookTab() {
+  const [entries, setEntries] = useState<CookbookEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function loadEntries() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const response = await apiFetch("/api/cookbook");
+        if (!response.ok) {
+          throw new Error(await parseError(response, "Unable to load cookbook."));
+        }
+
+        setEntries(await response.json());
+      } catch (loadError) {
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Unable to load cookbook.",
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadEntries();
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-xl font-semibold text-stone-900">Your cookbook</h2>
+
+      {error && (
+        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </p>
+      )}
+
+      {loading ? (
+        <p className="text-sm text-stone-500">Loading...</p>
+      ) : entries.length === 0 ? (
+        <p className="text-sm text-stone-500">
+          No cookbook entries yet. Generate a meal, upload a photo, and it will
+          appear here.
+        </p>
+      ) : (
+        <ul className="space-y-4">
+          {entries.map((entry) => (
+            <li
+              key={entry.id}
+              className="rounded-2xl border border-stone-200 bg-stone-50 p-4"
+            >
+              {entry.photo_url && (
+                <div className="mb-4">
+                  <CookbookPhoto entryId={entry.id} photoUrl={entry.photo_url} />
+                </div>
+              )}
+              <p className="font-medium text-stone-900">{entry.title}</p>
+              {entry.description && (
+                <p className="mt-1 text-sm text-stone-600">{entry.description}</p>
+              )}
+              <MealMacrosCard macros={entry} />
+              {entry.ingredients && (
+                <div className="mt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    Ingredients
+                  </p>
+                  <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-stone-700">
+                    {entry.ingredients}
+                  </pre>
+                </div>
+              )}
+              {entry.instructions && (
+                <div className="mt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    Instructions
+                  </p>
+                  <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-stone-700">
+                    {formatMealInstructions(entry.instructions)}
+                  </pre>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

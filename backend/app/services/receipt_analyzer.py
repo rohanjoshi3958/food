@@ -9,6 +9,28 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 
+
+def _anthropic_error_message(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            payload = response.json()
+            error = payload.get("error", {})
+            message = error.get("message")
+            if message:
+                return message
+        except Exception:
+            pass
+
+    message = str(exc)
+    if "not_found_error" in message or "model:" in message:
+        return (
+            f"The configured Anthropic model ({settings.anthropic_model}) is unavailable. "
+            "Update ANTHROPIC_MODEL in your .env file."
+        )
+
+    return "Receipt analysis failed. Please try again."
+
 SUPPORTED_MEDIA_TYPES = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -147,19 +169,22 @@ def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
         },
     }
 
-    message = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=4096,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    content_block,
-                    {"type": "text", "text": RECEIPT_ANALYSIS_PROMPT},
-                ],
-            }
-        ],
-    )
+    try:
+        message = client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=4096,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        content_block,
+                        {"type": "text", "text": RECEIPT_ANALYSIS_PROMPT},
+                    ],
+                }
+            ],
+        )
+    except anthropic.APIError as exc:
+        raise ReceiptAnalysisError(_anthropic_error_message(exc)) from exc
 
     text_blocks = [block.text for block in message.content if block.type == "text"]
     if not text_blocks:

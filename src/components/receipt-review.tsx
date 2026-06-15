@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, errorDetailFromBody, readJsonResponse } from "@/lib/api";
 import { IngredientCard, type Ingredient } from "@/components/ingredient-card";
 import { UnitSelect } from "@/components/unit-select";
 
@@ -237,14 +237,10 @@ export function ReceiptReview({
         }),
       });
 
-      const data = await response.json();
+      const data = await readJsonResponse<{ ingredients: Ingredient[] }>(response);
 
       if (!response.ok) {
-        const detail =
-          typeof data.detail === "string"
-            ? data.detail
-            : "Unable to save ingredients.";
-        throw new Error(detail);
+        throw new Error(errorDetailFromBody(data, "Unable to save ingredients."));
       }
 
       onConfirmed(data.ingredients);

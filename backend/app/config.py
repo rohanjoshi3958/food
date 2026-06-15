@@ -9,9 +9,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:postgres@localhost:5433/food"
     auth_secret: str = "change-me-in-production"
     upload_dir: str = "uploads/receipts"
+    meal_upload_dir: str = "uploads/meals"
+    cookbook_upload_dir: str = "uploads/cookbook"
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-20250514"
+    anthropic_model: str = "claude-sonnet-4-6"
 
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),
