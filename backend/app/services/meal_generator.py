@@ -15,7 +15,7 @@ Available ingredients:
 
 Use each selected ingredient's quantity, unit, and serving size when deciding how much to use in the recipe. You do NOT need to use every available ingredient — choose a sensible subset that makes one cohesive, practical meal. Only include ingredients you actually use in ingredients_used. You may assume basic pantry staples (salt, pepper, cooking oil, butter, water) are available if needed.
 
-CRITICAL: For every ingredient you include, the amount in ingredients_used must be less than or equal to the maximum available quantity shown for that item. Never require more than the user has on hand. If they only have 1 g of tomatoes, use at most 1 g of tomatoes.
+CRITICAL: For every ingredient you include, the amount in ingredients_used must be less than or equal to the maximum available quantity shown for that item. Never require more than the user has on hand.For example, isf they only have 1 g of tomatoes, use at most 1 g of tomatoes.
 
 Respond with ONLY valid JSON in this exact shape:
 {{

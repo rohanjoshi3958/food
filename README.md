@@ -1,36 +1,87 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Food
 
-## Getting Started
+A kitchen app that turns grocery receipts into a tracked pantry, then uses AI to suggest meals you can cook with what you have.
 
-First, run the development server:
+## What it does
+
+1. **Sign up / sign in** with email and password.
+2. **Upload a receipt** (image or PDF). Claude reads the receipt, extracts food items and nutrition, and lets you review/edit before saving.
+3. **Add ingredients manually** if you prefer not to use a receipt.
+4. **View ingredients** — see your pantry with quantities, units, and nutrition. Remove items you no longer have.
+5. **Generate a meal** — Claude suggests one meal from your pantry (using only amounts you actually have), with ingredients, step-by-step instructions, and estimated macros.
+6. **Proceed with meal** — open the meal page, upload a photo of what you made.
+7. **Cookbook** — when you upload a meal photo, the meal (plus photo and macros) is saved to your cookbook, and used ingredient quantities are deducted from your pantry (or removed if fully used).
+
+## Stack
+
+| Layer | Tech |
+| --- | --- |
+| Frontend | Next.js, React, Tailwind |
+| Backend | FastAPI (Python) |
+| Database | PostgreSQL (Docker, port **5433**) |
+| AI | Anthropic Claude |
+
+## Prerequisites
+
+- Node.js 20+
+- Python 3.11+
+- Docker (for Postgres)
+- An [Anthropic API key](https://console.anthropic.com/)
+
+## Setup
+
+1. **Install frontend dependencies**
+
+```bash
+npm install
+```
+
+2. **Install backend dependencies**
+
+```bash
+cd backend
+python3 -m pip install -r requirements.txt
+cd ..
+```
+
+3. **Create a `.env` file** in the project root:
+
+```env
+DATABASE_URL="postgresql://postgres:postgres@localhost:5433/food"
+AUTH_SECRET="replace-with-a-long-random-string"
+ANTHROPIC_API_KEY="your-anthropic-api-key"
+ANTHROPIC_MODEL=claude-sonnet-4-6
+```
+
+`AUTH_SECRET` is used to sign JWTs. Generate any long random string.
+
+## Run locally
+
+From the project root:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+This starts:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Postgres via Docker Compose (port **5433**)
+- FastAPI on [http://localhost:8000](http://localhost:8000)
+- Next.js on [http://localhost:3000](http://localhost:3000)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open [http://localhost:3000](http://localhost:3000), create an account, and start with **Upload a receipt** or add ingredients by hand.
 
-## Learn More
+### Useful scripts
 
-To learn more about Next.js, take a look at the following resources:
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Start DB + API + web |
+| `npm run db:up` | Start Postgres only |
+| `npm run db:down` | Stop Postgres |
+| `npm run lint` | Run ESLint |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Notes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Receipt analysis can take up to a minute; wait for Claude to finish before expecting the review screen.
+- Meal generation only uses food already in **View ingredients**, and never asks for more than you have on hand.
+- Uploading a meal photo both saves to the cookbook and updates pantry quantities.
