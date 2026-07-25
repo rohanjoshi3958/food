@@ -53,7 +53,7 @@ def list_meals(
 ) -> list[MealResponse]:
     meals = (
         db.query(Meal)
-        .filter(Meal.user_id == current_user.id)
+        .filter(Meal.user_id == current_user.id, Meal.photo_filename.is_(None))
         .order_by(Meal.created_at.desc())
         .all()
     )
@@ -158,7 +158,19 @@ async def upload_meal_photo(
 
     add_meal_to_cookbook(db, meal, current_user)
 
-    return meal_response(meal)
+    response = meal_response(meal)
+
+    # Meal is done once it's in the cookbook — clear it so Generate meal
+    # returns to an empty state.
+    if meal.photo_filename:
+        meal_photo = _meal_photo_path(current_user.id, meal.photo_filename)
+        if meal_photo.exists():
+            meal_photo.unlink()
+
+    db.delete(meal)
+    db.commit()
+
+    return response
 
 
 @router.get("/{meal_id}/photo")

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models import Ingredient, Receipt, User
+from app.models import Receipt, User
 from app.schemas import (
     ConfirmReceiptRequest,
     DraftIngredientItem,
@@ -16,12 +16,38 @@ from app.schemas import (
     ReceiptResponse,
 )
 from app.services.ingredients import create_ingredient, resolve_item_nutrition
+from app.services.ingredient_merge import merge_draft_items
 from app.services.receipt_analyzer import (
     ReceiptAnalysisError,
     analyze_receipt_image,
 )
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
+
+
+MAX_RECEIPTS_PER_USER = 3
+
+
+def _delete_receipt_file(receipt: Receipt) -> None:
+    if not receipt.filename:
+        return
+    path = Path(receipt.filename)
+    if path.exists() and path.is_file():
+        path.unlink()
+
+
+def _prune_old_receipts(db: Session, user: User) -> None:
+    receipts = (
+        db.query(Receipt)
+        .filter(Receipt.user_id == user.id)
+        .order_by(Receipt.uploaded_at.desc())
+        .all()
+    )
+    for receipt in receipts[MAX_RECEIPTS_PER_USER:]:
+        _delete_receipt_file(receipt)
+        db.delete(receipt)
+    if len(receipts) > MAX_RECEIPTS_PER_USER:
+        db.commit()
 
 
 def _manual_draft_items(raw_items: list[dict]) -> list[dict]:
@@ -60,7 +86,7 @@ def _parse_manual_items(manual_items: str) -> list[dict]:
 
 
 def _draft_from_parsed_items(items: list) -> list[dict]:
-    return [
+    drafts = [
         DraftIngredientItem(
             store_item_name=item.store_item_name,
             ingredient_name=item.ingredient_name,
@@ -80,13 +106,19 @@ def _draft_from_parsed_items(items: list) -> list[dict]:
         for item in items
         if item.is_food
     ]
+    return merge_draft_items(drafts)
 
 
 def _receipt_response(receipt: Receipt) -> ReceiptResponse:
-    draft_items = [
-        DraftIngredientItem.model_validate(item)
+    raw_drafts = [
+        DraftIngredientItem.model_validate(item).model_dump()
         for item in (receipt.draft_items or [])
         if item.get("is_food", True)
+    ]
+
+    draft_items = [
+        DraftIngredientItem.model_validate(item)
+        for item in merge_draft_items(raw_drafts)
     ]
 
     return ReceiptResponse(
@@ -110,33 +142,17 @@ def list_receipts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ReceiptResponse]:
+    _prune_old_receipts(db, current_user)
+
     receipts = (
         db.query(Receipt)
         .options(joinedload(Receipt.ingredients))
         .filter(Receipt.user_id == current_user.id)
         .order_by(Receipt.uploaded_at.desc())
+        .limit(MAX_RECEIPTS_PER_USER)
         .all()
     )
     return [_receipt_response(receipt) for receipt in receipts]
-
-
-@router.get("/{receipt_id}", response_model=ReceiptResponse)
-def get_receipt(
-    receipt_id: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> ReceiptResponse:
-    receipt = (
-        db.query(Receipt)
-        .options(joinedload(Receipt.ingredients))
-        .filter(Receipt.id == receipt_id, Receipt.user_id == current_user.id)
-        .first()
-    )
-
-    if receipt is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found.")
-
-    return _receipt_response(receipt)
 
 
 @router.post("/upload", response_model=ReceiptResponse, status_code=status.HTTP_201_CREATED)
@@ -180,7 +196,9 @@ async def upload_receipt(
         receipt.store_name = parsed.store_name
         receipt.analysis_status = "pending_review"
         receipt.analysis_error = None
-        receipt.draft_items = pre_manual_items + _draft_from_parsed_items(parsed.items)
+        receipt.draft_items = merge_draft_items(
+            pre_manual_items + _draft_from_parsed_items(parsed.items)
+        )
 
         if not receipt.draft_items:
             raise ReceiptAnalysisError(
@@ -189,6 +207,13 @@ async def upload_receipt(
 
         db.commit()
         db.refresh(receipt)
+        _prune_old_receipts(db, current_user)
+        receipt = (
+            db.query(Receipt)
+            .options(joinedload(Receipt.ingredients))
+            .filter(Receipt.id == receipt.id)
+            .one()
+        )
         return _receipt_response(receipt)
     except ReceiptAnalysisError as exc:
         receipt.analysis_status = "failed"
@@ -231,10 +256,42 @@ def update_receipt_draft(
             detail="Only receipts awaiting review can update their draft items.",
         )
 
-    receipt.draft_items = [
-        DraftIngredientItem.model_validate(item.model_dump()).model_dump()
-        for item in payload.items
-    ]
+    receipt.draft_items = merge_draft_items(
+        [
+            DraftIngredientItem.model_validate(item.model_dump()).model_dump()
+            for item in payload.items
+        ]
+    )
+    db.commit()
+    db.refresh(receipt)
+    return _receipt_response(receipt)
+
+
+@router.post("/{receipt_id}/cancel", response_model=ReceiptResponse)
+def cancel_receipt_review(
+    receipt_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ReceiptResponse:
+    receipt = (
+        db.query(Receipt)
+        .options(joinedload(Receipt.ingredients))
+        .filter(Receipt.id == receipt_id, Receipt.user_id == current_user.id)
+        .first()
+    )
+
+    if receipt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found.")
+
+    if receipt.analysis_status != "pending_review":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only receipts awaiting review can be cancelled.",
+        )
+
+    receipt.analysis_status = "cancelled"
+    receipt.draft_items = None
+    receipt.analysis_error = None
     db.commit()
     db.refresh(receipt)
     return _receipt_response(receipt)
@@ -279,29 +336,16 @@ def confirm_receipt(
     for existing in list(receipt.ingredients):
         db.delete(existing)
 
-    resolved_items = [resolve_item_nutrition(item) for item in payload.items]
+    merged_items = [
+        DraftIngredientItem.model_validate(item)
+        for item in merge_draft_items(
+            [item.model_dump() for item in payload.items if item.is_food]
+        )
+    ]
+    resolved_items = [resolve_item_nutrition(item) for item in merged_items]
 
     for item in resolved_items:
-        if not item.is_food:
-            continue
-
-        ingredient = Ingredient(
-            user_id=current_user.id,
-            receipt_id=receipt.id,
-            name=item.ingredient_name.strip(),
-            store_item_name=item.store_item_name or item.ingredient_name,
-            quantity=item.quantity,
-            unit=item.unit,
-            serving_size=item.serving_size,
-            calories=item.calories,
-            protein_g=item.protein_g,
-            carbs_g=item.carbs_g,
-            fat_g=item.fat_g,
-            fiber_g=item.fiber_g,
-            sodium_mg=item.sodium_mg,
-            nutrition_notes=item.nutrition_notes,
-        )
-        db.add(ingredient)
+        create_ingredient(db, current_user, item, receipt_id=receipt.id)
 
     receipt.analysis_status = "completed"
     receipt.draft_items = None
@@ -309,10 +353,16 @@ def confirm_receipt(
 
     db.commit()
     db.refresh(receipt)
+    _prune_old_receipts(db, current_user)
     receipt = (
         db.query(Receipt)
         .options(joinedload(Receipt.ingredients))
         .filter(Receipt.id == receipt.id)
-        .one()
+        .one_or_none()
     )
+    if receipt is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Receipt was discarded because only the 3 most recent receipts are kept.",
+        )
     return _receipt_response(receipt)

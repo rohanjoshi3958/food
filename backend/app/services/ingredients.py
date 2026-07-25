@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Ingredient, User
 from app.schemas import DraftIngredientItem, IngredientResponse
+from app.services.ingredient_merge import _merge_key, _sum_quantities
 from app.services.receipt_analyzer import ReceiptAnalysisError, estimate_ingredient_nutrition
 
 
@@ -36,6 +37,22 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
     )
 
 
+def _find_matching_pantry_item(
+    db: Session,
+    user: User,
+    name: str,
+    unit: str | None,
+) -> Ingredient | None:
+    target_key = _merge_key(name, unit)
+    pantry = db.query(Ingredient).filter(Ingredient.user_id == user.id).all()
+
+    for ingredient in pantry:
+        if _merge_key(ingredient.name, ingredient.unit) == target_key:
+            return ingredient
+
+    return None
+
+
 def create_ingredient(
     db: Session,
     user: User,
@@ -43,11 +60,35 @@ def create_ingredient(
     receipt_id: str | None = None,
 ) -> IngredientResponse:
     resolved = resolve_item_nutrition(item)
+    name = resolved.ingredient_name.strip()
+    existing = _find_matching_pantry_item(db, user, name, resolved.unit)
+
+    if existing is not None:
+        existing.quantity = _sum_quantities(existing.quantity, resolved.quantity)
+        if receipt_id is not None:
+            existing.receipt_id = receipt_id
+        if not existing.serving_size and resolved.serving_size:
+            existing.serving_size = resolved.serving_size
+        for field in (
+            "calories",
+            "protein_g",
+            "carbs_g",
+            "fat_g",
+            "fiber_g",
+            "sodium_mg",
+            "nutrition_notes",
+        ):
+            if getattr(existing, field) is None and getattr(resolved, field) is not None:
+                setattr(existing, field, getattr(resolved, field))
+
+        db.commit()
+        db.refresh(existing)
+        return IngredientResponse.model_validate(existing)
 
     ingredient = Ingredient(
         user_id=user.id,
         receipt_id=receipt_id,
-        name=resolved.ingredient_name.strip(),
+        name=name,
         store_item_name=resolved.store_item_name or resolved.ingredient_name,
         quantity=resolved.quantity,
         unit=resolved.unit,

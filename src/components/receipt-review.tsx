@@ -39,8 +39,100 @@ type DraftItemInput = {
   is_food?: boolean;
 };
 
+function parseQuantity(value: string): number | null {
+  const cleaned = value.trim();
+  if (!cleaned) {
+    return null;
+  }
+
+  if (cleaned.includes("/")) {
+    const [numerator, denominator] = cleaned.split("/", 2).map(Number);
+    if (
+      Number.isFinite(numerator) &&
+      Number.isFinite(denominator) &&
+      denominator !== 0
+    ) {
+      return numerator / denominator;
+    }
+    return null;
+  }
+
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatQuantity(value: number): string {
+  const rounded = Math.round(value * 10000) / 10000;
+  if (Math.abs(rounded - Math.round(rounded)) < 1e-6) {
+    return String(Math.round(rounded));
+  }
+  return String(rounded);
+}
+
+function sumQuantities(left: string, right: string): string {
+  const leftValue = parseQuantity(left);
+  const rightValue = parseQuantity(right);
+
+  if (leftValue == null && rightValue == null) {
+    return left || right;
+  }
+
+  return formatQuantity((leftValue ?? 0) + (rightValue ?? 0));
+}
+
+function mergeDraftItems(items: DraftItemInput[]): DraftItemInput[] {
+  const merged = new Map<string, DraftItemInput>();
+  const order: string[] = [];
+
+  for (const item of items) {
+    if (item.is_food === false) {
+      continue;
+    }
+
+    const name = item.ingredient_name.trim();
+    if (!name) {
+      continue;
+    }
+
+    const unit = (item.unit ?? "").trim().toLowerCase();
+    const key = `${name.toLowerCase()}::${unit}`;
+    const existing = merged.get(key);
+
+    if (!existing) {
+      merged.set(key, { ...item, ingredient_name: name });
+      order.push(key);
+      continue;
+    }
+
+    existing.quantity = sumQuantities(
+      existing.quantity ?? "",
+      item.quantity ?? "",
+    );
+    existing.is_manual = Boolean(existing.is_manual) && Boolean(item.is_manual);
+
+    if (!existing.serving_size && item.serving_size) {
+      existing.serving_size = item.serving_size;
+    }
+    for (const field of [
+      "calories",
+      "protein_g",
+      "carbs_g",
+      "fat_g",
+      "fiber_g",
+      "sodium_mg",
+      "nutrition_notes",
+    ] as const) {
+      if (existing[field] == null && item[field] != null) {
+        existing[field] = item[field] as never;
+      }
+    }
+  }
+
+  return order.map((key) => merged.get(key)!);
+}
+
 function draftFromApi(items: DraftItemInput[]): DraftIngredient[] {
-  return items
+  return mergeDraftItems(items)
     .filter((item) => item.is_food !== false)
     .map((item) => ({
       clientKey: crypto.randomUUID(),
@@ -206,25 +298,44 @@ export function ReceiptReview({
       return;
     }
 
-    setItems((current) => [
-      ...current,
-      {
-        clientKey: crypto.randomUUID(),
-        store_item_name: name,
-        ingredient_name: name,
-        quantity: newQuantity.trim(),
-        unit: newUnit,
-        serving_size: null,
-        calories: null,
-        protein_g: null,
-        carbs_g: null,
-        fat_g: null,
-        fiber_g: null,
-        sodium_mg: null,
-        nutrition_notes: null,
-        is_manual: true,
-      },
-    ]);
+    setItems((current) => {
+      const existingIndex = current.findIndex(
+        (item) =>
+          item.ingredient_name.trim().toLowerCase() === name.toLowerCase() &&
+          item.unit.trim().toLowerCase() === newUnit.trim().toLowerCase(),
+      );
+
+      if (existingIndex === -1) {
+        return [
+          ...current,
+          {
+            clientKey: crypto.randomUUID(),
+            store_item_name: name,
+            ingredient_name: name,
+            quantity: newQuantity.trim(),
+            unit: newUnit,
+            serving_size: null,
+            calories: null,
+            protein_g: null,
+            carbs_g: null,
+            fat_g: null,
+            fiber_g: null,
+            sodium_mg: null,
+            nutrition_notes: null,
+            is_manual: true,
+          },
+        ];
+      }
+
+      return current.map((item, index) =>
+        index === existingIndex
+          ? {
+              ...item,
+              quantity: sumQuantities(item.quantity, newQuantity.trim()),
+            }
+          : item,
+      );
+    });
 
     setNewName("");
     setNewQuantity("");
@@ -289,7 +400,9 @@ export function ReceiptReview({
   return (
     <div className="space-y-6 rounded-2xl border border-orange-200 bg-orange-50/40 p-6">
       <div>
-        <h3 className="text-lg font-semibold text-stone-900">Review ingredients</h3>
+        <h3 className="text-lg font-semibold text-stone-900">
+          Review ingredients
+        </h3>
         <p className="mt-1 text-sm text-stone-600">
           Check what Claude found from{" "}
           <span className="font-medium">{storeName ?? "your receipt"}</span>.

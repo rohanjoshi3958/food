@@ -72,7 +72,14 @@ const tabs: { id: TabId; label: string }[] = [
 export function Dashboard() {
   const router = useRouter();
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [activeTab, setActiveTab] = useState<TabId>("receipt");
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    if (typeof window === "undefined") {
+      return "receipt";
+    }
+
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    return tabs.some((item) => item.id === tab) ? (tab as TabId) : "receipt";
+  });
   const [loading, setLoading] = useState(true);
   const [ingredientsRefreshKey, setIngredientsRefreshKey] = useState(0);
 
@@ -95,6 +102,23 @@ export function Dashboard() {
         router.replace("/login");
       });
   }, [router]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") === "meals") {
+      refreshIngredients();
+    }
+
+    if (params.has("tab")) {
+      params.delete("tab");
+      const next = params.toString();
+      window.history.replaceState(null, "", next ? `/?${next}` : "/");
+    }
+  }, []);
 
   function handleLogout() {
     logout();
@@ -197,13 +221,6 @@ function UploadReceiptTab({
 
       const data: Receipt[] = await response.json();
       setReceipts(data);
-
-      const pending = data.find(
-        (receipt) => receipt.analysis_status === "pending_review",
-      );
-      if (pending && !reviewReceipt) {
-        setReviewReceipt(pending);
-      }
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -349,8 +366,16 @@ function UploadReceiptTab({
             );
           }}
           onConfirmed={handleConfirmed}
-          onCancel={() => {
+          onCancel={async () => {
+            try {
+              await apiFetch(`/api/receipts/${reviewReceipt.id}/cancel`, {
+                method: "POST",
+              });
+            } catch {
+              // Still close the review UI if cancel request fails.
+            }
             setReviewReceipt(null);
+            await loadReceipts();
           }}
         />
       )}
@@ -382,7 +407,7 @@ function UploadReceiptTab({
           <ul className="divide-y divide-stone-100 rounded-2xl border border-stone-200">
             {receipts.map((receipt) => {
               const itemCount =
-                receipt.analysis_status === "pending_review"
+                receipt.draft_items.length > 0
                   ? receipt.draft_items.length
                   : receipt.ingredients.length;
 
@@ -398,6 +423,9 @@ function UploadReceiptTab({
                         {itemCount === 1 ? "" : "s"}
                         {receipt.analysis_status === "pending_review" &&
                           " · awaiting review"}
+                        {receipt.analysis_status === "completed" && " · saved"}
+                        {receipt.analysis_status === "cancelled" &&
+                          " · cancelled"}
                       </p>
                       {receipt.analysis_status === "failed" &&
                         receipt.analysis_error && (
@@ -406,20 +434,9 @@ function UploadReceiptTab({
                           </p>
                         )}
                     </div>
-                    <div className="flex shrink-0 flex-col items-end gap-2">
-                      <span className="text-xs text-stone-400">
-                        {new Date(receipt.uploaded_at).toLocaleString()}
-                      </span>
-                      {receipt.analysis_status === "pending_review" && (
-                        <button
-                          type="button"
-                          onClick={() => setReviewReceipt(receipt)}
-                          className="rounded-lg bg-orange-100 px-2.5 py-1 text-xs font-medium text-orange-700 transition hover:bg-orange-200"
-                        >
-                          Continue review
-                        </button>
-                      )}
-                    </div>
+                    <span className="shrink-0 text-xs text-stone-400">
+                      {new Date(receipt.uploaded_at).toLocaleString()}
+                    </span>
                   </div>
                 </li>
               );

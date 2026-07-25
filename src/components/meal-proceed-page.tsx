@@ -87,6 +87,8 @@ export function MealProceedPage({ mealId }: { mealId: string }) {
   const [meal, setMeal] = useState<Meal | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [photoRefreshKey, setPhotoRefreshKey] = useState(0);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -127,8 +129,21 @@ export function MealProceedPage({ mealId }: { mealId: string }) {
     loadMeal();
   }, [mealId]);
 
-  async function handlePhotoUpload(file: File | null) {
-    if (!file || !meal) {
+  useEffect(() => {
+    if (!selectedFile) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(selectedFile);
+    setPreviewUrl(objectUrl);
+
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [selectedFile]);
+
+  async function handlePhotoUpload() {
+    if (!selectedFile || !meal) {
+      setError("Choose a meal photo to upload.");
       return;
     }
 
@@ -137,7 +152,7 @@ export function MealProceedPage({ mealId }: { mealId: string }) {
     setMessage("");
 
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", selectedFile);
 
     try {
       const response = await apiFetch(`/api/meals/${meal.id}/photo`, {
@@ -155,9 +170,8 @@ export function MealProceedPage({ mealId }: { mealId: string }) {
         throw new Error(detail);
       }
 
-      setMeal(data as Meal);
-      setPhotoRefreshKey((current) => current + 1);
-      setMessage("Photo uploaded and added to your cookbook. Your ingredients were updated.");
+      router.replace("/?tab=meals");
+      return;
     } catch (uploadError) {
       setError(
         uploadError instanceof Error
@@ -230,30 +244,40 @@ export function MealProceedPage({ mealId }: { mealId: string }) {
               </p>
 
               <div className="mt-4 space-y-4">
-                <MealPhoto
-                  mealId={meal.id}
-                  photoUrl={meal.photo_url}
-                  refreshKey={photoRefreshKey}
+                {previewUrl ? (
+                  <img
+                    src={previewUrl}
+                    alt="Selected meal photo preview"
+                    className="max-h-80 w-full rounded-2xl object-cover ring-1 ring-stone-200"
+                  />
+                ) : (
+                  <MealPhoto
+                    mealId={meal.id}
+                    photoUrl={meal.photo_url}
+                    refreshKey={photoRefreshKey}
+                  />
+                )}
+
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  disabled={uploading}
+                  onChange={(event) => {
+                    setSelectedFile(event.target.files?.[0] ?? null);
+                    setError("");
+                    setMessage("");
+                  }}
+                  className="block w-full text-sm text-stone-600 file:mr-4 file:rounded-xl file:border-0 file:bg-stone-100 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-stone-700 hover:file:bg-stone-200"
                 />
 
-                <label className="block">
-                  <span className="sr-only">Choose meal photo</span>
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif"
-                    disabled={uploading}
-                    onChange={(event) => {
-                      const file = event.target.files?.[0] ?? null;
-                      void handlePhotoUpload(file);
-                      event.target.value = "";
-                    }}
-                    className="block w-full text-sm text-stone-600 file:mr-4 file:rounded-xl file:border-0 file:bg-orange-500 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-orange-600"
-                  />
-                </label>
-
-                {uploading && (
-                  <p className="text-sm text-stone-500">Uploading photo...</p>
-                )}
+                <button
+                  type="button"
+                  onClick={handlePhotoUpload}
+                  disabled={uploading || !selectedFile}
+                  className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {uploading ? "Uploading photo..." : "Upload"}
+                </button>
               </div>
             </div>
 
