@@ -208,6 +208,38 @@ async def upload_receipt(
         ) from exc
 
 
+@router.patch("/{receipt_id}/draft", response_model=ReceiptResponse)
+def update_receipt_draft(
+    receipt_id: str,
+    payload: ConfirmReceiptRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ReceiptResponse:
+    receipt = (
+        db.query(Receipt)
+        .options(joinedload(Receipt.ingredients))
+        .filter(Receipt.id == receipt_id, Receipt.user_id == current_user.id)
+        .first()
+    )
+
+    if receipt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found.")
+
+    if receipt.analysis_status != "pending_review":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only receipts awaiting review can update their draft items.",
+        )
+
+    receipt.draft_items = [
+        DraftIngredientItem.model_validate(item.model_dump()).model_dump()
+        for item in payload.items
+    ]
+    db.commit()
+    db.refresh(receipt)
+    return _receipt_response(receipt)
+
+
 @router.post("/{receipt_id}/confirm", response_model=ReceiptResponse)
 def confirm_receipt(
     receipt_id: str,

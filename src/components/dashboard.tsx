@@ -153,14 +153,18 @@ export function Dashboard() {
         </nav>
 
         <section className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
-          {activeTab === "receipt" && (
+          <div className={activeTab === "receipt" ? "block" : "hidden"}>
             <UploadReceiptTab onIngredientsChanged={refreshIngredients} />
-          )}
-          {activeTab === "ingredients" && (
+          </div>
+          <div className={activeTab === "ingredients" ? "block" : "hidden"}>
             <IngredientsTab refreshKey={ingredientsRefreshKey} />
-          )}
-          {activeTab === "meals" && <GenerateMealTab />}
-          {activeTab === "cookbook" && <CookbookTab />}
+          </div>
+          <div className={activeTab === "meals" ? "block" : "hidden"}>
+            <GenerateMealTab />
+          </div>
+          <div className={activeTab === "cookbook" ? "block" : "hidden"}>
+            <CookbookTab />
+          </div>
         </section>
       </main>
     </div>
@@ -324,11 +328,26 @@ function UploadReceiptTab({
         </p>
       )}
 
-      {reviewReceipt && reviewReceipt.draft_items.length > 0 && (
+      {reviewReceipt && (
         <ReceiptReview
+          key={reviewReceipt.id}
           receiptId={reviewReceipt.id}
           storeName={reviewReceipt.store_name}
           initialItems={reviewReceipt.draft_items}
+          onDraftChange={(draftItems) => {
+            setReviewReceipt((current) =>
+              current
+                ? { ...current, draft_items: draftItems as DraftItem[] }
+                : null,
+            );
+            setReceipts((current) =>
+              current.map((receipt) =>
+                receipt.id === reviewReceipt.id
+                  ? { ...receipt, draft_items: draftItems as DraftItem[] }
+                  : receipt,
+              ),
+            );
+          }}
           onConfirmed={handleConfirmed}
           onCancel={() => {
             setReviewReceipt(null);

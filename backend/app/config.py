@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     cookbook_upload_dir: str = "uploads/cookbook"
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-6"
+    anthropic_model: str = "claude-opus-4-8"
 
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),

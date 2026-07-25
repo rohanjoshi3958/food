@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiFetch, errorDetailFromBody, readJsonResponse } from "@/lib/api";
 import { IngredientCard, type Ingredient } from "@/components/ingredient-card";
 import { UnitSelect } from "@/components/unit-select";
@@ -117,12 +117,14 @@ export function ReceiptReview({
   receiptId,
   storeName,
   initialItems,
+  onDraftChange,
   onConfirmed,
   onCancel,
 }: {
   receiptId: string;
   storeName: string | null;
   initialItems: DraftItemInput[];
+  onDraftChange?: (items: DraftItemInput[]) => void;
   onConfirmed: (ingredients: Ingredient[]) => void;
   onCancel: () => void;
 }) {
@@ -135,6 +137,35 @@ export function ReceiptReview({
   const [missingUnitKeys, setMissingUnitKeys] = useState<Set<string>>(
     () => new Set(),
   );
+  const skipNextPersist = useRef(true);
+  const onDraftChangeRef = useRef(onDraftChange);
+
+  useEffect(() => {
+    onDraftChangeRef.current = onDraftChange;
+  }, [onDraftChange]);
+
+  useEffect(() => {
+    if (skipNextPersist.current) {
+      skipNextPersist.current = false;
+      return;
+    }
+
+    const payloadItems = items.map((item) => toPayloadItem(item));
+    onDraftChangeRef.current?.(payloadItems);
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        await apiFetch(`/api/receipts/${receiptId}/draft`, {
+          method: "PATCH",
+          body: JSON.stringify({ items: payloadItems }),
+        });
+      } catch {
+        // Keep local edits even if the draft sync request fails.
+      }
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [items, receiptId]);
 
   function updateItem(clientKey: string, updates: Partial<DraftIngredient>) {
     setItems((current) =>
@@ -277,99 +308,99 @@ export function ReceiptReview({
             const missingUnit = missingUnitKeys.has(item.clientKey);
 
             return (
-            <li
-              key={item.clientKey}
-              className={`rounded-2xl border p-4 ${
-                missingUnit
-                  ? "border-red-300 bg-red-50/40"
-                  : "border-stone-200 bg-white"
-              }`}
-            >
-              <div className="mb-3 flex items-start justify-between gap-3">
-                <div className="grid flex-1 gap-3 sm:grid-cols-2">
-                  <label className="block text-sm">
-                    <span className="mb-1 block font-medium text-stone-700">
-                      Ingredient name
-                    </span>
-                    <input
-                      value={item.ingredient_name}
-                      onChange={(event) =>
-                        updateItem(item.clientKey, {
-                          ingredient_name: event.target.value,
-                        })
-                      }
-                      className={inputClassName}
-                    />
-                  </label>
-                  <label className="block text-sm">
-                    <span className="mb-1 block font-medium text-stone-700">
-                      Receipt label
-                    </span>
-                    <input
-                      value={item.store_item_name}
-                      onChange={(event) =>
-                        updateItem(item.clientKey, {
-                          store_item_name: event.target.value,
-                        })
-                      }
-                      className={inputClassName}
-                    />
-                  </label>
-                  <label className="block text-sm">
-                    <span className="mb-1 block font-medium text-stone-700">
-                      Quantity
-                    </span>
-                    <input
-                      value={item.quantity}
-                      onChange={(event) =>
-                        updateItem(item.clientKey, {
-                          quantity: event.target.value,
-                        })
-                      }
-                      className={inputClassName}
-                    />
-                  </label>
-                  <label className="block text-sm">
-                    <span
-                      className={`mb-1 block font-medium ${
-                        missingUnit ? "text-red-700" : "text-stone-700"
-                      }`}
-                    >
-                      Unit
-                    </span>
-                    <UnitSelect
-                      value={item.unit}
-                      onChange={(nextUnit) =>
-                        updateItem(item.clientKey, { unit: nextUnit })
-                      }
-                      className={
-                        missingUnit ? unitErrorClassName : inputClassName
-                      }
-                    />
-                    {missingUnit && (
-                      <p className="mt-1 text-xs text-red-600">
-                        Select a unit for this ingredient.
-                      </p>
-                    )}
-                  </label>
+              <li
+                key={item.clientKey}
+                className={`rounded-2xl border p-4 ${
+                  missingUnit
+                    ? "border-red-300 bg-red-50/40"
+                    : "border-stone-200 bg-white"
+                }`}
+              >
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div className="grid flex-1 gap-3 sm:grid-cols-2">
+                    <label className="block text-sm">
+                      <span className="mb-1 block font-medium text-stone-700">
+                        Ingredient name
+                      </span>
+                      <input
+                        value={item.ingredient_name}
+                        onChange={(event) =>
+                          updateItem(item.clientKey, {
+                            ingredient_name: event.target.value,
+                          })
+                        }
+                        className={inputClassName}
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      <span className="mb-1 block font-medium text-stone-700">
+                        Receipt label
+                      </span>
+                      <input
+                        value={item.store_item_name}
+                        onChange={(event) =>
+                          updateItem(item.clientKey, {
+                            store_item_name: event.target.value,
+                          })
+                        }
+                        className={inputClassName}
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      <span className="mb-1 block font-medium text-stone-700">
+                        Quantity
+                      </span>
+                      <input
+                        value={item.quantity}
+                        onChange={(event) =>
+                          updateItem(item.clientKey, {
+                            quantity: event.target.value,
+                          })
+                        }
+                        className={inputClassName}
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      <span
+                        className={`mb-1 block font-medium ${
+                          missingUnit ? "text-red-700" : "text-stone-700"
+                        }`}
+                      >
+                        Unit
+                      </span>
+                      <UnitSelect
+                        value={item.unit}
+                        onChange={(nextUnit) =>
+                          updateItem(item.clientKey, { unit: nextUnit })
+                        }
+                        className={
+                          missingUnit ? unitErrorClassName : inputClassName
+                        }
+                      />
+                      {missingUnit && (
+                        <p className="mt-1 text-xs text-red-600">
+                          Select a unit for this ingredient.
+                        </p>
+                      )}
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeItem(item.clientKey)}
+                    className="shrink-0 rounded-lg px-2 py-1 text-sm text-red-600 transition hover:bg-red-50"
+                  >
+                    Remove
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => removeItem(item.clientKey)}
-                  className="shrink-0 rounded-lg px-2 py-1 text-sm text-red-600 transition hover:bg-red-50"
-                >
-                  Remove
-                </button>
-              </div>
 
-              {item.is_manual ? (
-                <p className="text-xs text-orange-700">
-                  Manually added — nutrition will be estimated on save.
-                </p>
-              ) : (
-                <IngredientCard ingredient={draftToPreview(item)} compact />
-              )}
-            </li>
+                {item.is_manual ? (
+                  <p className="text-xs text-orange-700">
+                    Manually added — nutrition will be estimated on save.
+                  </p>
+                ) : (
+                  <IngredientCard ingredient={draftToPreview(item)} compact />
+                )}
+              </li>
             );
           })}
         </ul>

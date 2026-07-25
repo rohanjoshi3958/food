@@ -50,7 +50,7 @@ cd ..
 DATABASE_URL="postgresql://postgres:postgres@localhost:5433/food"
 AUTH_SECRET="replace-with-a-long-random-string"
 ANTHROPIC_API_KEY="your-anthropic-api-key"
-ANTHROPIC_MODEL=claude-sonnet-4-6
+ANTHROPIC_MODEL=claude-opus-4-8
 ```
 
 `AUTH_SECRET` is used to sign JWTs. Generate any long random string.
