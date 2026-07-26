@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-4-8"
+    openai_api_key: str = ""
+    openai_image_model: str = "gpt-image-1"
 
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),
@@ -26,4 +28,14 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
-settings = Settings()
+def get_settings() -> Settings:
+    """Always reload from env / .env so key changes apply without a full restart."""
+    return Settings()
+
+
+class _SettingsProxy:
+    def __getattr__(self, name: str):
+        return getattr(get_settings(), name)
+
+
+settings = _SettingsProxy()

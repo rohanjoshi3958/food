@@ -86,12 +86,11 @@ export function MealProceedPage({ mealId }: { mealId: string }) {
   const router = useRouter();
   const [meal, setMeal] = useState<Meal | null>(null);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [photoRefreshKey, setPhotoRefreshKey] = useState(0);
+  const [photoRefreshKey] = useState(0);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
 
   useEffect(() => {
     getCurrentUser()
@@ -141,47 +140,51 @@ export function MealProceedPage({ mealId }: { mealId: string }) {
     return () => URL.revokeObjectURL(objectUrl);
   }, [selectedFile]);
 
-  async function handlePhotoUpload() {
-    if (!selectedFile || !meal) {
-      setError("Choose a meal photo to upload.");
+  async function handleAddToCookbook() {
+    if (!meal) {
       return;
     }
 
-    setUploading(true);
+    setSaving(true);
     setError("");
-    setMessage("");
 
     const formData = new FormData();
-    formData.append("file", selectedFile);
+    if (selectedFile) {
+      formData.append("file", selectedFile);
+    }
 
     try {
-      const response = await apiFetch(`/api/meals/${meal.id}/photo`, {
+      const response = await apiFetch(`/api/meals/${meal.id}/complete`, {
         method: "POST",
         body: formData,
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         const detail =
           typeof data.detail === "string"
             ? data.detail
-            : "Unable to upload photo.";
+            : "Unable to add meal to cookbook.";
         throw new Error(detail);
       }
 
       router.replace("/?tab=meals");
       return;
-    } catch (uploadError) {
+    } catch (saveError) {
       setError(
-        uploadError instanceof Error
-          ? uploadError.message
-          : "Unable to upload photo.",
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to add meal to cookbook.",
       );
     } finally {
-      setUploading(false);
+      setSaving(false);
     }
   }
+
+  const savingLabel = selectedFile
+    ? "Adding to cookbook..."
+    : "Generating meal image...";
 
   return (
     <div className="flex flex-1 flex-col bg-stone-50">
@@ -240,7 +243,8 @@ export function MealProceedPage({ mealId }: { mealId: string }) {
             <div className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-stone-900">Meal photo</h2>
               <p className="mt-1 text-sm text-stone-600">
-                Upload a picture of the meal you made.
+                Optionally upload a picture of the meal you made. If you skip it,
+                we&apos;ll generate an AI image for your cookbook.
               </p>
 
               <div className="mt-4 space-y-4">
@@ -261,22 +265,21 @@ export function MealProceedPage({ mealId }: { mealId: string }) {
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp,image/gif"
-                  disabled={uploading}
+                  disabled={saving}
                   onChange={(event) => {
                     setSelectedFile(event.target.files?.[0] ?? null);
                     setError("");
-                    setMessage("");
                   }}
                   className="block w-full text-sm text-stone-600 file:mr-4 file:rounded-xl file:border-0 file:bg-stone-100 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-stone-700 hover:file:bg-stone-200"
                 />
 
                 <button
                   type="button"
-                  onClick={handlePhotoUpload}
-                  disabled={uploading || !selectedFile}
+                  onClick={handleAddToCookbook}
+                  disabled={saving}
                   className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {uploading ? "Uploading photo..." : "Upload"}
+                  {saving ? savingLabel : "Add to cookbook"}
                 </button>
               </div>
             </div>
@@ -284,12 +287,6 @@ export function MealProceedPage({ mealId }: { mealId: string }) {
             {error && (
               <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
                 {error}
-              </p>
-            )}
-
-            {message && (
-              <p className="rounded-xl bg-green-50 px-4 py-3 text-sm text-green-700">
-                {message}
               </p>
             )}
           </div>

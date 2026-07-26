@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import CookbookEntry, User
 from app.schemas import CookbookEntryResponse, cookbook_entry_response
+from app.services.cookbook import remove_cookbook_entry
 
 router = APIRouter(prefix="/cookbook", tags=["cookbook"])
 
@@ -42,6 +43,17 @@ def list_cookbook_entries(
         .all()
     )
     return [cookbook_entry_response(entry) for entry in entries]
+
+
+@router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_cookbook_entry(
+    entry_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    entry = _get_entry_for_user(entry_id, current_user, db)
+    remove_cookbook_entry(db, entry, current_user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{entry_id}/photo")

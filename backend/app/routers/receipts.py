@@ -2,7 +2,7 @@ import json
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
@@ -48,6 +48,34 @@ def _prune_old_receipts(db: Session, user: User) -> None:
         db.delete(receipt)
     if len(receipts) > MAX_RECEIPTS_PER_USER:
         db.commit()
+
+
+def _discard_receipts_with_statuses(
+    db: Session,
+    user: User,
+    statuses: tuple[str, ...],
+) -> None:
+    receipts = (
+        db.query(Receipt)
+        .filter(
+            Receipt.user_id == user.id,
+            Receipt.analysis_status.in_(statuses),
+        )
+        .all()
+    )
+
+    for receipt in receipts:
+        _delete_receipt_file(receipt)
+        db.delete(receipt)
+
+    if receipts:
+        db.commit()
+
+
+def _delete_receipt(db: Session, receipt: Receipt) -> None:
+    _delete_receipt_file(receipt)
+    db.delete(receipt)
+    db.commit()
 
 
 def _manual_draft_items(raw_items: list[dict]) -> list[dict]:
@@ -142,17 +170,38 @@ def list_receipts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ReceiptResponse]:
+    # Failed analyses are never kept in Uploaded receipts.
+    _discard_receipts_with_statuses(db, current_user, ("failed",))
     _prune_old_receipts(db, current_user)
 
     receipts = (
         db.query(Receipt)
         .options(joinedload(Receipt.ingredients))
-        .filter(Receipt.user_id == current_user.id)
+        .filter(
+            Receipt.user_id == current_user.id,
+            Receipt.analysis_status.notin_(
+                ("pending_review", "processing", "failed")
+            ),
+        )
         .order_by(Receipt.uploaded_at.desc())
         .limit(MAX_RECEIPTS_PER_USER)
         .all()
     )
     return [_receipt_response(receipt) for receipt in receipts]
+
+
+@router.post("/discard-pending", status_code=status.HTTP_204_NO_CONTENT)
+def discard_pending_receipts(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Remove unfinished reviews left behind by logout or closed tabs."""
+    _discard_receipts_with_statuses(
+        db,
+        current_user,
+        ("pending_review", "processing", "failed"),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/upload", response_model=ReceiptResponse, status_code=status.HTTP_201_CREATED)
@@ -216,17 +265,13 @@ async def upload_receipt(
         )
         return _receipt_response(receipt)
     except ReceiptAnalysisError as exc:
-        receipt.analysis_status = "failed"
-        receipt.analysis_error = str(exc)
-        db.commit()
+        _delete_receipt(db, receipt)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
     except Exception as exc:
-        receipt.analysis_status = "failed"
-        receipt.analysis_error = "Receipt analysis failed. Please try again."
-        db.commit()
+        _delete_receipt(db, receipt)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Receipt analysis failed. Please try again.",

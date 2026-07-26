@@ -1,12 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   apiFetch,
   AuthUser,
   errorDetailFromBody,
   getCurrentUser,
+  getToken,
   logout,
   parseError,
   readJsonResponse,
@@ -121,6 +122,14 @@ export function Dashboard() {
   }, []);
 
   function handleLogout() {
+    const token = getToken();
+    if (token) {
+      void fetch("/api/receipts/discard-pending", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+      });
+    }
     logout();
     router.replace("/login");
   }
@@ -208,6 +217,11 @@ function UploadReceiptTab({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const reviewReceiptRef = useRef<Receipt | null>(null);
+
+  useEffect(() => {
+    reviewReceiptRef.current = reviewReceipt;
+  }, [reviewReceipt]);
 
   async function loadReceipts() {
     setLoading(true);
@@ -232,8 +246,44 @@ function UploadReceiptTab({
     }
   }
 
+  function discardPendingReceiptsKeepalive() {
+    const token = getToken();
+    if (!token) {
+      return;
+    }
+
+    void fetch("/api/receipts/discard-pending", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      keepalive: true,
+    });
+  }
+
   useEffect(() => {
-    loadReceipts();
+    async function init() {
+      try {
+        await apiFetch("/api/receipts/discard-pending", { method: "POST" });
+      } catch {
+        // Still load the receipts list if cleanup fails.
+      }
+      await loadReceipts();
+    }
+
+    init();
+
+    function handlePageHide() {
+      if (reviewReceiptRef.current) {
+        discardPendingReceiptsKeepalive();
+      }
+    }
+
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      if (reviewReceiptRef.current) {
+        discardPendingReceiptsKeepalive();
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -421,8 +471,6 @@ function UploadReceiptTab({
                       <p className="text-xs text-stone-500">
                         {receipt.store_name ?? "Unknown store"} · {itemCount} item
                         {itemCount === 1 ? "" : "s"}
-                        {receipt.analysis_status === "pending_review" &&
-                          " · awaiting review"}
                         {receipt.analysis_status === "completed" && " · saved"}
                         {receipt.analysis_status === "cancelled" &&
                           " · cancelled"}
@@ -653,6 +701,7 @@ function CookbookTab() {
   const [entries, setEntries] = useState<CookbookEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadEntries() {
@@ -680,6 +729,31 @@ function CookbookTab() {
     loadEntries();
   }, []);
 
+  async function removeEntry(id: string) {
+    setRemovingId(id);
+    setError("");
+
+    try {
+      const response = await apiFetch(`/api/cookbook/${id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error(await parseError(response, "Unable to delete meal."));
+      }
+
+      setEntries((current) => current.filter((entry) => entry.id !== id));
+    } catch (removeError) {
+      setError(
+        removeError instanceof Error
+          ? removeError.message
+          : "Unable to delete meal.",
+      );
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-semibold text-stone-900">Your cookbook</h2>
@@ -694,8 +768,8 @@ function CookbookTab() {
         <p className="text-sm text-stone-500">Loading...</p>
       ) : entries.length === 0 ? (
         <p className="text-sm text-stone-500">
-          No cookbook entries yet. Generate a meal, upload a photo, and it will
-          appear here.
+          No cookbook entries yet. Generate a meal and add it to your cookbook
+          to see it here.
         </p>
       ) : (
         <ul className="space-y-4">
@@ -704,12 +778,22 @@ function CookbookTab() {
               key={entry.id}
               className="rounded-2xl border border-stone-200 bg-stone-50 p-4"
             >
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <p className="font-medium text-stone-900">{entry.title}</p>
+                <button
+                  type="button"
+                  onClick={() => removeEntry(entry.id)}
+                  disabled={removingId === entry.id}
+                  className="shrink-0 rounded-lg px-2 py-1 text-sm text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {removingId === entry.id ? "Deleting..." : "Delete"}
+                </button>
+              </div>
               {entry.photo_url && (
                 <div className="mb-4">
                   <CookbookPhoto entryId={entry.id} photoUrl={entry.photo_url} />
                 </div>
               )}
-              <p className="font-medium text-stone-900">{entry.title}</p>
               {entry.description && (
                 <p className="mt-1 text-sm text-stone-600">{entry.description}</p>
               )}

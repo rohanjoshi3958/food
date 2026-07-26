@@ -26,6 +26,12 @@ def _remove_cookbook_photo(user_id: str, filename: str | None) -> None:
         photo_path.unlink()
 
 
+def remove_cookbook_entry(db: Session, entry: CookbookEntry, user: User) -> None:
+    _remove_cookbook_photo(user.id, entry.photo_filename)
+    db.delete(entry)
+    db.commit()
+
+
 def _copy_meal_macros(meal: Meal) -> dict[str, float | None]:
     return {
         "calories": meal.calories,

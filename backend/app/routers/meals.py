@@ -12,6 +12,7 @@ from app.models import Ingredient, Meal, User
 from app.schemas import MealResponse, meal_response
 from app.services.cookbook import add_meal_to_cookbook
 from app.services.ingredient_deduction import serialize_meal_ingredients
+from app.services.meal_image import MealImageError, generate_meal_image
 from app.services.meal_nutrition import calculate_meal_macros
 from app.services.meal_generator import (
     MealGenerationError,
@@ -44,6 +45,47 @@ def _get_meal_for_user(meal_id: str, current_user: User, db: Session) -> Meal:
 
 def _meal_photo_path(user_id: str, filename: str) -> Path:
     return Path(settings.meal_upload_dir) / user_id / filename
+
+
+def _store_meal_photo_bytes(
+    current_user: User,
+    meal: Meal,
+    contents: bytes,
+    filename: str,
+) -> None:
+    upload_root = Path(settings.meal_upload_dir) / current_user.id
+    upload_root.mkdir(parents=True, exist_ok=True)
+
+    if meal.photo_filename:
+        existing = _meal_photo_path(current_user.id, meal.photo_filename)
+        if existing.exists():
+            existing.unlink()
+
+    safe_name = Path(filename).name
+    stored_name = f"{uuid.uuid4().hex}_{safe_name}"
+    destination = upload_root / stored_name
+    destination.write_bytes(contents)
+    meal.photo_filename = stored_name
+
+
+def _finalize_meal_to_cookbook(
+    db: Session,
+    meal: Meal,
+    current_user: User,
+) -> MealResponse:
+    add_meal_to_cookbook(db, meal, current_user)
+
+    response = meal_response(meal)
+
+    if meal.photo_filename:
+        meal_photo = _meal_photo_path(current_user.id, meal.photo_filename)
+        if meal_photo.exists():
+            meal_photo.unlink()
+
+    db.delete(meal)
+    db.commit()
+
+    return response
 
 
 @router.get("", response_model=list[MealResponse])
@@ -116,6 +158,49 @@ def get_meal(
     return meal_response(meal)
 
 
+@router.post("/{meal_id}/complete", response_model=MealResponse)
+async def complete_meal(
+    meal_id: str,
+    file: UploadFile | None = File(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MealResponse:
+    meal = _get_meal_for_user(meal_id, current_user, db)
+
+    if file is not None and file.filename:
+        if file.content_type not in ALLOWED_PHOTO_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upload a JPG, PNG, WEBP, or GIF image.",
+            )
+        contents = await file.read()
+        if not contents:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Upload a valid image file.",
+            )
+        _store_meal_photo_bytes(current_user, meal, contents, file.filename)
+    else:
+        try:
+            image_bytes = generate_meal_image(meal)
+        except MealImageError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        _store_meal_photo_bytes(
+            current_user,
+            meal,
+            image_bytes,
+            f"{meal.name.replace(' ', '_').lower()[:40] or 'meal'}.png",
+        )
+
+    db.commit()
+    db.refresh(meal)
+
+    return _finalize_meal_to_cookbook(db, meal, current_user)
+
+
 @router.post("/{meal_id}/photo", response_model=MealResponse)
 async def upload_meal_photo(
     meal_id: str,
@@ -129,48 +214,12 @@ async def upload_meal_photo(
             detail="A photo is required.",
         )
 
-    if file.content_type not in ALLOWED_PHOTO_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Upload a JPG, PNG, WEBP, or GIF image.",
-        )
-
-    meal = _get_meal_for_user(meal_id, current_user, db)
-
-    upload_root = Path(settings.meal_upload_dir) / current_user.id
-    upload_root.mkdir(parents=True, exist_ok=True)
-
-    if meal.photo_filename:
-        existing = _meal_photo_path(current_user.id, meal.photo_filename)
-        if existing.exists():
-            existing.unlink()
-
-    safe_name = Path(file.filename).name
-    stored_name = f"{uuid.uuid4().hex}_{safe_name}"
-    destination = upload_root / stored_name
-
-    contents = await file.read()
-    destination.write_bytes(contents)
-
-    meal.photo_filename = stored_name
-    db.commit()
-    db.refresh(meal)
-
-    add_meal_to_cookbook(db, meal, current_user)
-
-    response = meal_response(meal)
-
-    # Meal is done once it's in the cookbook — clear it so Generate meal
-    # returns to an empty state.
-    if meal.photo_filename:
-        meal_photo = _meal_photo_path(current_user.id, meal.photo_filename)
-        if meal_photo.exists():
-            meal_photo.unlink()
-
-    db.delete(meal)
-    db.commit()
-
-    return response
+    return await complete_meal(
+        meal_id=meal_id,
+        file=file,
+        current_user=current_user,
+        db=db,
+    )
 
 
 @router.get("/{meal_id}/photo")

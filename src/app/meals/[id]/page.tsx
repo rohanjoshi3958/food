@@ -3,7 +3,7 @@ import { MealProceedPage } from "@/components/meal-proceed-page";
 
 export const metadata: Metadata = {
   title: "Food | Your meal",
-  description: "View your meal and upload a photo.",
+  description: "View your meal and add it to your cookbook.",
 };
 
 export default async function MealPage({
