@@ -25,6 +25,7 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
         quantity=item.quantity,
         unit=item.unit,
         serving_size=estimated.serving_size,
+        servings_per_container=estimated.servings_per_container,
         calories=estimated.calories,
         protein_g=estimated.protein_g,
         carbs_g=estimated.carbs_g,
@@ -69,6 +70,11 @@ def create_ingredient(
             existing.receipt_id = receipt_id
         if not existing.serving_size and resolved.serving_size:
             existing.serving_size = resolved.serving_size
+        if (
+            existing.servings_per_container is None
+            and resolved.servings_per_container is not None
+        ):
+            existing.servings_per_container = resolved.servings_per_container
         for field in (
             "calories",
             "protein_g",
@@ -93,6 +99,7 @@ def create_ingredient(
         quantity=resolved.quantity,
         unit=resolved.unit,
         serving_size=resolved.serving_size,
+        servings_per_container=resolved.servings_per_container,
         calories=resolved.calories,
         protein_g=resolved.protein_g,
         carbs_g=resolved.carbs_g,

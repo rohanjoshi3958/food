@@ -69,6 +69,7 @@ class Ingredient(Base):
     quantity: Mapped[str | None] = mapped_column(String, nullable=True)
     unit: Mapped[str | None] = mapped_column(String, nullable=True)
     serving_size: Mapped[str | None] = mapped_column(String, nullable=True)
+    servings_per_container: Mapped[float | None] = mapped_column(Float, nullable=True)
     calories: Mapped[float | None] = mapped_column(Float, nullable=True)
     protein_g: Mapped[float | None] = mapped_column(Float, nullable=True)
     carbs_g: Mapped[float | None] = mapped_column(Float, nullable=True)

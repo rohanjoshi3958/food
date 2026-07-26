@@ -35,6 +35,7 @@ class IngredientResponse(BaseModel):
     quantity: str | None = None
     unit: str | None = None
     serving_size: str | None = None
+    servings_per_container: float | None = None
     calories: float | None = None
     protein_g: float | None = None
     carbs_g: float | None = None
@@ -54,6 +55,7 @@ class DraftIngredientItem(BaseModel):
     quantity: str | None = None
     unit: str | None = None
     serving_size: str | None = None
+    servings_per_container: float | None = None
     calories: float | None = None
     protein_g: float | None = None
     carbs_g: float | None = None
@@ -73,6 +75,17 @@ class CreateManualIngredientRequest(BaseModel):
 
 class ConfirmReceiptRequest(BaseModel):
     items: list[DraftIngredientItem]
+
+
+class PreviousMealContext(BaseModel):
+    name: str
+    description: str | None = None
+    ingredients_used: str | None = None
+    instructions: str | None = None
+
+
+class GenerateMealRequest(BaseModel):
+    previous_meal: PreviousMealContext | None = None
 
 
 class ReceiptResponse(BaseModel):

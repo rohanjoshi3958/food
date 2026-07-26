@@ -65,6 +65,11 @@ def merge_draft_items(items: list[dict]) -> list[dict]:
 
         if not existing.get("serving_size") and raw.get("serving_size"):
             existing["serving_size"] = raw.get("serving_size")
+        if (
+            existing.get("servings_per_container") is None
+            and raw.get("servings_per_container") is not None
+        ):
+            existing["servings_per_container"] = raw.get("servings_per_container")
         for field in (
             "calories",
             "protein_g",

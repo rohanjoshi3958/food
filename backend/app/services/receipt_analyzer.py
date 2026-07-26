@@ -47,7 +47,8 @@ Extract every line item visible on the receipt. For each item return:
 - ingredient_name: a clear normalized name (e.g. "Organic Bananas")
 - is_food: true for groceries/food, false for non-food (tax, bags, coupons, fees, etc.)
 - quantity and unit from the receipt when shown
-- serving_size: a reasonable standard serving (e.g. "1 medium banana (118g)") — null if is_food is false
+- serving_size: a reasonable standard serving (e.g. "1 medium banana (118g)" or "2 tbsp (32g)") — null if is_food is false
+- servings_per_container: estimated number of those standard servings in ONE unit of the purchased item (e.g. for quantity unit "each"/"jar", servings in one jar; for "oz", servings per 1 oz). Example: a typical almond butter jar might be ~14-17. Null if is_food is false or unknown.
 - nutritional facts PER serving: calories, protein_g, carbs_g, fat_g, fiber_g, sodium_mg — null if is_food is false
 - nutrition_notes: brief note if values are estimated from standard USDA/database data — null if is_food is false
 
@@ -64,6 +65,7 @@ Respond with ONLY valid JSON in this exact shape:
       "quantity": "2.5",
       "unit": "lb",
       "serving_size": "1 medium (118g)",
+      "servings_per_container": 0.25,
       "calories": 105,
       "protein_g": 1.3,
       "carbs_g": 27,
@@ -81,9 +83,16 @@ NUTRITION_ESTIMATE_PROMPT = """Estimate nutritional facts per standard serving f
 - Item: {ingredient_name}
 - Quantity purchased: {quantity} {unit}
 
+Also estimate how many of those standard servings are in ONE unit of the purchase unit above.
+Examples:
+- unit "each" for a jar of almond butter → servings_per_container ≈ 15 (servings in one jar)
+- unit "oz" for yogurt → servings_per_container ≈ servings per 1 oz
+- unit "lb" for bananas → servings_per_container ≈ servings per 1 lb
+
 Respond with ONLY valid JSON:
 {{
   "serving_size": "1 serving (describe size)",
+  "servings_per_container": 15,
   "calories": 100,
   "protein_g": 5,
   "carbs_g": 12,
@@ -93,7 +102,7 @@ Respond with ONLY valid JSON:
   "nutrition_notes": "Brief note on data source"
 }}
 
-Use null for unknown values. Base estimates on standard USDA or nutrition database values."""
+Use null for unknown values. Base estimates on standard USDA or nutrition database / typical package sizes."""
 
 
 class ParsedReceiptItem(BaseModel):
@@ -103,6 +112,7 @@ class ParsedReceiptItem(BaseModel):
     quantity: str | None = None
     unit: str | None = None
     serving_size: str | None = None
+    servings_per_container: float | None = None
     calories: float | None = None
     protein_g: float | None = None
     carbs_g: float | None = None
@@ -252,6 +262,9 @@ def estimate_ingredient_nutrition(
             quantity=quantity,
             unit=unit,
             serving_size=payload.get("serving_size"),
+            servings_per_container=_as_optional_float(
+                payload.get("servings_per_container")
+            ),
             calories=payload.get("calories"),
             protein_g=payload.get("protein_g"),
             carbs_g=payload.get("carbs_g"),
@@ -264,3 +277,15 @@ def estimate_ingredient_nutrition(
         raise ReceiptAnalysisError(
             f"Could not parse nutrition estimate for {ingredient_name}."
         ) from exc
+
+
+def _as_optional_float(value) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    return number

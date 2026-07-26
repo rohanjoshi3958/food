@@ -13,9 +13,9 @@ MEAL_GENERATION_PROMPT = """You are a helpful home chef. Given the ingredients a
 Available ingredients:
 {ingredients}
 
-Use each selected ingredient's quantity, unit, and serving size when deciding how much to use in the recipe. You do NOT need to use every available ingredient — choose a sensible subset that makes one cohesive, practical meal. Only include ingredients you actually use in ingredients_used. You may assume basic pantry staples (salt, pepper, cooking oil, butter, water) are available if needed.
+Use each selected ingredient's quantity, unit, serving size, and servings-per-unit when deciding how much to use in the recipe. Prefer amounts that match the serving size when possible (e.g. tablespoons from a jar sold as "each"). You do NOT need to use every available ingredient — choose a sensible subset that makes one cohesive, practical meal. Only include ingredients you actually use in ingredients_used. You may assume basic pantry staples (salt, pepper, cooking oil, butter, water) are available if needed.
 
-CRITICAL: For every ingredient you include, the amount in ingredients_used must be less than or equal to the maximum available quantity shown for that item. Never require more than the user has on hand.For example, isf they only have 1 g of tomatoes, use at most 1 g of tomatoes.
+CRITICAL: For every ingredient you include, the amount in ingredients_used must be less than or equal to the maximum available quantity shown for that item. Never require more than the user has on hand. For example, if they only have 1 g of tomatoes, use at most 1 g of tomatoes.
 
 Respond with ONLY valid JSON in this exact shape:
 {{
@@ -35,6 +35,10 @@ Respond with ONLY valid JSON in this exact shape:
 
 Put each instruction step in its own array element. Do not combine multiple steps into one string."""
 
+FOLLOW_UP_PROMPT = """Suggest a different meal than the one you just proposed.
+Keep using only the available ingredients and the same JSON response format.
+Do not repeat the same dish name or essentially the same recipe."""
+
 
 class MealIngredientUse(BaseModel):
     name: str
@@ -46,6 +50,13 @@ class GeneratedMeal(BaseModel):
     description: str
     ingredients_used: list[MealIngredientUse] = Field(default_factory=list)
     instructions: str
+
+
+class PreviousMealTurn(BaseModel):
+    name: str
+    description: str | None = None
+    ingredients_used: str | None = None
+    instructions: str | None = None
 
 
 def normalize_instructions(raw: list[str] | str) -> str:
@@ -88,6 +99,10 @@ def _format_ingredients(ingredients: list[Ingredient]) -> str:
             details.append(f"maximum available: {quantity_label} (do not exceed)")
         if ingredient.serving_size:
             details.append(f"serving size: {ingredient.serving_size}")
+        if ingredient.servings_per_container:
+            details.append(
+                f"~{ingredient.servings_per_container:g} servings per {ingredient.unit or 'unit'}"
+            )
 
         lines.append(", ".join(details))
 
@@ -98,7 +113,47 @@ def format_ingredients_used(items: list[MealIngredientUse]) -> str:
     return "\n".join(f"- {item.name}: {item.amount}" for item in items)
 
 
-def generate_meal_from_ingredients(ingredients: list[Ingredient]) -> GeneratedMeal:
+def _normalize_meal_name(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", name.casefold())
+
+
+def _is_same_meal(candidate: str, previous: str | None) -> bool:
+    if not previous:
+        return False
+    left = _normalize_meal_name(candidate)
+    right = _normalize_meal_name(previous)
+    return bool(left) and left == right
+
+
+def _assistant_turn_content(previous: PreviousMealTurn) -> str:
+    return json.dumps(
+        {
+            "name": previous.name,
+            "description": previous.description or "",
+            "ingredients_used": previous.ingredients_used or "",
+            "instructions": previous.instructions or "",
+        },
+        ensure_ascii=True,
+    )
+
+
+def _parse_generated_meal(text: str) -> GeneratedMeal:
+    payload = _extract_json(text)
+    instructions = normalize_instructions(payload.get("instructions", ""))
+    payload["instructions"] = instructions
+    parsed = GeneratedMeal.model_validate(payload)
+
+    if not parsed.name.strip() or not parsed.instructions.strip():
+        raise MealGenerationError("The AI response did not include a complete meal.")
+
+    return parsed
+
+
+def generate_meal_from_ingredients(
+    ingredients: list[Ingredient],
+    *,
+    previous_meal: PreviousMealTurn | None = None,
+) -> GeneratedMeal:
     if not settings.anthropic_api_key:
         raise MealGenerationError(
             "Anthropic API key is not configured. Add ANTHROPIC_API_KEY to your .env file."
@@ -110,40 +165,86 @@ def generate_meal_from_ingredients(ingredients: list[Ingredient]) -> GeneratedMe
         )
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    base_prompt = MEAL_GENERATION_PROMPT.format(
+        ingredients=_format_ingredients(ingredients),
+    )
 
-    message = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=4096,
-        messages=[
+    messages: list[dict] = [{"role": "user", "content": base_prompt}]
+
+    if previous_meal and previous_meal.name.strip():
+        messages.append(
             {
-                "role": "user",
-                "content": MEAL_GENERATION_PROMPT.format(
-                    ingredients=_format_ingredients(ingredients),
-                ),
+                "role": "assistant",
+                "content": _assistant_turn_content(previous_meal),
             }
-        ],
-    )
+        )
+        messages.append({"role": "user", "content": FOLLOW_UP_PROMPT})
 
-    text_blocks = [block.text for block in message.content if block.type == "text"]
-    if not text_blocks:
-        raise MealGenerationError("Anthropic returned an empty response.")
+    last_error: Exception | None = None
+    avoid_name = previous_meal.name if previous_meal else None
 
-    try:
-        payload = _extract_json(text_blocks[-1])
-        instructions = normalize_instructions(payload.get("instructions", ""))
-        payload["instructions"] = instructions
-        parsed = GeneratedMeal.model_validate(payload)
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise MealGenerationError(
-            "Could not parse meal suggestion from the AI response."
-        ) from exc
+    for attempt in range(2):
+        conversation = list(messages)
+        if attempt > 0 and avoid_name:
+            conversation.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f'That was still too similar to "{avoid_name.strip()}". '
+                        "Suggest a clearly different meal in the same JSON format."
+                    ),
+                }
+            )
 
-    if not parsed.name.strip() or not parsed.instructions.strip():
-        raise MealGenerationError("The AI response did not include a complete meal.")
+        try:
+            message = client.messages.create(
+                model=settings.anthropic_model,
+                max_tokens=4096,
+                messages=conversation,
+            )
+        except Exception as exc:
+            last_error = exc
+            continue
 
-    parsed.ingredients_used = clamp_meal_ingredients_to_pantry(
-        ingredients,
-        parsed.ingredients_used,
-    )
+        text_blocks = [block.text for block in message.content if block.type == "text"]
+        if not text_blocks:
+            last_error = MealGenerationError("Anthropic returned an empty response.")
+            continue
 
-    return parsed
+        try:
+            parsed = _parse_generated_meal(text_blocks[-1])
+        except (json.JSONDecodeError, ValueError, MealGenerationError) as exc:
+            if isinstance(exc, MealGenerationError):
+                last_error = exc
+            else:
+                err = MealGenerationError(
+                    "Could not parse meal suggestion from the AI response."
+                )
+                err.__cause__ = exc
+                last_error = err
+            continue
+
+        if _is_same_meal(parsed.name, avoid_name):
+            # Keep the failed suggestion in the conversation for the next attempt.
+            messages.append({"role": "assistant", "content": text_blocks[-1]})
+            last_error = MealGenerationError(
+                "Generated the same meal as last time; retrying."
+            )
+            continue
+
+        parsed.ingredients_used = clamp_meal_ingredients_to_pantry(
+            ingredients,
+            parsed.ingredients_used,
+        )
+
+        return parsed
+
+    if isinstance(last_error, MealGenerationError):
+        if "same meal as last time" in str(last_error):
+            raise MealGenerationError(
+                "Could not generate a different meal. Please try again."
+            )
+        raise last_error
+    if last_error is not None:
+        raise MealGenerationError("Meal generation failed. Please try again.") from last_error
+    raise MealGenerationError("Meal generation failed. Please try again.")

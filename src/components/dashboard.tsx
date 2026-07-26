@@ -26,6 +26,7 @@ type DraftItem = {
   quantity: string | null;
   unit: string | null;
   serving_size: string | null;
+  servings_per_container: number | null;
   calories: number | null;
   protein_g: number | null;
   carbs_g: number | null;
@@ -537,6 +538,18 @@ function GenerateMealTab() {
     try {
       const response = await apiFetch("/api/meals/generate", {
         method: "POST",
+        body: JSON.stringify(
+          meal
+            ? {
+                previous_meal: {
+                  name: meal.name,
+                  description: meal.description,
+                  ingredients_used: meal.ingredients_used,
+                  instructions: meal.instructions,
+                },
+              }
+            : {},
+        ),
       });
 
       const data = await response.json();

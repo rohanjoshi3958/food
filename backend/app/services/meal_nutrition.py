@@ -7,6 +7,7 @@ from app.services.ingredient_deduction import (
     _ingredient_on_hand,
     meal_ingredients_data,
     normalize_unit,
+    parse_amount,
 )
 
 MACRO_FIELDS = (
@@ -39,23 +40,55 @@ class MealMacros:
         }
 
 
-def _usage_fraction(ingredient: Ingredient, used: dict) -> float | None:
-    on_hand_quantity, on_hand_unit = _ingredient_on_hand(ingredient)
+def _serving_amount(ingredient: Ingredient) -> tuple[float | None, str | None]:
+    if not ingredient.serving_size:
+        return None, None
+    # Prefer the primary measure before any parenthetical weight, e.g. "2 tbsp (32g)".
+    primary = ingredient.serving_size.split("(", 1)[0].strip()
+    return parse_amount(primary)
+
+
+def _servings_used(ingredient: Ingredient, used: dict) -> float | None:
+    """Return how many standard servings the meal uses from this pantry item."""
     used_quantity = used.get("quantity")
-
-    if on_hand_quantity is None or used_quantity is None or on_hand_quantity <= 0:
+    if used_quantity is None:
         return None
 
-    used_unit = normalize_unit(used.get("unit")) or on_hand_unit
-    converted_used = _convert_amount(used_quantity, used_unit, on_hand_unit)
+    used_unit = normalize_unit(used.get("unit"))
+    on_hand_quantity, on_hand_unit = _ingredient_on_hand(ingredient)
+    servings_per_unit = ingredient.servings_per_container
 
-    if converted_used is None and used_unit == on_hand_unit:
-        converted_used = used_quantity
+    serving_quantity, serving_unit = _serving_amount(ingredient)
+    if serving_quantity and serving_quantity > 0:
+        converted_to_serving = _convert_amount(
+            used_quantity,
+            used_unit,
+            serving_unit,
+        )
+        if converted_to_serving is not None:
+            return converted_to_serving / serving_quantity
+        if used_unit == serving_unit:
+            return used_quantity / serving_quantity
 
-    if converted_used is None:
-        return None
+    if (
+        servings_per_unit
+        and servings_per_unit > 0
+        and on_hand_quantity
+        and on_hand_quantity > 0
+    ):
+        converted_to_on_hand = _convert_amount(
+            used_quantity,
+            used_unit,
+            on_hand_unit,
+        )
+        if converted_to_on_hand is None and used_unit == on_hand_unit:
+            converted_to_on_hand = used_quantity
 
-    return min(converted_used / on_hand_quantity, 1.0)
+        if converted_to_on_hand is not None:
+            # servings_per_container is defined per 1 unit of the pantry unit.
+            return converted_to_on_hand * servings_per_unit
+
+    return None
 
 
 def calculate_meal_macros(
@@ -70,14 +103,14 @@ def calculate_meal_macros(
         if ingredient is None:
             continue
 
-        fraction = _usage_fraction(ingredient, used)
-        if fraction is None:
+        servings = _servings_used(ingredient, used)
+        if servings is None or servings <= 0:
             continue
 
         for field in MACRO_FIELDS:
             value = getattr(ingredient, field)
             if value is not None:
-                totals[field] += value * fraction
+                totals[field] += value * servings
                 has_value[field] = True
 
     def round_value(field: str) -> float | None:

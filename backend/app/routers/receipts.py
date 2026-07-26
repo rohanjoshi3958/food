@@ -122,6 +122,7 @@ def _draft_from_parsed_items(items: list) -> list[dict]:
             quantity=item.quantity,
             unit=item.unit,
             serving_size=item.serving_size,
+            servings_per_container=item.servings_per_container,
             calories=item.calories,
             protein_g=item.protein_g,
             carbs_g=item.carbs_g,

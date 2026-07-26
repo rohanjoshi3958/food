@@ -9,13 +9,14 @@ from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import Ingredient, Meal, User
-from app.schemas import MealResponse, meal_response
+from app.schemas import GenerateMealRequest, MealResponse, meal_response
 from app.services.cookbook import add_meal_to_cookbook
 from app.services.ingredient_deduction import serialize_meal_ingredients
 from app.services.meal_image import MealImageError, generate_meal_image
 from app.services.meal_nutrition import calculate_meal_macros
 from app.services.meal_generator import (
     MealGenerationError,
+    PreviousMealTurn,
     format_ingredients_used,
     generate_meal_from_ingredients,
 )
@@ -104,6 +105,7 @@ def list_meals(
 
 @router.post("/generate", response_model=MealResponse, status_code=status.HTTP_201_CREATED)
 def generate_meal(
+    payload: GenerateMealRequest = GenerateMealRequest(),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MealResponse:
@@ -114,8 +116,20 @@ def generate_meal(
         .all()
     )
 
+    previous = None
+    if payload.previous_meal:
+        previous = PreviousMealTurn(
+            name=payload.previous_meal.name,
+            description=payload.previous_meal.description,
+            ingredients_used=payload.previous_meal.ingredients_used,
+            instructions=payload.previous_meal.instructions,
+        )
+
     try:
-        suggestion = generate_meal_from_ingredients(ingredients)
+        suggestion = generate_meal_from_ingredients(
+            ingredients,
+            previous_meal=previous,
+        )
     except MealGenerationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

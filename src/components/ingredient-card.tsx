@@ -5,6 +5,7 @@ export type Ingredient = {
   quantity: string | null;
   unit: string | null;
   serving_size: string | null;
+  servings_per_container: number | null;
   calories: number | null;
   protein_g: number | null;
   carbs_g: number | null;
@@ -30,6 +31,11 @@ export function IngredientCard({
   const quantityLabel = [ingredient.quantity, ingredient.unit]
     .filter(Boolean)
     .join(" ");
+
+  const servingsLabel =
+    ingredient.servings_per_container != null
+      ? `~${ingredient.servings_per_container} servings / ${ingredient.unit || "unit"}`
+      : null;
 
   return (
     <div
@@ -68,9 +74,11 @@ export function IngredientCard({
         </div>
       )}
 
-      {ingredient.serving_size && (
+      {(ingredient.serving_size || servingsLabel) && (
         <p className={`text-xs text-stone-500 ${compact ? "" : "mt-2"}`}>
-          Serving: {ingredient.serving_size}
+          {ingredient.serving_size ? `Serving: ${ingredient.serving_size}` : null}
+          {ingredient.serving_size && servingsLabel ? " · " : null}
+          {servingsLabel}
         </p>
       )}
 

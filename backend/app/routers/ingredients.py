@@ -32,6 +32,11 @@ def _consolidate_pantry(db: Session, user: User) -> list[Ingredient]:
         existing.quantity = _sum_quantities(existing.quantity, ingredient.quantity)
         if not existing.serving_size and ingredient.serving_size:
             existing.serving_size = ingredient.serving_size
+        if (
+            existing.servings_per_container is None
+            and ingredient.servings_per_container is not None
+        ):
+            existing.servings_per_container = ingredient.servings_per_container
         for field in (
             "calories",
             "protein_g",

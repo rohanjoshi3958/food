@@ -12,6 +12,7 @@ export type DraftIngredient = {
   quantity: string;
   unit: string;
   serving_size: string | null;
+  servings_per_container: number | null;
   calories: number | null;
   protein_g: number | null;
   carbs_g: number | null;
@@ -28,6 +29,7 @@ type DraftItemInput = {
   quantity?: string | null;
   unit?: string | null;
   serving_size?: string | null;
+  servings_per_container?: number | null;
   calories?: number | null;
   protein_g?: number | null;
   carbs_g?: number | null;
@@ -113,6 +115,12 @@ function mergeDraftItems(items: DraftItemInput[]): DraftItemInput[] {
     if (!existing.serving_size && item.serving_size) {
       existing.serving_size = item.serving_size;
     }
+    if (
+      existing.servings_per_container == null &&
+      item.servings_per_container != null
+    ) {
+      existing.servings_per_container = item.servings_per_container;
+    }
     for (const field of [
       "calories",
       "protein_g",
@@ -141,6 +149,7 @@ function draftFromApi(items: DraftItemInput[]): DraftIngredient[] {
       quantity: item.quantity ?? "",
       unit: item.unit ?? "",
       serving_size: item.serving_size ?? null,
+      servings_per_container: item.servings_per_container ?? null,
       calories: item.calories ?? null,
       protein_g: item.protein_g ?? null,
       carbs_g: item.carbs_g ?? null,
@@ -159,6 +168,7 @@ function toPayloadItem(item: DraftIngredient) {
     quantity: item.quantity || null,
     unit: item.unit || null,
     serving_size: item.serving_size,
+    servings_per_container: item.servings_per_container,
     calories: item.calories,
     protein_g: item.protein_g,
     carbs_g: item.carbs_g,
@@ -191,6 +201,7 @@ function draftToPreview(item: DraftIngredient): Ingredient {
     quantity: item.quantity || null,
     unit: item.unit || null,
     serving_size: item.serving_size,
+    servings_per_container: item.servings_per_container,
     calories: item.calories,
     protein_g: item.protein_g,
     carbs_g: item.carbs_g,
@@ -315,6 +326,7 @@ export function ReceiptReview({
             quantity: newQuantity.trim(),
             unit: newUnit,
             serving_size: null,
+            servings_per_container: null,
             calories: null,
             protein_g: null,
             carbs_g: null,
