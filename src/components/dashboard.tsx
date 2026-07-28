@@ -579,7 +579,7 @@ function GenerateMealTab() {
       <div>
         <h2 className="text-xl font-semibold text-stone-900">Generate meal</h2>
         <p className="mt-1 text-sm text-stone-600">
-          Create a meal suggestion from the ingredients in your kitchen.
+          Create a one-person meal suggestion from the ingredients in your kitchen.
         </p>
       </div>
 

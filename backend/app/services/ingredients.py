@@ -8,7 +8,12 @@ from app.services.receipt_analyzer import ReceiptAnalysisError, estimate_ingredi
 
 def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
     if not item.is_food or not item.is_manual:
-        return item
+        return item.model_copy(
+            update={
+                "quantity": item.quantity or "1",
+                "unit": item.unit or "each",
+            }
+        )
 
     try:
         estimated = estimate_ingredient_nutrition(
@@ -17,13 +22,18 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
             item.unit,
         )
     except ReceiptAnalysisError:
-        return item
+        return item.model_copy(
+            update={
+                "quantity": item.quantity or "1",
+                "unit": item.unit or "each",
+            }
+        )
 
     return DraftIngredientItem(
         store_item_name=item.store_item_name or item.ingredient_name,
         ingredient_name=item.ingredient_name,
-        quantity=item.quantity,
-        unit=item.unit,
+        quantity=item.quantity or estimated.quantity or "1",
+        unit=item.unit or estimated.unit or "each",
         serving_size=estimated.serving_size,
         servings_per_container=estimated.servings_per_container,
         calories=estimated.calories,
@@ -65,6 +75,10 @@ def create_ingredient(
     existing = _find_matching_pantry_item(db, user, name, resolved.unit)
 
     if existing is not None:
+        existing.original_quantity = _sum_quantities(
+            existing.original_quantity or existing.quantity,
+            resolved.quantity,
+        )
         existing.quantity = _sum_quantities(existing.quantity, resolved.quantity)
         if receipt_id is not None:
             existing.receipt_id = receipt_id
@@ -97,6 +111,7 @@ def create_ingredient(
         name=name,
         store_item_name=resolved.store_item_name or resolved.ingredient_name,
         quantity=resolved.quantity,
+        original_quantity=resolved.quantity,
         unit=resolved.unit,
         serving_size=resolved.serving_size,
         servings_per_container=resolved.servings_per_container,

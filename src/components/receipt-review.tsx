@@ -181,18 +181,6 @@ function toPayloadItem(item: DraftIngredient) {
   };
 }
 
-function formatMissingUnitError(items: DraftIngredient[]): string {
-  const names = items.map(
-    (item) => item.ingredient_name.trim() || "Unnamed ingredient",
-  );
-
-  if (names.length === 1) {
-    return `Select a unit for "${names[0]}".`;
-  }
-
-  return `Select a unit for: ${names.map((name) => `"${name}"`).join(", ")}.`;
-}
-
 function draftToPreview(item: DraftIngredient): Ingredient {
   return {
     id: item.clientKey,
@@ -237,9 +225,6 @@ export function ReceiptReview({
   const [newUnit, setNewUnit] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [missingUnitKeys, setMissingUnitKeys] = useState<Set<string>>(
-    () => new Set(),
-  );
   const skipNextPersist = useRef(true);
   const onDraftChangeRef = useRef(onDraftChange);
 
@@ -276,21 +261,6 @@ export function ReceiptReview({
         item.clientKey === clientKey ? { ...item, ...updates } : item,
       ),
     );
-
-    if (updates.unit) {
-      setMissingUnitKeys((current) => {
-        if (!current.has(clientKey)) {
-          return current;
-        }
-
-        const next = new Set(current);
-        next.delete(clientKey);
-        if (next.size === 0) {
-          setError("");
-        }
-        return next;
-      });
-    }
   }
 
   function removeItem(clientKey: string) {
@@ -301,11 +271,6 @@ export function ReceiptReview({
     const name = newName.trim();
     if (!name) {
       setError("Enter an ingredient name to add.");
-      return;
-    }
-
-    if (!newUnit) {
-      setError("Select a unit.");
       return;
     }
 
@@ -323,8 +288,8 @@ export function ReceiptReview({
             clientKey: crypto.randomUUID(),
             store_item_name: name,
             ingredient_name: name,
-            quantity: newQuantity.trim(),
-            unit: newUnit,
+            quantity: newQuantity.trim() || "1",
+            unit: newUnit.trim() || "each",
             serving_size: null,
             servings_per_container: null,
             calories: null,
@@ -363,18 +328,6 @@ export function ReceiptReview({
       return;
     }
 
-    const itemsMissingUnit = validItems.filter((item) => !item.unit);
-
-    if (itemsMissingUnit.length > 0) {
-      setMissingUnitKeys(
-        new Set(itemsMissingUnit.map((item) => item.clientKey)),
-      );
-      setError(formatMissingUnitError(itemsMissingUnit));
-      return;
-    }
-
-    setMissingUnitKeys(new Set());
-
     setSaving(true);
     setError("");
 
@@ -386,6 +339,8 @@ export function ReceiptReview({
             toPayloadItem({
               ...item,
               ingredient_name: item.ingredient_name.trim(),
+              unit: item.unit.trim() || "each",
+              quantity: item.quantity.trim() || "1",
             }),
           ),
         }),
@@ -430,16 +385,10 @@ export function ReceiptReview({
       ) : (
         <ul className="space-y-4">
           {items.map((item) => {
-            const missingUnit = missingUnitKeys.has(item.clientKey);
-
             return (
               <li
                 key={item.clientKey}
-                className={`rounded-2xl border p-4 ${
-                  missingUnit
-                    ? "border-red-300 bg-red-50/40"
-                    : "border-stone-200 bg-white"
-                }`}
+                className="rounded-2xl border border-stone-200 bg-white p-4"
               >
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div className="grid flex-1 gap-3 sm:grid-cols-2">
@@ -486,11 +435,7 @@ export function ReceiptReview({
                       />
                     </label>
                     <label className="block text-sm">
-                      <span
-                        className={`mb-1 block font-medium ${
-                          missingUnit ? "text-red-700" : "text-stone-700"
-                        }`}
-                      >
+                      <span className="mb-1 block font-medium text-stone-700">
                         Unit
                       </span>
                       <UnitSelect
@@ -498,15 +443,9 @@ export function ReceiptReview({
                         onChange={(nextUnit) =>
                           updateItem(item.clientKey, { unit: nextUnit })
                         }
-                        className={
-                          missingUnit ? unitErrorClassName : inputClassName
-                        }
+                        required={false}
+                        className={inputClassName}
                       />
-                      {missingUnit && (
-                        <p className="mt-1 text-xs text-red-600">
-                          Select a unit for this ingredient.
-                        </p>
-                      )}
                     </label>
                   </div>
                   <button
@@ -546,7 +485,7 @@ export function ReceiptReview({
             placeholder="Quantity"
             className={inputClassName}
           />
-          <UnitSelect value={newUnit} onChange={setNewUnit} />
+          <UnitSelect value={newUnit} onChange={setNewUnit} required={false} />
         </div>
         <button
           type="button"
@@ -587,6 +526,3 @@ export function ReceiptReview({
 
 const inputClassName =
   "w-full rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-900 outline-none transition focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100";
-
-const unitErrorClassName =
-  "w-full rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-stone-900 outline-none transition focus:border-red-400 focus:bg-white focus:ring-4 focus:ring-red-100";

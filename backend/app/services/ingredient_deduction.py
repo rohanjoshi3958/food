@@ -106,9 +106,22 @@ def normalize_unit(unit: str | None) -> str | None:
     if normalized in UNIT_ALIASES:
         return UNIT_ALIASES[normalized]
 
+    compact = normalized.replace(" ", "")
     for alias, canonical in UNIT_ALIASES.items():
-        if alias == normalized or alias.replace(" ", "") == normalized.replace(" ", ""):
+        if alias == normalized or alias.replace(" ", "") == compact:
             return canonical
+
+    # Serving sizes often add descriptors: "cup dry", "tbsp creamy", "oz drained".
+    parts = normalized.split()
+    for length in (2, 1):
+        if len(parts) >= length:
+            candidate = " ".join(parts[:length])
+            if candidate in UNIT_ALIASES:
+                return UNIT_ALIASES[candidate]
+            candidate_compact = candidate.replace(" ", "")
+            for alias, canonical in UNIT_ALIASES.items():
+                if alias.replace(" ", "") == candidate_compact:
+                    return canonical
 
     return normalized
 
@@ -277,13 +290,18 @@ def clamp_meal_ingredients_to_pantry(pantry: list[Ingredient], items: list) -> l
         output_unit = on_hand_unit or used_unit
 
         if used_quantity is None:
-            clamped.append(
-                _clone_meal_item(
-                    item,
-                    name,
-                    _format_amount(on_hand_quantity, output_unit),
+            # No parseable amount — prefer one labeled serving over the whole package.
+            serving_quantity, serving_unit = _serving_amount_from_ingredient(pantry_item)
+            if serving_quantity and serving_unit:
+                clamped.append(
+                    _clone_meal_item(
+                        item,
+                        name,
+                        _format_amount(serving_quantity, serving_unit),
+                    )
                 )
-            )
+            else:
+                clamped.append(item)
             continue
 
         compare_unit = used_unit or on_hand_unit
@@ -293,13 +311,9 @@ def clamp_meal_ingredients_to_pantry(pantry: list[Ingredient], items: list) -> l
             used_in_pantry_units = used_quantity
 
         if used_in_pantry_units is None:
-            clamped.append(
-                _clone_meal_item(
-                    item,
-                    name,
-                    _format_amount(on_hand_quantity, output_unit),
-                )
-            )
+            # Can't convert (e.g. tbsp vs each). Keep the portion amount; never
+            # escalate to the entire package for a meal.
+            clamped.append(item)
             continue
 
         capped_quantity = min(used_in_pantry_units, on_hand_quantity)
@@ -310,8 +324,178 @@ def clamp_meal_ingredients_to_pantry(pantry: list[Ingredient], items: list) -> l
     return clamped
 
 
+def _serving_amount_from_ingredient(
+    ingredient: Ingredient,
+) -> tuple[float | None, str | None]:
+    if not ingredient.serving_size:
+        return None, None
+    primary = ingredient.serving_size.split("(", 1)[0].strip()
+    return parse_amount(primary)
+
+
+def servings_used_from_amount(
+    ingredient: Ingredient,
+    used_quantity: float,
+    used_unit: str | None,
+) -> float | None:
+    """How many labeled servings a used amount represents."""
+    used_unit = normalize_unit(used_unit)
+    on_hand_quantity, on_hand_unit = _ingredient_on_hand(ingredient)
+    servings_per_unit = ingredient.servings_per_container
+
+    serving_quantity, serving_unit = _serving_amount_from_ingredient(ingredient)
+    if serving_quantity and serving_quantity > 0:
+        converted_to_serving = _convert_amount(
+            used_quantity,
+            used_unit,
+            serving_unit,
+        )
+        if converted_to_serving is not None:
+            return converted_to_serving / serving_quantity
+        if used_unit == serving_unit:
+            return used_quantity / serving_quantity
+
+    if (
+        servings_per_unit
+        and servings_per_unit > 0
+        and on_hand_quantity
+        and on_hand_quantity > 0
+    ):
+        converted_to_on_hand = _convert_amount(
+            used_quantity,
+            used_unit,
+            on_hand_unit,
+        )
+        if converted_to_on_hand is None and used_unit == on_hand_unit:
+            converted_to_on_hand = used_quantity
+
+        if converted_to_on_hand is not None:
+            # servings_per_container is defined per 1 unit of the pantry unit.
+            return converted_to_on_hand * servings_per_unit
+
+    return None
+
+
+def remaining_servings(ingredient: Ingredient) -> float | None:
+    """Servings still available from this pantry item."""
+    quantity, _unit = _ingredient_on_hand(ingredient)
+    servings_per = ingredient.servings_per_container
+    if quantity is None or servings_per is None or servings_per <= 0:
+        return None
+    return quantity * servings_per
+
+
+PACKAGE_UNITS = {
+    "each",
+    "bag",
+    "box",
+    "can",
+    "bottle",
+    "pack",
+    "bunch",
+    "head",
+}
+
+
+def scale_meal_ingredients_for_one_person(pantry: list[Ingredient], items: list) -> list:
+    """Downsize ingredient amounts so a meal uses about one serving of each item."""
+    scaled: list = []
+
+    for item in items:
+        name = item.name.strip()
+        pantry_item = _find_matching_ingredient(pantry, name)
+        if pantry_item is None:
+            scaled.append(item)
+            continue
+
+        used_quantity, used_unit = parse_amount(item.amount)
+        serving_quantity, serving_unit = _serving_amount_from_ingredient(pantry_item)
+        on_hand_quantity, on_hand_unit = _ingredient_on_hand(pantry_item)
+
+        if serving_quantity and serving_unit:
+            servings = None
+            if used_quantity is not None:
+                converted = _convert_amount(used_quantity, used_unit, serving_unit)
+                if converted is None and used_unit == serving_unit:
+                    converted = used_quantity
+                if converted is not None and serving_quantity > 0:
+                    servings = converted / serving_quantity
+
+            uses_whole_package = (
+                used_quantity is not None
+                and on_hand_unit in PACKAGE_UNITS
+                and (used_unit == on_hand_unit or used_unit in PACKAGE_UNITS)
+                and used_quantity >= 0.5
+                and serving_unit not in PACKAGE_UNITS
+            )
+
+            if uses_whole_package or (servings is not None and servings > 1.25):
+                scaled.append(
+                    _clone_meal_item(
+                        item,
+                        name,
+                        _format_amount(serving_quantity, serving_unit),
+                    )
+                )
+                continue
+
+        if (
+            used_quantity is not None
+            and pantry_item.servings_per_container
+            and pantry_item.servings_per_container > 1
+            and on_hand_unit in PACKAGE_UNITS
+            and used_unit == on_hand_unit
+            and used_quantity >= 0.5
+        ):
+            # e.g. "1 each" of a jar with ~15 servings → use 1/servings of the package
+            portion = used_quantity / pantry_item.servings_per_container
+            if portion < on_hand_quantity:
+                scaled.append(
+                    _clone_meal_item(
+                        item,
+                        name,
+                        _format_amount(portion, on_hand_unit),
+                    )
+                )
+                continue
+
+        scaled.append(item)
+
+    return scaled
+
+
 def _clone_meal_item(item, name: str, amount: str):
     return type(item)(name=name, amount=amount)
+
+
+def _amount_used_in_pantry_units(
+    ingredient: Ingredient,
+    used_quantity: float,
+    used_unit: str | None,
+) -> float | None:
+    """Convert a meal amount into the pantry item's storage unit."""
+    on_hand_quantity, on_hand_unit = _ingredient_on_hand(ingredient)
+    used_unit = normalize_unit(used_unit) or on_hand_unit
+
+    converted = _convert_amount(used_quantity, used_unit, on_hand_unit)
+    if converted is None and used_unit == on_hand_unit:
+        converted = used_quantity
+
+    if converted is not None:
+        return converted
+
+    # e.g. meal used "2 tbsp" / "1/2 cup" but pantry is "1 each".
+    servings_used = servings_used_from_amount(ingredient, used_quantity, used_unit)
+    servings_per = ingredient.servings_per_container
+    if (
+        servings_used is not None
+        and servings_per
+        and servings_per > 0
+        and on_hand_quantity is not None
+    ):
+        return servings_used / servings_per
+
+    return None
 
 
 def deduct_meal_ingredients(db: Session, user: User, meal: Meal) -> None:
@@ -336,24 +520,30 @@ def deduct_meal_ingredients(db: Session, user: User, meal: Meal) -> None:
             pantry = [item for item in pantry if item.id != ingredient.id]
             continue
 
-        on_hand_quantity, on_hand_unit = _ingredient_on_hand(ingredient)
+        on_hand_quantity, _on_hand_unit = _ingredient_on_hand(ingredient)
         if on_hand_quantity is None:
             db.delete(ingredient)
             pantry = [item for item in pantry if item.id != ingredient.id]
             continue
 
-        used_unit = normalize_unit(used.get("unit")) or on_hand_unit
-        converted_used = _convert_amount(used_quantity, used_unit, on_hand_unit)
-
-        if converted_used is None and used_unit == on_hand_unit:
-            converted_used = used_quantity
-
+        used_unit = normalize_unit(used.get("unit"))
+        converted_used = _amount_used_in_pantry_units(
+            ingredient,
+            used_quantity,
+            used_unit,
+        )
         if converted_used is None:
             continue
 
         remaining = on_hand_quantity - converted_used
+        remaining_servings_left = None
+        if ingredient.servings_per_container and ingredient.servings_per_container > 0:
+            remaining_servings_left = remaining * ingredient.servings_per_container
 
-        if remaining <= 1e-6:
+        # Remove when nothing useful is left (whole item or < ~1/4 serving).
+        if remaining <= 1e-6 or (
+            remaining_servings_left is not None and remaining_servings_left < 0.25
+        ):
             db.delete(ingredient)
             pantry = [item for item in pantry if item.id != ingredient.id]
         else:

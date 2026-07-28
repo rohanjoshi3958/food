@@ -3,6 +3,7 @@ export type Ingredient = {
   name: string;
   store_item_name: string | null;
   quantity: string | null;
+  original_quantity?: string | null;
   unit: string | null;
   serving_size: string | null;
   servings_per_container: number | null;
@@ -17,6 +18,44 @@ export type Ingredient = {
   created_at: string;
 };
 
+function formatServingCount(value: number): string {
+  if (!Number.isFinite(value)) {
+    return String(value);
+  }
+  const rounded =
+    Math.abs(value - Math.round(value)) < 0.05 ? Math.round(value) : value;
+  if (typeof rounded === "number" && !Number.isInteger(rounded)) {
+    return rounded.toFixed(1).replace(/\.0$/, "");
+  }
+  return String(rounded);
+}
+
+function servingsNoun(value: number): string {
+  const rounded =
+    Math.abs(value - Math.round(value)) < 0.05 ? Math.round(value) : value;
+  return rounded === 1 ? "serving" : "servings";
+}
+
+function servingsFromQuantity(
+  quantity: string | null | undefined,
+  servingsPerContainer: number | null,
+): number | null {
+  if (
+    servingsPerContainer == null ||
+    servingsPerContainer <= 0 ||
+    !quantity
+  ) {
+    return null;
+  }
+
+  const parsed = Number.parseFloat(quantity);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return parsed * servingsPerContainer;
+}
+
 export function IngredientCard({
   ingredient,
   compact = false,
@@ -28,14 +67,33 @@ export function IngredientCard({
   onRemove?: () => void;
   removing?: boolean;
 }) {
-  const quantityLabel = [ingredient.quantity, ingredient.unit]
+  const servingsLeft = servingsFromQuantity(
+    ingredient.quantity,
+    ingredient.servings_per_container,
+  );
+  const originalServings = servingsFromQuantity(
+    ingredient.original_quantity || ingredient.quantity,
+    ingredient.servings_per_container,
+  );
+  const packageUnits = new Set([
+    "each",
+    "bag",
+    "box",
+    "can",
+    "bottle",
+    "pack",
+    "bunch",
+    "head",
+  ]);
+  const unit = (ingredient.unit || "").toLowerCase();
+  const showServingsAsQuantity =
+    servingsLeft != null &&
+    originalServings != null &&
+    packageUnits.has(unit);
+
+  const plainQuantityLabel = [ingredient.quantity, ingredient.unit]
     .filter(Boolean)
     .join(" ");
-
-  const servingsLabel =
-    ingredient.servings_per_container != null
-      ? `~${ingredient.servings_per_container} servings / ${ingredient.unit || "unit"}`
-      : null;
 
   return (
     <div
@@ -55,10 +113,20 @@ export function IngredientCard({
               )}
           </div>
           <div className="flex items-center gap-2">
-            {quantityLabel && (
-              <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-stone-600 ring-1 ring-stone-200">
-                {quantityLabel}
+            {showServingsAsQuantity ? (
+              <span className="rounded-full bg-white px-2.5 py-1 text-xs text-stone-600 ring-1 ring-stone-200">
+                ~{formatServingCount(originalServings)}{" "}
+                {servingsNoun(originalServings)} ·{" "}
+                <strong className="font-semibold text-stone-900">
+                  {formatServingCount(servingsLeft)} left
+                </strong>
               </span>
+            ) : (
+              plainQuantityLabel && (
+                <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-stone-600 ring-1 ring-stone-200">
+                  {plainQuantityLabel}
+                </span>
+              )
             )}
             {onRemove && (
               <button
@@ -74,11 +142,24 @@ export function IngredientCard({
         </div>
       )}
 
-      {(ingredient.serving_size || servingsLabel) && (
+      {(ingredient.serving_size ||
+        (servingsLeft != null && !showServingsAsQuantity)) && (
         <p className={`text-xs text-stone-500 ${compact ? "" : "mt-2"}`}>
           {ingredient.serving_size ? `Serving: ${ingredient.serving_size}` : null}
-          {ingredient.serving_size && servingsLabel ? " · " : null}
-          {servingsLabel}
+          {ingredient.serving_size &&
+          servingsLeft != null &&
+          !showServingsAsQuantity
+            ? " · "
+            : null}
+          {servingsLeft != null && !showServingsAsQuantity && (
+            <>
+              ~{formatServingCount(originalServings ?? servingsLeft)}{" "}
+              {servingsNoun(originalServings ?? servingsLeft)} ·{" "}
+              <strong className="font-semibold text-stone-800">
+                {formatServingCount(servingsLeft)} left
+              </strong>
+            </>
+          )}
         </p>
       )}
 

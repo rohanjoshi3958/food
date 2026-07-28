@@ -34,7 +34,9 @@ export function MealMacrosCard({
           <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
             Macros
           </p>
-          <p className="text-xs text-stone-400">Estimated from ingredients used</p>
+          <p className="text-xs text-stone-400">
+            Estimated for one person from ingredients used
+          </p>
         </div>
       )}
       <div

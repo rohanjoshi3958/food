@@ -67,6 +67,7 @@ class Ingredient(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     store_item_name: Mapped[str | None] = mapped_column(String, nullable=True)
     quantity: Mapped[str | None] = mapped_column(String, nullable=True)
+    original_quantity: Mapped[str | None] = mapped_column(String, nullable=True)
     unit: Mapped[str | None] = mapped_column(String, nullable=True)
     serving_size: Mapped[str | None] = mapped_column(String, nullable=True)
     servings_per_container: Mapped[float | None] = mapped_column(Float, nullable=True)

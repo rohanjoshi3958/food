@@ -33,6 +33,7 @@ class IngredientResponse(BaseModel):
     name: str
     store_item_name: str | None = None
     quantity: str | None = None
+    original_quantity: str | None = None
     unit: str | None = None
     serving_size: str | None = None
     servings_per_container: float | None = None

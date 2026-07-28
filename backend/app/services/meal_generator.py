@@ -6,21 +6,33 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.models import Ingredient
-from app.services.ingredient_deduction import clamp_meal_ingredients_to_pantry
+from app.services.ingredient_deduction import (
+    clamp_meal_ingredients_to_pantry,
+    remaining_servings,
+    scale_meal_ingredients_for_one_person,
+)
 
-MEAL_GENERATION_PROMPT = """You are a helpful home chef. Given the ingredients available in the user's kitchen, suggest ONE practical meal they can make right now.
+MEAL_GENERATION_PROMPT = """You are a helpful home chef. Given the ingredients available in the user's kitchen, suggest ONE practical meal for a single person (one serving).
 
 Available ingredients:
 {ingredients}
 
-Use each selected ingredient's quantity, unit, serving size, and servings-per-unit when deciding how much to use in the recipe. Prefer amounts that match the serving size when possible (e.g. tablespoons from a jar sold as "each"). You do NOT need to use every available ingredient — choose a sensible subset that makes one cohesive, practical meal. Only include ingredients you actually use in ingredients_used. You may assume basic pantry staples (salt, pepper, cooking oil, butter, water) are available if needed.
+Scale everything for ONE person only:
+- ingredient amounts in ingredients_used must be a single-serving portion (not a family batch)
+- instructions should cook one plate / one bowl for one eater
+- do not generate multi-serving recipes and do not say "serves 2+" or similar
+- NEVER use a whole package for one person when the item is a jar/bottle/box/bag sold as "each"
+  (e.g. do NOT use "1 each" almond butter). Use about one serving_size instead (e.g. "2 tbsp").
+- Single-serve produce like one banana or one apple may use "1 each".
+
+Use each selected ingredient's quantity, unit, serving size, and servings-per-unit when deciding how much to use. Prefer amounts that match the serving size when possible (e.g. tablespoons from a jar sold as "each"). You do NOT need to use every available ingredient — choose a sensible subset that makes one cohesive, practical single-serving meal. Only include ingredients you actually use in ingredients_used. You may assume basic pantry staples (salt, pepper, cooking oil, butter, water) are available if needed.
 
 CRITICAL: For every ingredient you include, the amount in ingredients_used must be less than or equal to the maximum available quantity shown for that item. Never require more than the user has on hand. For example, if they only have 1 g of tomatoes, use at most 1 g of tomatoes.
 
 Respond with ONLY valid JSON in this exact shape:
 {{
   "name": "Meal Name",
-  "description": "One or two sentence summary of the dish.",
+  "description": "One or two sentence summary of the dish for one person.",
   "ingredients_used": [
     {{
       "name": "Ingredient name from the list",
@@ -35,8 +47,9 @@ Respond with ONLY valid JSON in this exact shape:
 
 Put each instruction step in its own array element. Do not combine multiple steps into one string."""
 
-FOLLOW_UP_PROMPT = """Suggest a different meal than the one you just proposed.
+FOLLOW_UP_PROMPT = """Suggest a different single-serving meal for one person than the one you just proposed.
 Keep using only the available ingredients and the same JSON response format.
+Ingredient amounts must still be sized for one person.
 Do not repeat the same dish name or essentially the same recipe."""
 
 
@@ -99,7 +112,10 @@ def _format_ingredients(ingredients: list[Ingredient]) -> str:
             details.append(f"maximum available: {quantity_label} (do not exceed)")
         if ingredient.serving_size:
             details.append(f"serving size: {ingredient.serving_size}")
-        if ingredient.servings_per_container:
+        servings_left = remaining_servings(ingredient)
+        if servings_left is not None:
+            details.append(f"~{servings_left:g} servings remaining")
+        elif ingredient.servings_per_container:
             details.append(
                 f"~{ingredient.servings_per_container:g} servings per {ingredient.unit or 'unit'}"
             )
@@ -191,7 +207,8 @@ def generate_meal_from_ingredients(
                     "role": "user",
                     "content": (
                         f'That was still too similar to "{avoid_name.strip()}". '
-                        "Suggest a clearly different meal in the same JSON format."
+                        "Suggest a clearly different single-serving meal for one person "
+                        "in the same JSON format."
                     ),
                 }
             )
@@ -232,9 +249,12 @@ def generate_meal_from_ingredients(
             )
             continue
 
-        parsed.ingredients_used = clamp_meal_ingredients_to_pantry(
+        parsed.ingredients_used = scale_meal_ingredients_for_one_person(
             ingredients,
-            parsed.ingredients_used,
+            clamp_meal_ingredients_to_pantry(
+                ingredients,
+                parsed.ingredients_used,
+            ),
         )
 
         return parsed

@@ -29,6 +29,10 @@ def _consolidate_pantry(db: Session, user: User) -> list[Ingredient]:
             keepers[key] = ingredient
             continue
 
+        existing.original_quantity = _sum_quantities(
+            existing.original_quantity or existing.quantity,
+            ingredient.original_quantity or ingredient.quantity,
+        )
         existing.quantity = _sum_quantities(existing.quantity, ingredient.quantity)
         if not existing.serving_size and ingredient.serving_size:
             existing.serving_size = ingredient.serving_size
@@ -78,10 +82,10 @@ def create_manual_ingredient(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> IngredientResponse:
-    if not payload.unit:
+    if not payload.ingredient_name.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Select a unit.",
+            detail="Enter an ingredient name.",
         )
 
     item = DraftIngredientItem(

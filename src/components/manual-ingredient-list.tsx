@@ -29,11 +29,6 @@ export function ManualIngredientList({
       return;
     }
 
-    if (!unit) {
-      setError("Select a unit.");
-      return;
-    }
-
     setSaving(true);
     setError("");
     setMessage("");
@@ -44,7 +39,7 @@ export function ManualIngredientList({
         body: JSON.stringify({
           ingredient_name: ingredientName,
           quantity: quantity.trim() || null,
-          unit,
+          unit: unit.trim() || null,
         }),
       });
 
@@ -104,6 +99,7 @@ export function ManualIngredientList({
         <UnitSelect
           value={unit}
           onChange={setUnit}
+          required={false}
           disabled={disabled || saving}
         />
       </div>

@@ -372,13 +372,6 @@ def confirm_receipt(
             detail="Add at least one line item before saving.",
         )
 
-    food_items = [item for item in payload.items if item.is_food]
-    if food_items and any(not item.unit for item in food_items):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Select a unit for every food ingredient.",
-        )
-
     for existing in list(receipt.ingredients):
         db.delete(existing)
 

@@ -10,6 +10,7 @@ MIGRATIONS = [
     "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS store_item_name VARCHAR",
     "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS serving_size VARCHAR",
     "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS servings_per_container DOUBLE PRECISION",
+    "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS original_quantity VARCHAR",
     "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS calories DOUBLE PRECISION",
     "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS protein_g DOUBLE PRECISION",
     "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS carbs_g DOUBLE PRECISION",
@@ -49,5 +50,11 @@ def run_migrations() -> None:
             text(
                 "UPDATE receipts SET analysis_status = 'completed' "
                 "WHERE analysis_status IS NULL"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE ingredients SET original_quantity = quantity "
+                "WHERE original_quantity IS NULL AND quantity IS NOT NULL"
             )
         )
