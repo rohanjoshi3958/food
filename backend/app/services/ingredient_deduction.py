@@ -131,6 +131,9 @@ def parse_amount(amount: str) -> tuple[float | None, str | None]:
     if not cleaned:
         return None, None
 
+    # Drop parenthetical notes: "1/2 cup dry (48g)" → "1/2 cup dry"
+    cleaned = re.sub(r"\([^)]*\)", "", cleaned).strip()
+
     match = re.match(r"^([\d./]+)\s*(.*)$", cleaned)
     if not match:
         return None, normalize_unit(cleaned)
@@ -397,8 +400,13 @@ PACKAGE_UNITS = {
 }
 
 
+# Allow a few labeled servings in one plate (e.g. 2 tbsp creamer) without
+# forcing every item down to exactly one nutrition-label serving.
+MAX_REASONABLE_ONE_PERSON_SERVINGS = 4.0
+
+
 def scale_meal_ingredients_for_one_person(pantry: list[Ingredient], items: list) -> list:
-    """Downsize ingredient amounts so a meal uses about one serving of each item."""
+    """Rewrite absurd whole-package amounts; keep ordinary single-plate portions."""
     scaled: list = []
 
     for item in items:
@@ -412,42 +420,51 @@ def scale_meal_ingredients_for_one_person(pantry: list[Ingredient], items: list)
         serving_quantity, serving_unit = _serving_amount_from_ingredient(pantry_item)
         on_hand_quantity, on_hand_unit = _ingredient_on_hand(pantry_item)
 
-        if serving_quantity and serving_unit:
-            servings = None
-            if used_quantity is not None:
-                converted = _convert_amount(used_quantity, used_unit, serving_unit)
-                if converted is None and used_unit == serving_unit:
-                    converted = used_quantity
-                if converted is not None and serving_quantity > 0:
-                    servings = converted / serving_quantity
-
-            uses_whole_package = (
-                used_quantity is not None
-                and on_hand_unit in PACKAGE_UNITS
-                and (used_unit == on_hand_unit or used_unit in PACKAGE_UNITS)
-                and used_quantity >= 0.5
-                and serving_unit not in PACKAGE_UNITS
-            )
-
-            if uses_whole_package or (servings is not None and servings > 1.25):
-                scaled.append(
-                    _clone_meal_item(
-                        item,
-                        name,
-                        _format_amount(serving_quantity, serving_unit),
-                    )
-                )
-                continue
-
+        servings = None
         if (
             used_quantity is not None
+            and serving_quantity
+            and serving_quantity > 0
+        ):
+            converted = _convert_amount(used_quantity, used_unit, serving_unit)
+            if converted is None and used_unit == serving_unit:
+                converted = used_quantity
+            if converted is not None:
+                servings = converted / serving_quantity
+
+        uses_whole_package = (
+            used_quantity is not None
+            and on_hand_unit in PACKAGE_UNITS
+            and (used_unit == on_hand_unit or used_unit in PACKAGE_UNITS)
+            and used_quantity >= 0.5
+            and (
+                serving_unit is None
+                or serving_unit not in PACKAGE_UNITS
+                or (
+                    pantry_item.servings_per_container is not None
+                    and pantry_item.servings_per_container > 1
+                )
+            )
+        )
+
+        # Whole jar/bag/bottle counted as "1 each" → one labeled serving.
+        if uses_whole_package and serving_quantity and serving_unit:
+            scaled.append(
+                _clone_meal_item(
+                    item,
+                    name,
+                    _format_amount(serving_quantity, serving_unit),
+                )
+            )
+            continue
+
+        if (
+            uses_whole_package
+            and used_quantity is not None
             and pantry_item.servings_per_container
             and pantry_item.servings_per_container > 1
-            and on_hand_unit in PACKAGE_UNITS
-            and used_unit == on_hand_unit
-            and used_quantity >= 0.5
+            and on_hand_quantity is not None
         ):
-            # e.g. "1 each" of a jar with ~15 servings → use 1/servings of the package
             portion = used_quantity / pantry_item.servings_per_container
             if portion < on_hand_quantity:
                 scaled.append(
@@ -458,6 +475,25 @@ def scale_meal_ingredients_for_one_person(pantry: list[Ingredient], items: list)
                     )
                 )
                 continue
+
+        # Family-batch amounts only: scale down to a reasonable single-plate size.
+        if (
+            servings is not None
+            and servings > MAX_REASONABLE_ONE_PERSON_SERVINGS
+            and serving_quantity
+            and serving_unit
+        ):
+            scaled.append(
+                _clone_meal_item(
+                    item,
+                    name,
+                    _format_amount(
+                        serving_quantity * MAX_REASONABLE_ONE_PERSON_SERVINGS,
+                        serving_unit,
+                    ),
+                )
+            )
+            continue
 
         scaled.append(item)
 

@@ -3,7 +3,7 @@ import base64
 import anthropic
 from openai import OpenAI
 
-from app.config import settings
+from app.config import MEAL_ANTHROPIC_MODEL, OPENAI_IMAGE_MODEL, settings
 from app.models import Meal
 
 PROMPT_SYSTEM = """You write short prompts for photorealistic food photography.
@@ -41,7 +41,7 @@ def _build_image_prompt(meal: Meal) -> str:
     try:
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
         response = client.messages.create(
-            model=settings.anthropic_model,
+            model=MEAL_ANTHROPIC_MODEL,
             max_tokens=200,
             system=PROMPT_SYSTEM,
             messages=[{"role": "user", "content": user_prompt}],
@@ -65,7 +65,7 @@ def generate_meal_image(meal: Meal) -> bytes:
 
     try:
         result = client.images.generate(
-            model=settings.openai_image_model,
+            model=OPENAI_IMAGE_MODEL,
             prompt=prompt,
             size="1024x1024",
             quality="medium",

@@ -4,6 +4,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
+# Fixed model choices — not user-configurable.
+RECEIPT_ANTHROPIC_MODEL = "claude-opus-5"
+MEAL_ANTHROPIC_MODEL = "claude-sonnet-5"
+OPENAI_IMAGE_MODEL = "gpt-image-1"
+
 
 class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:postgres@localhost:5433/food"
@@ -13,9 +18,7 @@ class Settings(BaseSettings):
     cookbook_upload_dir: str = "uploads/cookbook"
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-opus-4-8"
     openai_api_key: str = ""
-    openai_image_model: str = "gpt-image-1"
 
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),

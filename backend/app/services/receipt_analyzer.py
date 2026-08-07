@@ -8,7 +8,7 @@ from pathlib import Path
 import anthropic
 from pydantic import BaseModel, Field
 
-from app.config import settings
+from app.config import RECEIPT_ANTHROPIC_MODEL, settings
 
 
 def _anthropic_error_message(exc: Exception) -> str:
@@ -26,8 +26,8 @@ def _anthropic_error_message(exc: Exception) -> str:
     message = str(exc)
     if "not_found_error" in message or "model:" in message:
         return (
-            f"The configured Anthropic model ({settings.anthropic_model}) is unavailable. "
-            "Update ANTHROPIC_MODEL in your .env file."
+            f"The Anthropic model ({RECEIPT_ANTHROPIC_MODEL}) is unavailable. "
+            "Receipt analysis failed."
         )
 
     return "Receipt analysis failed. Please try again."
@@ -189,7 +189,7 @@ def estimate_ingredient_nutrition(
     unit_label = (unit or "").strip() or "unknown"
 
     message = client.messages.create(
-        model=settings.anthropic_model,
+        model=RECEIPT_ANTHROPIC_MODEL,
         max_tokens=1024,
         messages=[
             {
@@ -322,7 +322,7 @@ def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
 
     try:
         message = client.messages.create(
-            model=settings.anthropic_model,
+            model=RECEIPT_ANTHROPIC_MODEL,
             max_tokens=4096,
             messages=[
                 {

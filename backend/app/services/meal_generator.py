@@ -4,7 +4,7 @@ import re
 import anthropic
 from pydantic import BaseModel, Field
 
-from app.config import settings
+from app.config import MEAL_ANTHROPIC_MODEL, settings
 from app.models import Ingredient
 from app.services.ingredient_deduction import (
     clamp_meal_ingredients_to_pantry,
@@ -25,7 +25,7 @@ Scale everything for ONE person only:
   (e.g. do NOT use "1 each" almond butter). Use about one serving_size instead (e.g. "2 tbsp").
 - Single-serve produce like one banana or one apple may use "1 each".
 
-Use each selected ingredient's quantity, unit, serving size, and servings-per-unit when deciding how much to use. Prefer amounts that match the serving size when possible (e.g. tablespoons from a jar sold as "each"). You do NOT need to use every available ingredient — choose a sensible subset that makes one cohesive, practical single-serving meal. Only include ingredients you actually use in ingredients_used. You may assume basic pantry staples (salt, pepper, cooking oil, butter, water) are available if needed.
+Use each selected ingredient's quantity, unit, serving size, and servings-per-unit when deciding how much to use. Prefer practical single-plate amounts in the same units as the serving size (e.g. 1–3 tbsp from a jar sold as "each"). You do NOT need to use every available ingredient — choose a sensible subset that makes one cohesive, practical single-serving meal. Only include ingredients you actually use in ingredients_used. You may assume basic pantry staples (salt, pepper, cooking oil, butter, water) are available if needed.
 
 CRITICAL: For every ingredient you include, the amount in ingredients_used must be less than or equal to the maximum available quantity shown for that item. Never require more than the user has on hand. For example, if they only have 1 g of tomatoes, use at most 1 g of tomatoes.
 
@@ -215,7 +215,7 @@ def generate_meal_from_ingredients(
 
         try:
             message = client.messages.create(
-                model=settings.anthropic_model,
+                model=MEAL_ANTHROPIC_MODEL,
                 max_tokens=4096,
                 messages=conversation,
             )

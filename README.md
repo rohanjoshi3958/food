@@ -51,12 +51,12 @@ cd ..
 DATABASE_URL="postgresql://postgres:postgres@localhost:5433/food"
 AUTH_SECRET="replace-with-a-long-random-string"
 ANTHROPIC_API_KEY="your-anthropic-api-key"
-ANTHROPIC_MODEL=claude-opus-4-8
 OPENAI_API_KEY="your-openai-api-key"
-OPENAI_IMAGE_MODEL=gpt-image-1
 ```
 
 `AUTH_SECRET` is used to sign JWTs. Generate any long random string.
+
+Receipt analysis uses Claude Opus; meal generation uses Claude Sonnet 5; meal images use OpenAI `gpt-image-1`.
 
 ## Run locally
 
