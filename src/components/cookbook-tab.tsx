@@ -262,7 +262,7 @@ function CookbookDetail({
   );
 }
 
-export function CookbookTab() {
+export function CookbookTab({ refreshKey = 0 }: { refreshKey?: number }) {
   const [entries, setEntries] = useState<CookbookEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -293,7 +293,7 @@ export function CookbookTab() {
     }
 
     loadEntries();
-  }, []);
+  }, [refreshKey]);
 
   async function removeEntry(id: string) {
     setRemovingId(id);

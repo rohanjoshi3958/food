@@ -247,10 +247,12 @@ function PhotoDropZone({
 export function GenerateMealTab({
   refreshKey = 0,
   onIngredientsChanged,
+  onCookbookChanged,
   onViewCookbook,
 }: {
   refreshKey?: number;
   onIngredientsChanged?: () => void;
+  onCookbookChanged?: () => void;
   onViewCookbook?: () => void;
 }) {
   const [step, setStep] = useState<Step>("suggest");
@@ -396,6 +398,7 @@ export function GenerateMealTab({
       setSelectedFile(null);
       setMessage("Meal saved to your cookbook.");
       onIngredientsChanged?.();
+      onCookbookChanged?.();
       await loadData();
     } catch (saveError) {
       setError(

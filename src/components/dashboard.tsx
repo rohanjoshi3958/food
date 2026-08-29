@@ -35,9 +35,14 @@ export function Dashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [ingredientsRefreshKey, setIngredientsRefreshKey] = useState(0);
+  const [cookbookRefreshKey, setCookbookRefreshKey] = useState(0);
 
   function refreshIngredients() {
     setIngredientsRefreshKey((current) => current + 1);
+  }
+
+  function refreshCookbook() {
+    setCookbookRefreshKey((current) => current + 1);
   }
 
   useEffect(() => {
@@ -151,11 +156,12 @@ export function Dashboard() {
             <GenerateMealTab
               refreshKey={ingredientsRefreshKey}
               onIngredientsChanged={refreshIngredients}
+              onCookbookChanged={refreshCookbook}
               onViewCookbook={() => setActiveTab("cookbook")}
             />
           </div>
           <div className={activeTab === "cookbook" ? "block" : "hidden"}>
-            <CookbookTab />
+            <CookbookTab refreshKey={cookbookRefreshKey} />
           </div>
         </section>
       </main>

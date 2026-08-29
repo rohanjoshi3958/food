@@ -11,7 +11,7 @@ import {
   parseError,
   readJsonResponse,
 } from "@/lib/api";
-import { formatCookbookDate } from "@/lib/meals";
+import { formatCookbookDateTime } from "@/lib/meals";
 
 type DraftItem = {
   store_item_name: string;
@@ -274,7 +274,7 @@ function ReceiptHistory({
                       </p>
                       <p className="mt-0.5 text-xs text-stone-500">
                         {itemCount} item{itemCount === 1 ? "" : "s"} ·{" "}
-                        {formatCookbookDate(receipt.uploaded_at)}
+                        {formatCookbookDateTime(receipt.uploaded_at)}
                       </p>
                       {receipt.analysis_status === "failed" &&
                         receipt.analysis_error && (
