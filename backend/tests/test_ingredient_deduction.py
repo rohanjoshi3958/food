@@ -55,6 +55,7 @@ class TestNormalizeUnit:
 
     def test_exact_unit_match(self):
         assert normalize_unit("g") == "g"
+        assert normalize_unit("kg") == "kg"
         assert normalize_unit("oz") == "oz"
         assert normalize_unit("cup") == "cup"
         assert normalize_unit("each") == "each"
@@ -62,18 +63,83 @@ class TestNormalizeUnit:
     def test_unit_aliases(self):
         assert normalize_unit("gram") == "g"
         assert normalize_unit("grams") == "g"
+        assert normalize_unit("kilogram") == "kg"
+        assert normalize_unit("kilograms") == "kg"
         assert normalize_unit("ounce") == "oz"
         assert normalize_unit("ounces") == "oz"
         assert normalize_unit("pound") == "lb"
         assert normalize_unit("pounds") == "lb"
 
+    def test_volume_units(self):
+        cases = [
+            ("ml", "ml"),
+            ("milliliter", "ml"),
+            ("milliliters", "ml"),
+            ("ML", "ml"),
+            ("l", "l"),
+            ("liter", "l"),
+            ("liters", "l"),
+            ("litre", "l"),
+            ("litres", "l"),
+            ("cup", "cup"),
+            ("cups", "cup"),
+            ("tbsp", "tbsp"),
+            ("tablespoon", "tbsp"),
+            ("tablespoons", "tbsp"),
+            ("tsp", "tsp"),
+            ("teaspoon", "tsp"),
+            ("teaspoons", "tsp"),
+            ("pint", "pint"),
+            ("pints", "pint"),
+            ("quart", "quart"),
+            ("quarts", "quart"),
+            ("gallon", "gallon"),
+            ("gallons", "gallon"),
+            ("fl oz", "fl oz"),
+            ("FL OZ", "fl oz"),
+        ]
+
+        for raw, expected in cases:
+            assert normalize_unit(raw) == expected
+
+    def test_package_units(self):
+        cases = [
+            ("each", "each"),
+            ("item", "each"),
+            ("items", "each"),
+            ("bunch", "bunch"),
+            ("bunches", "bunch"),
+            ("bag", "bag"),
+            ("bags", "bag"),
+            ("box", "box"),
+            ("boxes", "box"),
+            ("can", "can"),
+            ("cans", "can"),
+            ("bottle", "bottle"),
+            ("bottles", "bottle"),
+            ("pack", "pack"),
+            ("packs", "pack"),
+            ("slice", "slice"),
+            ("slices", "slice"),
+            ("head", "head"),
+            ("heads", "head"),
+            ("clove", "clove"),
+            ("cloves", "clove"),
+        ]
+
+        for raw, expected in cases:
+            assert normalize_unit(raw) == expected
+
     def test_case_insensitive(self):
         assert normalize_unit("G") == "g"
+        assert normalize_unit("KG") == "kg"
+        assert normalize_unit("Kilogram") == "kg"
         assert normalize_unit("OZ") == "oz"
         assert normalize_unit("CUP") == "cup"
 
     def test_with_whitespace(self):
         assert normalize_unit("  g  ") == "g"
+        assert normalize_unit("  kilograms  ") == "kg"
         assert normalize_unit("fl oz") == "fl oz"
 
     def test_with_descriptors(self):
@@ -104,6 +170,19 @@ class TestParseAmount:
         quantity, unit = parse_amount("1/2 cup")
         assert quantity == 0.5
         assert unit == "cup"
+
+    def test_parse_with_decimal(self):
+        quantity, unit = parse_amount("1.5 cups")
+        assert quantity == 1.5
+        assert unit == "cup"
+
+        quantity, unit = parse_amount("0.25 tsp")
+        assert quantity == 0.25
+        assert unit == "tsp"
+
+        quantity, unit = parse_amount("2.5oz")
+        assert quantity == 2.5
+        assert unit == "oz"
 
     def test_parse_with_unit_alias(self):
         quantity, unit = parse_amount("3 ounces")
@@ -207,6 +286,30 @@ class TestConvertAmount:
         # 0.5 cups to ml
         result = _convert_amount(0.5, "cup", "ml")
         assert result == pytest.approx(118.294)
+
+    def test_package_amounts_same_unit_or_alias(self):
+        # Package units never convert across types (can ≠ bottle). Only exact
+        # matches or aliases to the same canonical unit are valid.
+        assert _convert_amount(2.0, "each", "each") == 2.0
+        assert _convert_amount(1.0, "can", "can") == 1.0
+        assert _convert_amount(3.0, "bag", "bag") == 3.0
+        assert _convert_amount(2.0, "item", "each") == 2.0
+        assert _convert_amount(3.0, "cans", "can") == 3.0
+
+    def test_package_amounts_cannot_convert_across_types(self):
+        incompatible_pairs = [
+            ("can", "bottle"),
+            ("bag", "box"),
+            ("bunch", "head"),
+            ("each", "can"),
+            ("slice", "clove"),
+            ("can", "oz"),
+            ("bag", "cup"),
+            ("each", "g"),
+        ]
+
+        for from_unit, to_unit in incompatible_pairs:
+            assert _convert_amount(1.0, from_unit, to_unit) is None
 
 
 class TestFormatQuantity:
@@ -344,6 +447,31 @@ class TestAmountUsedInPantryUnits:
         result = _amount_used_in_pantry_units(ingredient, 50.0, "g")
         assert result is None
 
+    def test_package_same_unit(self):
+        ingredient = MockIngredient(quantity="2", unit="can")
+        result = _amount_used_in_pantry_units(ingredient, 1.0, "can")
+        assert result == 1.0
+
+    def test_package_unit_alias(self):
+        ingredient = MockIngredient(quantity="3", unit="each")
+        result = _amount_used_in_pantry_units(ingredient, 1.0, "item")
+        assert result == 1.0
+
+    def test_package_slice_via_servings(self):
+        ingredient = MockIngredient(
+            quantity="1",
+            unit="each",
+            serving_size="1 slice",
+            servings_per_container=8,
+        )
+        result = _amount_used_in_pantry_units(ingredient, 2.0, "slice")
+        assert result == pytest.approx(0.25)
+
+    def test_package_different_types_returns_none(self):
+        ingredient = MockIngredient(quantity="2", unit="bottle")
+        result = _amount_used_in_pantry_units(ingredient, 1.0, "can")
+        assert result is None
+
 
 class TestDeductionScenarios:
     """Integration tests for various deduction scenarios."""
@@ -421,6 +549,67 @@ class TestDeductionScenarios:
 
         remaining = 3.0 - converted
         assert remaining == 2.0
+
+    def test_package_full_depletion(self):
+        """Test using an entire package item."""
+        ingredient = MockIngredient(quantity="1", unit="bag")
+        converted = _amount_used_in_pantry_units(ingredient, 1.0, "bag")
+        assert converted == 1.0
+
+        remaining = 1.0 - converted
+        assert remaining == pytest.approx(0.0)
+
+    def test_package_alias_deduction(self):
+        """Test deduction when meal uses an alias of the pantry package unit."""
+        ingredient = MockIngredient(quantity="2", unit="each")
+        converted = _amount_used_in_pantry_units(ingredient, 1.0, "item")
+        assert converted == 1.0
+
+        remaining = 2.0 - converted
+        assert remaining == 1.0
+
+    def test_package_insufficient_inventory(self):
+        """Test using more package units than are on hand."""
+        ingredient = MockIngredient(quantity="1", unit="box")
+        converted = _amount_used_in_pantry_units(ingredient, 2.0, "box")
+        assert converted == 2.0
+
+        remaining = 1.0 - converted
+        assert remaining < 0
+
+    def test_package_deduction_with_servings(self):
+        """Test package deduction via serving size (e.g. creamer bottle)."""
+        ingredient = MockIngredient(
+            quantity="1",
+            unit="each",
+            serving_size="2 tbsp",
+            servings_per_container=16,
+        )
+        converted = _amount_used_in_pantry_units(ingredient, 4.0, "tbsp")
+        assert converted == pytest.approx(0.125)
+
+        remaining = 1.0 - converted
+        assert remaining == pytest.approx(0.875)
+
+        remaining_servings = remaining * ingredient.servings_per_container
+        assert remaining_servings == pytest.approx(14.0)
+
+    def test_package_slice_servings_deduction(self):
+        """Test deducting slices from a package tracked as each."""
+        ingredient = MockIngredient(
+            quantity="1",
+            unit="each",
+            serving_size="1 slice",
+            servings_per_container=8,
+        )
+        converted = _amount_used_in_pantry_units(ingredient, 2.0, "slice")
+        assert converted == pytest.approx(0.25)
+
+        remaining = 1.0 - converted
+        assert remaining == pytest.approx(0.75)
+
+        remaining_servings = remaining * ingredient.servings_per_container
+        assert remaining_servings == pytest.approx(6.0)
 
     def test_unknown_unit_deduction(self):
         """Test handling of unknown units."""
