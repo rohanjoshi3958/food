@@ -1,7 +1,7 @@
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -176,6 +176,7 @@ def get_meal(
 async def complete_meal(
     meal_id: str,
     file: UploadFile | None = File(None),
+    skip_photo: bool = Query(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> MealResponse:
@@ -194,7 +195,7 @@ async def complete_meal(
                 detail="Upload a valid image file.",
             )
         _store_meal_photo_bytes(current_user, meal, contents, file.filename)
-    else:
+    elif not skip_photo:
         try:
             image_bytes = generate_meal_image(meal)
         except MealImageError as exc:

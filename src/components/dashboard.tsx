@@ -3,18 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  apiFetch,
   AuthUser,
   getCurrentUser,
   getToken,
   logout,
-  parseError,
 } from "@/lib/api";
 import { CookbookTab } from "@/components/cookbook-tab";
+import { GenerateMealTab } from "@/components/generate-meal-tab";
 import { IngredientsTab } from "@/components/ingredients-tab";
 import { ReceiptUploadTab } from "@/components/receipt-upload-tab";
-import { MealMacrosCard } from "@/components/meal-macros";
-import { formatMealInstructions, type Meal } from "@/lib/meals";
 
 type TabId = "receipt" | "ingredients" | "meals" | "cookbook";
 
@@ -151,227 +148,17 @@ export function Dashboard() {
             <IngredientsTab refreshKey={ingredientsRefreshKey} />
           </div>
           <div className={activeTab === "meals" ? "block" : "hidden"}>
-            <GenerateMealTab />
+            <GenerateMealTab
+              refreshKey={ingredientsRefreshKey}
+              onIngredientsChanged={refreshIngredients}
+              onViewCookbook={() => setActiveTab("cookbook")}
+            />
           </div>
           <div className={activeTab === "cookbook" ? "block" : "hidden"}>
             <CookbookTab />
           </div>
         </section>
       </main>
-    </div>
-  );
-}
-
-function GenerateMealTab() {
-  const router = useRouter();
-  const [meal, setMeal] = useState<Meal | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [error, setError] = useState("");
-
-  async function loadMeal() {
-    setLoading(true);
-    setError("");
-
-    try {
-      const response = await apiFetch("/api/meals");
-      if (!response.ok) {
-        throw new Error(await parseError(response, "Unable to load meals."));
-      }
-
-      const meals: Meal[] = await response.json();
-      setMeal(meals[0] ?? null);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Unable to load meals.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    loadMeal();
-  }, []);
-
-  async function handleGenerateMeal() {
-    setGenerating(true);
-    setError("");
-
-    try {
-      const response = await apiFetch("/api/meals/generate", {
-        method: "POST",
-        body: JSON.stringify(
-          meal
-            ? {
-                previous_meal: {
-                  name: meal.name,
-                  description: meal.description,
-                  ingredients_used: meal.ingredients_used,
-                  instructions: meal.instructions,
-                },
-              }
-            : {},
-        ),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        const detail =
-          typeof data.detail === "string"
-            ? data.detail
-            : "Unable to generate a meal.";
-        throw new Error(detail);
-      }
-
-      setMeal(data as Meal);
-    } catch (generateError) {
-      setError(
-        generateError instanceof Error
-          ? generateError.message
-          : "Unable to generate a meal.",
-      );
-    } finally {
-      setGenerating(false);
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-stone-900">Generate meal</h2>
-        <p className="mt-1 text-sm text-stone-600">
-          Create a one-person meal suggestion from the ingredients in your kitchen.
-        </p>
-      </div>
-
-      <button
-        type="button"
-        onClick={handleGenerateMeal}
-        disabled={generating}
-        className="rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {generating ? "Generating meal..." : "Generate meal"}
-      </button>
-
-      {error && (
-        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
-          {error}
-        </p>
-      )}
-
-      {loading ? (
-        <p className="text-sm text-stone-500">Loading...</p>
-      ) : meal ? (
-        <div className="space-y-4">
-          <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
-            <p className="font-medium text-stone-900">{meal.name}</p>
-            {meal.description && (
-              <p className="mt-1 text-sm text-stone-600">{meal.description}</p>
-            )}
-            <MealMacrosCard macros={meal} />
-            {meal.ingredients_used && (
-              <div className="mt-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                  Ingredients to use
-                </p>
-                <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-stone-700">
-                  {meal.ingredients_used}
-                </pre>
-              </div>
-            )}
-            {meal.instructions && (
-              <div className="mt-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                  Instructions
-                </p>
-                <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-stone-700">
-                  {formatMealInstructions(meal.instructions)}
-                </pre>
-              </div>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => router.push(`/meals/${meal.id}`)}
-            className="rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-orange-600"
-          >
-            Proceed with meal
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ListTab<T extends { id: string }>({
-  title,
-  emptyMessage,
-  endpoint,
-  refreshKey = 0,
-  renderItem,
-}: {
-  title: string;
-  emptyMessage: string;
-  endpoint: string;
-  refreshKey?: number;
-  renderItem: (item: T) => React.ReactNode;
-}) {
-  const [items, setItems] = useState<T[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    async function loadItems() {
-      setLoading(true);
-      setError("");
-
-      try {
-        const response = await apiFetch(endpoint);
-        if (!response.ok) {
-          throw new Error(await parseError(response, "Unable to load data."));
-        }
-
-        setItems(await response.json());
-      } catch (loadError) {
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : "Unable to load data.",
-        );
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadItems();
-  }, [endpoint, refreshKey]);
-
-  return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-semibold text-stone-900">{title}</h2>
-
-      {error && (
-        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
-          {error}
-        </p>
-      )}
-
-      {loading ? (
-        <p className="text-sm text-stone-500">Loading...</p>
-      ) : items.length === 0 ? (
-        <p className="text-sm text-stone-500">{emptyMessage}</p>
-      ) : (
-        <ul className="space-y-3">
-          {items.map((item) => (
-            <li key={item.id}>{renderItem(item)}</li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

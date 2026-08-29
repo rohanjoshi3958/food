@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { MealMacrosCard } from "@/components/meal-macros";
 import { apiFetch, parseError } from "@/lib/api";
 import {
-  formatCookbookDate,
+  formatCookbookDateTime,
   parseMealIngredients,
   parseMealInstructionSteps,
 } from "@/lib/meals";
@@ -159,7 +159,7 @@ function CookbookCard({
         )}
         {entry.created_at && (
           <p className="text-xs text-stone-400">
-            Added {formatCookbookDate(entry.created_at)}
+            Added {formatCookbookDateTime(entry.created_at)}
           </p>
         )}
       </div>
@@ -188,7 +188,7 @@ function CookbookDetail({
           <h3 className="text-lg font-semibold text-stone-900">{entry.title}</h3>
           {entry.created_at && (
             <p className="mt-1 text-xs text-stone-400">
-              Added {formatCookbookDate(entry.created_at)}
+              Added {formatCookbookDateTime(entry.created_at)}
             </p>
           )}
         </div>

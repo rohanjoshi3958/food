@@ -1,17 +1,5 @@
-import type { Metadata } from "next";
-import { MealProceedPage } from "@/components/meal-proceed-page";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "Food | Your meal",
-  description: "View your meal and add it to your cookbook.",
-};
-
-export default async function MealPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-
-  return <MealProceedPage mealId={id} />;
+export default async function MealPage() {
+  redirect("/?tab=meals");
 }

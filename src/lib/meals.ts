@@ -57,6 +57,21 @@ export function formatCookbookDate(iso: string): string {
   });
 }
 
+export function formatCookbookDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export type Meal = {
   id: string;
   name: string;
