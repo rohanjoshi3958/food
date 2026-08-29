@@ -1,60 +1,17 @@
-export type Ingredient = {
-  id: string;
-  name: string;
-  store_item_name: string | null;
-  quantity: string | null;
-  original_quantity?: string | null;
-  unit: string | null;
-  serving_size: string | null;
-  servings_per_container: number | null;
-  calories: number | null;
-  protein_g: number | null;
-  carbs_g: number | null;
-  fat_g: number | null;
-  fiber_g: number | null;
-  sodium_mg: number | null;
-  nutrition_notes: string | null;
-  receipt_id: string | null;
-  created_at: string;
-};
+export type { Ingredient } from "@/lib/ingredients";
+export {
+  formatServingCount,
+  getIngredientStock,
+  ingredientSummaryLine,
+  servingsFromQuantity,
+} from "@/lib/ingredients";
 
-function formatServingCount(value: number): string {
-  if (!Number.isFinite(value)) {
-    return String(value);
-  }
-  const rounded =
-    Math.abs(value - Math.round(value)) < 0.05 ? Math.round(value) : value;
-  if (typeof rounded === "number" && !Number.isInteger(rounded)) {
-    return rounded.toFixed(1).replace(/\.0$/, "");
-  }
-  return String(rounded);
-}
-
-function servingsNoun(value: number): string {
-  const rounded =
-    Math.abs(value - Math.round(value)) < 0.05 ? Math.round(value) : value;
-  return rounded === 1 ? "serving" : "servings";
-}
-
-function servingsFromQuantity(
-  quantity: string | null | undefined,
-  servingsPerContainer: number | null,
-): number | null {
-  if (
-    servingsPerContainer == null ||
-    servingsPerContainer <= 0 ||
-    !quantity
-  ) {
-    return null;
-  }
-
-  const parsed = Number.parseFloat(quantity);
-  if (!Number.isFinite(parsed)) {
-    return null;
-  }
-
-  return parsed * servingsPerContainer;
-}
+import type { Ingredient } from "@/lib/ingredients";
+import {
+  formatServingCount,
+  getIngredientStock,
+  servingsNoun,
+} from "@/lib/ingredients";
 
 export function IngredientCard({
   ingredient,
@@ -67,14 +24,8 @@ export function IngredientCard({
   onRemove?: () => void;
   removing?: boolean;
 }) {
-  const servingsLeft = servingsFromQuantity(
-    ingredient.quantity,
-    ingredient.servings_per_container,
-  );
-  const originalServings = servingsFromQuantity(
-    ingredient.original_quantity || ingredient.quantity,
-    ingredient.servings_per_container,
-  );
+  const stock = getIngredientStock(ingredient);
+  const { servingsLeft, originalServings, quantityLabel } = stock;
   const packageUnits = new Set([
     "each",
     "bag",
@@ -90,10 +41,6 @@ export function IngredientCard({
     servingsLeft != null &&
     originalServings != null &&
     packageUnits.has(unit);
-
-  const plainQuantityLabel = [ingredient.quantity, ingredient.unit]
-    .filter(Boolean)
-    .join(" ");
 
   return (
     <div
@@ -115,16 +62,17 @@ export function IngredientCard({
           <div className="flex items-center gap-2">
             {showServingsAsQuantity ? (
               <span className="rounded-full bg-white px-2.5 py-1 text-xs text-stone-600 ring-1 ring-stone-200">
-                ~{formatServingCount(originalServings)}{" "}
-                {servingsNoun(originalServings)} ·{" "}
+                ~{formatServingCount(originalServings!)}{" "}
+                {servingsNoun(originalServings!)}{" "}
+                ·{" "}
                 <strong className="font-semibold text-stone-900">
-                  {formatServingCount(servingsLeft)} left
+                  {formatServingCount(servingsLeft!)} left
                 </strong>
               </span>
             ) : (
-              plainQuantityLabel && (
+              quantityLabel && (
                 <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-stone-600 ring-1 ring-stone-200">
-                  {plainQuantityLabel}
+                  {quantityLabel}
                 </span>
               )
             )}

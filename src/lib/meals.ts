@@ -7,6 +7,56 @@ export function formatMealInstructions(text: string): string {
   return text;
 }
 
+export function parseMealIngredients(
+  text: string | null,
+): { name: string; amount: string }[] {
+  if (!text) {
+    return [];
+  }
+
+  const items: { name: string; amount: string }[] = [];
+
+  for (const line of text.split("\n")) {
+    const cleaned = line.trim().replace(/^-\s*/, "");
+    if (!cleaned || !cleaned.includes(":")) {
+      continue;
+    }
+
+    const colonIndex = cleaned.indexOf(":");
+    const name = cleaned.slice(0, colonIndex).trim();
+    const amount = cleaned.slice(colonIndex + 1).trim();
+    if (name) {
+      items.push({ name, amount });
+    }
+  }
+
+  return items;
+}
+
+export function parseMealInstructionSteps(text: string | null): string[] {
+  if (!text) {
+    return [];
+  }
+
+  return formatMealInstructions(text)
+    .split("\n")
+    .map((step) => step.replace(/^\d+\.\s*/, "").trim())
+    .filter(Boolean);
+}
+
+export function formatCookbookDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 export type Meal = {
   id: string;
   name: string;

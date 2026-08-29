@@ -10,9 +10,11 @@ export type MealMacros = {
 export function MealMacrosCard({
   macros,
   compact = false,
+  variant = "grid",
 }: {
   macros: MealMacros;
   compact?: boolean;
+  variant?: "grid" | "chips";
 }) {
   const facts = [
     { label: "Calories", value: macros.calories, unit: "" },
@@ -25,6 +27,22 @@ export function MealMacrosCard({
 
   if (facts.length === 0) {
     return null;
+  }
+
+  if (variant === "chips") {
+    return (
+      <div className={`flex flex-wrap gap-2 ${compact ? "" : "mt-3"}`}>
+        {facts.map((fact) => (
+          <span
+            key={fact.label}
+            className="rounded-full bg-white px-3 py-1 text-xs font-medium text-stone-700 ring-1 ring-stone-200"
+          >
+            {fact.label} {fact.value}
+            {fact.unit}
+          </span>
+        ))}
+      </div>
+    );
   }
 
   return (

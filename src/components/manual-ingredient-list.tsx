@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { apiFetch, parseError } from "@/lib/api";
-import type { Ingredient } from "@/components/ingredient-card";
+import type { Ingredient } from "@/lib/ingredients";
 import { UnitSelect } from "@/components/unit-select";
 
 const inputClassName =
@@ -10,9 +10,11 @@ const inputClassName =
 
 export function ManualIngredientList({
   disabled = false,
+  embedded = false,
   onIngredientAdded,
 }: {
   disabled?: boolean;
+  embedded?: boolean;
   onIngredientAdded?: (ingredient: Ingredient) => void;
 }) {
   const [name, setName] = useState("");
@@ -70,14 +72,15 @@ export function ManualIngredientList({
   }
 
   return (
-    <div className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5">
+    <div className={embedded ? "space-y-4" : "space-y-4 rounded-2xl border border-stone-200 bg-white p-5"}>
       <div>
         <h3 className="text-sm font-semibold text-stone-900">
-          Add ingredients manually
+          Add manually
         </h3>
         <p className="mt-1 text-sm text-stone-500">
-          Ingredients are saved immediately and appear in View ingredients.
-          You can also upload a receipt below to add more.
+          {embedded
+            ? "Saved instantly to View ingredients."
+            : "Ingredients are saved immediately and appear in View ingredients. You can also upload a receipt below to add more."}
         </p>
       </div>
 
@@ -113,7 +116,11 @@ export function ManualIngredientList({
         type="button"
         onClick={addItem}
         disabled={disabled || saving}
-        className="rounded-xl border border-stone-200 px-4 py-2 text-sm font-medium text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+        className={
+          embedded
+            ? "w-full rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-medium text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+            : "rounded-xl border border-stone-200 px-4 py-2 text-sm font-medium text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+        }
       >
         {saving ? "Adding..." : "Add ingredient"}
       </button>
