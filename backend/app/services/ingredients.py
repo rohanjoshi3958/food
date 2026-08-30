@@ -3,11 +3,16 @@ from sqlalchemy.orm import Session
 from app.models import Ingredient, User
 from app.schemas import DraftIngredientItem, IngredientResponse
 from app.services.ingredient_merge import _merge_key, _sum_quantities
-from app.services.receipt_analyzer import ReceiptAnalysisError, estimate_ingredient_nutrition
+from app.services.ingredient_deduction import servings_per_pantry_unit
+from app.services.receipt_analyzer import (
+    ReceiptAnalysisError,
+    check_ingredient_unit,
+    estimate_ingredient_nutrition,
+)
 
 
 def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
-    if not item.is_food or not item.is_manual:
+    if not item.is_food:
         return item.model_copy(
             update={
                 "quantity": item.quantity or "1",
@@ -15,27 +20,39 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
             }
         )
 
-    try:
-        estimated = estimate_ingredient_nutrition(
-            item.ingredient_name,
-            item.quantity,
-            item.unit,
+    effective_unit = (item.unit or "").strip() or "each"
+    unit_warning = check_ingredient_unit(item.ingredient_name, effective_unit)
+    if unit_warning:
+        raise ReceiptAnalysisError(unit_warning.strip())
+
+    estimated = estimate_ingredient_nutrition(
+        item.ingredient_name,
+        item.quantity,
+        item.unit,
+    )
+    if not estimated.recognized:
+        raise ReceiptAnalysisError(
+            f'Could not recognize "{item.ingredient_name.strip()}" as a food ingredient. '
+            "Use a specific grocery item name."
         )
-    except ReceiptAnalysisError:
-        return item.model_copy(
-            update={
-                "quantity": item.quantity or "1",
-                "unit": item.unit or "each",
-            }
-        )
+
+    pantry_unit = item.unit or estimated.unit or "each"
+    computed_servings_per = servings_per_pantry_unit(
+        estimated.serving_size,
+        pantry_unit,
+    )
 
     return DraftIngredientItem(
         store_item_name=item.store_item_name or item.ingredient_name,
         ingredient_name=item.ingredient_name,
         quantity=item.quantity or estimated.quantity or "1",
-        unit=item.unit or estimated.unit or "each",
+        unit=pantry_unit,
         serving_size=estimated.serving_size,
-        servings_per_container=estimated.servings_per_container,
+        servings_per_container=(
+            computed_servings_per
+            if computed_servings_per is not None
+            else estimated.servings_per_container
+        ),
         calories=estimated.calories,
         protein_g=estimated.protein_g,
         carbs_g=estimated.carbs_g,
@@ -43,7 +60,7 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
         fiber_g=estimated.fiber_g,
         sodium_mg=estimated.sodium_mg,
         nutrition_notes=estimated.nutrition_notes,
-        is_manual=True,
+        is_manual=item.is_manual,
         is_food=item.is_food,
     )
 

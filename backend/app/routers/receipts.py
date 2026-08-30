@@ -15,12 +15,13 @@ from app.schemas import (
     IngredientResponse,
     ReceiptResponse,
 )
-from app.services.ingredients import create_ingredient, resolve_item_nutrition
+from app.services.ingredients import create_ingredient
 from app.services.ingredient_merge import merge_draft_items
 from app.services.receipt_analyzer import (
     ReceiptAnalysisError,
     analyze_receipt_image,
 )
+from app.validation import validate_ingredient_input
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
 
@@ -78,6 +79,22 @@ def _delete_receipt(db: Session, receipt: Receipt) -> None:
     db.commit()
 
 
+def _validate_draft_item(item: DraftIngredientItem) -> None:
+    if not item.ingredient_name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Enter an ingredient name.",
+        )
+
+    is_valid, error_message = validate_ingredient_input(item.quantity, item.unit)
+    if not is_valid:
+        label = item.ingredient_name.strip()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'"{label}": {error_message}',
+        )
+
+
 def _manual_draft_items(raw_items: list[dict]) -> list[dict]:
     drafts: list[dict] = []
     for raw in raw_items:
@@ -88,6 +105,7 @@ def _manual_draft_items(raw_items: list[dict]) -> list[dict]:
                 "is_manual": True,
             }
         )
+        _validate_draft_item(item)
         drafts.append(item.model_dump())
     return drafts
 
@@ -308,6 +326,8 @@ def update_receipt_draft(
             for item in payload.items
         ]
     )
+    for raw_item in receipt.draft_items or []:
+        _validate_draft_item(DraftIngredientItem.model_validate(raw_item))
     db.commit()
     db.refresh(receipt)
     return _receipt_response(receipt)
@@ -381,10 +401,18 @@ def confirm_receipt(
             [item.model_dump() for item in payload.items if item.is_food]
         )
     ]
-    resolved_items = [resolve_item_nutrition(item) for item in merged_items]
 
-    for item in resolved_items:
-        create_ingredient(db, current_user, item, receipt_id=receipt.id)
+    for item in merged_items:
+        _validate_draft_item(item)
+
+    try:
+        for item in merged_items:
+            create_ingredient(db, current_user, item, receipt_id=receipt.id)
+    except ReceiptAnalysisError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
     receipt.analysis_status = "completed"
     receipt.draft_items = None

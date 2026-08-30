@@ -74,6 +74,15 @@ class CreateManualIngredientRequest(BaseModel):
     unit: str | None = None
 
 
+class CheckUnitRequest(BaseModel):
+    ingredient_name: str = Field(min_length=1)
+    unit: str = Field(min_length=1)
+
+
+class CheckUnitResponse(BaseModel):
+    warning: str | None = None
+
+
 class ConfirmReceiptRequest(BaseModel):
     items: list[DraftIngredientItem]
 

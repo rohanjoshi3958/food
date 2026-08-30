@@ -4,9 +4,17 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import Ingredient, User
-from app.schemas import CreateManualIngredientRequest, DraftIngredientItem, IngredientResponse
+from app.schemas import (
+    CheckUnitRequest,
+    CheckUnitResponse,
+    CreateManualIngredientRequest,
+    DraftIngredientItem,
+    IngredientResponse,
+)
 from app.services.ingredient_merge import _merge_key, _sum_quantities
 from app.services.ingredients import create_ingredient
+from app.services.receipt_analyzer import ReceiptAnalysisError, check_ingredient_unit
+from app.validation import validate_ingredient_input
 
 router = APIRouter(prefix="/ingredients", tags=["ingredients"])
 
@@ -76,6 +84,26 @@ def list_ingredients(
     return [IngredientResponse.model_validate(item) for item in ingredients]
 
 
+@router.post("/unit-check", response_model=CheckUnitResponse)
+def check_unit(
+    payload: CheckUnitRequest,
+    current_user: User = Depends(get_current_user),
+) -> CheckUnitResponse:
+    del current_user
+    try:
+        warning = check_ingredient_unit(
+            payload.ingredient_name.strip(),
+            payload.unit.strip(),
+        )
+    except ReceiptAnalysisError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    return CheckUnitResponse(warning=warning)
+
+
 @router.post("/manual", response_model=IngredientResponse, status_code=status.HTTP_201_CREATED)
 def create_manual_ingredient(
     payload: CreateManualIngredientRequest,
@@ -88,6 +116,13 @@ def create_manual_ingredient(
             detail="Enter an ingredient name.",
         )
 
+    is_valid, error_message = validate_ingredient_input(payload.quantity, payload.unit)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_message,
+        )
+
     item = DraftIngredientItem(
         ingredient_name=payload.ingredient_name.strip(),
         store_item_name=payload.ingredient_name.strip(),
@@ -96,7 +131,13 @@ def create_manual_ingredient(
         is_manual=True,
     )
 
-    return create_ingredient(db, current_user, item)
+    try:
+        return create_ingredient(db, current_user, item)
+    except ReceiptAnalysisError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @router.delete("/{ingredient_id}", status_code=status.HTTP_204_NO_CONTENT)

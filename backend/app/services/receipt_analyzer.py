@@ -86,8 +86,16 @@ Examples:
 - unit "oz" for yogurt → servings_per_container ≈ servings per 1 oz
 - unit "lb" for bananas → servings_per_container ≈ servings per 1 lb
 
+Set "recognized" to true ONLY when the item name clearly identifies a real grocery food or beverage
+you can match to USDA-style nutrition data (e.g. "chicken breast", "bananas", "greek yogurt").
+Set "recognized" to false when the name is empty, too vague, ambiguous, profane, gibberish,
+not food, or cannot be matched to a plausible grocery product (e.g. "po", "food", "item").
+
+When recognized is false, set every nutrition field to null and explain briefly in nutrition_notes.
+
 Respond with ONLY valid JSON:
 {{
+  "recognized": true,
   "quantity": "1",
   "unit": "each",
   "serving_size": "1 serving (describe size)",
@@ -104,11 +112,28 @@ Respond with ONLY valid JSON:
 For quantity and unit: echo the provided values when known; otherwise fill in your educated guess.
 Use null for unknown nutrition values. Base estimates on standard USDA or nutrition database / typical package sizes."""
 
+UNIT_CHECK_PROMPT = """Assess whether this grocery purchase unit is plausible for the item.
+
+- Item: {ingredient_name}
+- Unit: {unit}
+
+Set "unit_plausible" to true when the unit fits how this is normally bought or measured.
+Set "unit_plausible" to false when the unit is a poor fit (e.g. whole produce in gallon, dry spice in ml).
+When false, set "unit_warning" to one short sentence suggesting better units; otherwise null.
+The app rejects ingredients that fail this check.
+
+Respond with ONLY valid JSON:
+{{
+  "unit_plausible": true,
+  "unit_warning": null
+}}"""
+
 
 class ParsedReceiptItem(BaseModel):
     store_item_name: str
     ingredient_name: str
     is_food: bool = True
+    recognized: bool = False
     quantity: str | None = None
     unit: str | None = None
     serving_size: str | None = None
@@ -179,6 +204,48 @@ def _as_optional_float(value) -> float | None:
     return number
 
 
+def _unit_warning_from_payload(payload: dict) -> str | None:
+    if payload.get("unit_plausible") is True:
+        return None
+    return _as_optional_str(payload.get("unit_warning"))
+
+
+def check_ingredient_unit(
+    ingredient_name: str,
+    unit: str | None = None,
+) -> str | None:
+    name = ingredient_name.strip()
+    unit_label = (unit or "").strip()
+    if not name or not unit_label:
+        return None
+
+    client = _get_client()
+    message = client.messages.create(
+        model=RECEIPT_ANTHROPIC_MODEL,
+        max_tokens=256,
+        messages=[
+            {
+                "role": "user",
+                "content": UNIT_CHECK_PROMPT.format(
+                    ingredient_name=name,
+                    unit=unit_label,
+                ),
+            }
+        ],
+    )
+
+    text_blocks = [block.text for block in message.content if block.type == "text"]
+    if not text_blocks:
+        return None
+
+    try:
+        payload = _extract_json(text_blocks[-1])
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+    return _unit_warning_from_payload(payload)
+
+
 def estimate_ingredient_nutrition(
     ingredient_name: str,
     quantity: str | None = None,
@@ -217,6 +284,7 @@ def estimate_ingredient_nutrition(
         return ParsedReceiptItem(
             store_item_name=ingredient_name,
             ingredient_name=ingredient_name,
+            recognized=payload.get("recognized") is True,
             quantity=guessed_quantity,
             unit=guessed_unit,
             serving_size=payload.get("serving_size"),
