@@ -9,7 +9,12 @@ from app.services.ingredients import resolve_item_nutrition
 from app.services.receipt_analyzer import ParsedReceiptItem, ReceiptAnalysisError
 
 
-def _estimated_item(*, recognized: bool, name: str = "Test") -> ParsedReceiptItem:
+def _estimated_item(
+    *,
+    recognized: bool,
+    name: str = "Test",
+    unit_warning: str | None = None,
+) -> ParsedReceiptItem:
     return ParsedReceiptItem(
         store_item_name=name,
         ingredient_name=name,
@@ -25,6 +30,7 @@ def _estimated_item(*, recognized: bool, name: str = "Test") -> ParsedReceiptIte
         fiber_g=1 if recognized else None,
         sodium_mg=50 if recognized else None,
         nutrition_notes="USDA estimate" if recognized else "Unrecognized item",
+        unit_warning=unit_warning,
     )
 
 
@@ -97,3 +103,25 @@ class TestResolveItemNutrition:
         assert resolved.calories == 100
         assert resolved.quantity == "2"
         assert resolved.unit == "lb"
+
+    def test_rejects_implausible_unit(self):
+        item = DraftIngredientItem(
+            ingredient_name="watermelon",
+            store_item_name="watermelon",
+            quantity="1",
+            unit="gallon",
+            is_manual=True,
+        )
+
+        with patch(
+            "app.services.ingredients.estimate_ingredient_nutrition",
+            return_value=_estimated_item(
+                recognized=True,
+                name="watermelon",
+                unit_warning="Use each or lb for whole watermelon.",
+            ),
+        ):
+            with pytest.raises(ReceiptAnalysisError) as exc_info:
+                resolve_item_nutrition(item)
+
+        assert "Use each or lb" in str(exc_info.value)

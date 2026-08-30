@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { MealMacrosCard } from "@/components/meal-macros";
+import { IngredientNutritionDisplay } from "@/components/ingredient-nutrition-display";
+import { useIngredientUnitWarning } from "@/hooks/use-ingredient-unit-warning";
 import type { Ingredient } from "@/lib/ingredients";
 import {
   formatServingCount,
@@ -96,6 +97,12 @@ function IngredientDetail({
   removing: boolean;
 }) {
   const stock = getIngredientStock(ingredient);
+  const persistedWarning = ingredient.unit_warning?.trim() || null;
+  const { warning: liveWarning } = useIngredientUnitWarning(
+    persistedWarning ? "" : ingredient.name,
+    persistedWarning ? "" : ingredient.unit ?? "",
+  );
+  const unitWarning = persistedWarning || liveWarning;
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4 sm:p-6">
@@ -128,8 +135,22 @@ function IngredientDetail({
         </div>
       </div>
 
+      {unitWarning && (
+        <p className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+          {unitWarning}
+        </p>
+      )}
+
       {stock.servingsLeft != null && stock.originalServings != null && (
         <div className="mb-4 space-y-2">
+          {stock.quantityLabel && (
+            <p className="text-sm text-stone-600">
+              On hand:{" "}
+              <strong className="font-semibold text-stone-900">
+                {stock.quantityLabel}
+              </strong>
+            </p>
+          )}
           <p className="text-sm text-stone-600">
             ~{formatServingCount(stock.originalServings)}{" "}
             {servingsNoun(stock.originalServings)} ·{" "}
@@ -141,19 +162,22 @@ function IngredientDetail({
         </div>
       )}
 
-      {!stock.servingsLeft && stock.quantityLabel && (
+      {stock.servingsLeft == null && stock.quantityLabel && (
         <p className="mb-4 text-sm text-stone-600">
-          On hand: <strong className="font-semibold">{stock.quantityLabel}</strong>
+          On hand:{" "}
+          <strong className="font-semibold text-stone-900">
+            {stock.quantityLabel}
+          </strong>
         </p>
       )}
 
       {ingredient.serving_size && (
         <p className="mb-4 text-sm text-stone-600">
-          Serving: {ingredient.serving_size}
+          Standard serving: {ingredient.serving_size}
         </p>
       )}
 
-      <MealMacrosCard macros={ingredient} variant="chips" />
+      <IngredientNutritionDisplay ingredient={ingredient} />
 
       {ingredient.nutrition_notes && (
         <p className="mt-4 text-xs italic text-stone-400">

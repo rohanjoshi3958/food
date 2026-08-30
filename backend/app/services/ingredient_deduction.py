@@ -336,6 +336,32 @@ def _serving_amount_from_ingredient(
     return parse_amount(primary)
 
 
+def servings_per_pantry_unit(
+    serving_size: str | None,
+    pantry_unit: str | None,
+) -> float | None:
+    """How many standard servings fit in one unit of the pantry unit."""
+    if not serving_size or not pantry_unit:
+        return None
+
+    primary = serving_size.split("(", 1)[0].strip()
+    serving_quantity, serving_unit = parse_amount(primary)
+    if not serving_quantity or serving_quantity <= 0 or not serving_unit:
+        return None
+
+    normalized_pantry_unit = normalize_unit(pantry_unit)
+    if not normalized_pantry_unit:
+        return None
+
+    converted = _convert_amount(1.0, normalized_pantry_unit, serving_unit)
+    if converted is None and normalized_pantry_unit == serving_unit:
+        converted = 1.0
+    if converted is None:
+        return None
+
+    return converted / serving_quantity
+
+
 def servings_used_from_amount(
     ingredient: Ingredient,
     used_quantity: float,

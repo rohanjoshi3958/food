@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.models import Ingredient, User
 from app.schemas import DraftIngredientItem, IngredientResponse
 from app.services.ingredient_merge import _merge_key, _sum_quantities
+from app.services.ingredient_deduction import servings_per_pantry_unit
 from app.services.receipt_analyzer import ReceiptAnalysisError, estimate_ingredient_nutrition
 
 
@@ -26,13 +27,26 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
             "Use a specific grocery item name."
         )
 
+    if estimated.unit_warning:
+        raise ReceiptAnalysisError(estimated.unit_warning.strip())
+
+    pantry_unit = item.unit or estimated.unit or "each"
+    computed_servings_per = servings_per_pantry_unit(
+        estimated.serving_size,
+        pantry_unit,
+    )
+
     return DraftIngredientItem(
         store_item_name=item.store_item_name or item.ingredient_name,
         ingredient_name=item.ingredient_name,
         quantity=item.quantity or estimated.quantity or "1",
-        unit=item.unit or estimated.unit or "each",
+        unit=pantry_unit,
         serving_size=estimated.serving_size,
-        servings_per_container=estimated.servings_per_container,
+        servings_per_container=(
+            computed_servings_per
+            if computed_servings_per is not None
+            else estimated.servings_per_container
+        ),
         calories=estimated.calories,
         protein_g=estimated.protein_g,
         carbs_g=estimated.carbs_g,
@@ -40,6 +54,7 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
         fiber_g=estimated.fiber_g,
         sodium_mg=estimated.sodium_mg,
         nutrition_notes=estimated.nutrition_notes,
+        unit_warning=estimated.unit_warning,
         is_manual=item.is_manual,
         is_food=item.is_food,
     )
@@ -94,6 +109,7 @@ def create_ingredient(
             "fiber_g",
             "sodium_mg",
             "nutrition_notes",
+            "unit_warning",
         ):
             if getattr(existing, field) is None and getattr(resolved, field) is not None:
                 setattr(existing, field, getattr(resolved, field))
@@ -119,6 +135,7 @@ def create_ingredient(
         fiber_g=resolved.fiber_g,
         sodium_mg=resolved.sodium_mg,
         nutrition_notes=resolved.nutrition_notes,
+        unit_warning=resolved.unit_warning,
     )
     db.add(ingredient)
     db.commit()

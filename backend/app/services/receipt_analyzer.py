@@ -106,11 +106,34 @@ Respond with ONLY valid JSON:
   "fat_g": 3,
   "fiber_g": 2,
   "sodium_mg": 150,
-  "nutrition_notes": "Brief note on data source"
+  "nutrition_notes": "Brief note on data source",
+  "unit_plausible": true,
+  "unit_warning": null
 }}
 
 For quantity and unit: echo the provided values when known; otherwise fill in your educated guess.
-Use null for unknown nutrition values. Base estimates on standard USDA or nutrition database / typical package sizes."""
+Use null for unknown nutrition values. Base estimates on standard USDA or nutrition database / typical package sizes.
+
+Assess whether the provided purchase unit is plausible for how this item is normally sold or measured at a grocery store.
+Set "unit_plausible" to true when the unit is reasonable (including interpretable amounts like cups of diced fruit).
+Set "unit_plausible" to false when the unit is a poor fit (e.g. whole produce in gallon, dry spice in ml, liquids in lb).
+When unit_plausible is false, set "unit_warning" to one short sentence suggesting better units; otherwise set unit_warning to null. Items with unit_plausible false cannot be saved."""
+
+UNIT_CHECK_PROMPT = """Assess whether this grocery purchase unit is plausible for the item.
+
+- Item: {ingredient_name}
+- Unit: {unit}
+
+Set "unit_plausible" to true when the unit fits how this is normally bought or measured.
+Set "unit_plausible" to false when the unit is a poor fit (e.g. whole produce in gallon, dry spice in ml).
+When false, set "unit_warning" to one short sentence suggesting better units; otherwise null.
+The app rejects ingredients that fail this check.
+
+Respond with ONLY valid JSON:
+{{
+  "unit_plausible": true,
+  "unit_warning": null
+}}"""
 
 
 class ParsedReceiptItem(BaseModel):
@@ -129,6 +152,7 @@ class ParsedReceiptItem(BaseModel):
     fiber_g: float | None = None
     sodium_mg: float | None = None
     nutrition_notes: str | None = None
+    unit_warning: str | None = None
 
 
 class ParsedReceipt(BaseModel):
@@ -188,6 +212,48 @@ def _as_optional_float(value) -> float | None:
     return number
 
 
+def _unit_warning_from_payload(payload: dict) -> str | None:
+    if payload.get("unit_plausible") is True:
+        return None
+    return _as_optional_str(payload.get("unit_warning"))
+
+
+def check_ingredient_unit(
+    ingredient_name: str,
+    unit: str | None = None,
+) -> str | None:
+    name = ingredient_name.strip()
+    unit_label = (unit or "").strip()
+    if not name or not unit_label:
+        return None
+
+    client = _get_client()
+    message = client.messages.create(
+        model=RECEIPT_ANTHROPIC_MODEL,
+        max_tokens=256,
+        messages=[
+            {
+                "role": "user",
+                "content": UNIT_CHECK_PROMPT.format(
+                    ingredient_name=name,
+                    unit=unit_label,
+                ),
+            }
+        ],
+    )
+
+    text_blocks = [block.text for block in message.content if block.type == "text"]
+    if not text_blocks:
+        return None
+
+    try:
+        payload = _extract_json(text_blocks[-1])
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+    return _unit_warning_from_payload(payload)
+
+
 def estimate_ingredient_nutrition(
     ingredient_name: str,
     quantity: str | None = None,
@@ -240,6 +306,7 @@ def estimate_ingredient_nutrition(
             fiber_g=payload.get("fiber_g"),
             sodium_mg=payload.get("sodium_mg"),
             nutrition_notes=payload.get("nutrition_notes"),
+            unit_warning=_unit_warning_from_payload(payload),
         )
     except (json.JSONDecodeError, ValueError) as exc:
         raise ReceiptAnalysisError(
@@ -287,6 +354,7 @@ def _enrich_item_with_nutrition(item: ParsedReceiptItem) -> ParsedReceiptItem:
             "fiber_g": estimated.fiber_g,
             "sodium_mg": estimated.sodium_mg,
             "nutrition_notes": estimated.nutrition_notes,
+            "unit_warning": estimated.unit_warning,
         }
     )
 

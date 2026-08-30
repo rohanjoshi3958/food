@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { UnitSelect } from "@/components/unit-select";
+import { useIngredientUnitWarning } from "@/hooks/use-ingredient-unit-warning";
 import { apiFetch } from "@/lib/api";
 import type { Ingredient } from "@/lib/ingredients";
 import { getQuantityHint, INGREDIENT_NAME_HINT, validateQuantity } from "@/lib/validation";
-import { UnitSelect } from "@/components/unit-select";
+import { UNIT_GENERAL_HINT } from "@/lib/units";
 
 const inputClassName =
   "w-full rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-900 outline-none transition focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100";
@@ -24,6 +26,8 @@ export function ManualIngredientList({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const { warning: unitWarning, checking: checkingUnit } =
+    useIngredientUnitWarning(name, unit);
 
   async function addItem() {
     const ingredientName = name.trim();
@@ -35,6 +39,16 @@ export function ManualIngredientList({
     const quantityError = validateQuantity(quantity.trim() || null, unit.trim() || null);
     if (quantityError) {
       setError(quantityError);
+      return;
+    }
+
+    if (unitWarning) {
+      setError(unitWarning);
+      return;
+    }
+
+    if (checkingUnit && name.trim() && unit.trim()) {
+      setError("Still checking whether this unit fits — try again in a moment.");
       return;
     }
 
@@ -119,8 +133,14 @@ export function ManualIngredientList({
           id="manual-quantity-hint"
           className="text-xs leading-relaxed text-stone-400"
         >
-          {INGREDIENT_NAME_HINT} {getQuantityHint(unit)}
+          {INGREDIENT_NAME_HINT} {getQuantityHint(unit)} {UNIT_GENERAL_HINT}
         </p>
+        {unitWarning && (
+          <p className="text-xs leading-relaxed text-red-600">{unitWarning}</p>
+        )}
+        {checkingUnit && !unitWarning && name.trim() && unit.trim() && (
+          <p className="text-xs leading-relaxed text-stone-400">Checking unit…</p>
+        )}
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
@@ -131,7 +151,7 @@ export function ManualIngredientList({
       <button
         type="button"
         onClick={addItem}
-        disabled={disabled || saving}
+        disabled={disabled || saving || Boolean(unitWarning) || checkingUnit}
         className={
           embedded
             ? "w-full rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-medium text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"

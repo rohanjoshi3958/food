@@ -78,6 +78,7 @@ class Ingredient(Base):
     fiber_g: Mapped[float | None] = mapped_column(Float, nullable=True)
     sodium_mg: Mapped[float | None] = mapped_column(Float, nullable=True)
     nutrition_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    unit_warning: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

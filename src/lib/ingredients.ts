@@ -1,3 +1,69 @@
+export type IngredientNutrition = {
+  calories: number | null;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  fiber_g: number | null;
+  sodium_mg: number | null;
+};
+
+export function servingSizeShortLabel(
+  servingSize: string | null | undefined,
+): string | null {
+  if (!servingSize?.trim()) {
+    return null;
+  }
+  return servingSize.split("(", 1)[0]?.trim() || null;
+}
+
+export function getIngredientNutrition(
+  ingredient: Ingredient,
+): IngredientNutrition {
+  return {
+    calories: ingredient.calories,
+    protein_g: ingredient.protein_g,
+    carbs_g: ingredient.carbs_g,
+    fat_g: ingredient.fat_g,
+    fiber_g: ingredient.fiber_g,
+    sodium_mg: ingredient.sodium_mg,
+  };
+}
+
+export function scaleIngredientNutrition(
+  nutrition: IngredientNutrition,
+  factor: number,
+): IngredientNutrition {
+  if (!Number.isFinite(factor) || factor <= 0) {
+    return nutrition;
+  }
+
+  const scale = (value: number | null, decimals = 1): number | null => {
+    if (value == null) {
+      return null;
+    }
+    const scaled = value * factor;
+    if (decimals === 0) {
+      return Math.round(scaled);
+    }
+    return Math.round(scaled * 10 ** decimals) / 10 ** decimals;
+  };
+
+  return {
+    calories: scale(nutrition.calories, 0),
+    protein_g: scale(nutrition.protein_g),
+    carbs_g: scale(nutrition.carbs_g),
+    fat_g: scale(nutrition.fat_g),
+    fiber_g: scale(nutrition.fiber_g),
+    sodium_mg: scale(nutrition.sodium_mg, 0),
+  };
+}
+
+export function shouldShowTotalOnHandNutrition(
+  servingsLeft: number | null,
+): boolean {
+  return servingsLeft != null && Math.abs(servingsLeft - 1) > 0.05;
+}
+
 export type Ingredient = {
   id: string;
   name: string;
@@ -14,6 +80,7 @@ export type Ingredient = {
   fiber_g: number | null;
   sodium_mg: number | null;
   nutrition_notes: string | null;
+  unit_warning: string | null;
   receipt_id: string | null;
   created_at: string;
 };

@@ -1,10 +1,35 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { apiFetch, errorDetailFromBody, readJsonResponse } from "@/lib/api";
-import { validateQuantity } from "@/lib/validation";
 import { IngredientCard, type Ingredient } from "@/components/ingredient-card";
 import { UnitSelect } from "@/components/unit-select";
+import { useIngredientUnitWarning } from "@/hooks/use-ingredient-unit-warning";
+import { apiFetch, errorDetailFromBody, readJsonResponse } from "@/lib/api";
+import { findFirstUnitWarning } from "@/lib/ingredient-unit-check";
+import { validateQuantity } from "@/lib/validation";
+import { UNIT_GENERAL_HINT } from "@/lib/units";
+
+function DraftItemUnitWarning({
+  name,
+  unit,
+  enabled,
+}: {
+  name: string;
+  unit: string;
+  enabled: boolean;
+}) {
+  const { warning, checking } = useIngredientUnitWarning(name, unit, { enabled });
+
+  if (warning) {
+    return <p className="mt-1 text-xs text-red-600">{warning}</p>;
+  }
+
+  if (checking && enabled && name.trim() && unit.trim()) {
+    return <p className="mt-1 text-xs text-stone-400">Checking unit…</p>;
+  }
+
+  return null;
+}
 
 export type DraftIngredient = {
   clientKey: string;
@@ -200,6 +225,7 @@ function draftToPreview(item: DraftIngredient): Ingredient {
     nutrition_notes: item.is_manual
       ? "Nutrition will be estimated when you save."
       : item.nutrition_notes,
+    unit_warning: null,
     receipt_id: null,
     created_at: new Date().toISOString(),
   };
@@ -226,6 +252,11 @@ export function ReceiptReview({
   const [newUnit, setNewUnit] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [editedItemKeys, setEditedItemKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const { warning: newUnitWarning, checking: checkingNewUnit } =
+    useIngredientUnitWarning(newName, newUnit);
   const skipNextPersist = useRef(true);
   const onDraftChangeRef = useRef(onDraftChange);
 
@@ -256,6 +287,17 @@ export function ReceiptReview({
     return () => window.clearTimeout(timeoutId);
   }, [items, receiptId]);
 
+  function markItemEdited(clientKey: string) {
+    setEditedItemKeys((current) => {
+      if (current.has(clientKey)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(clientKey);
+      return next;
+    });
+  }
+
   function updateItem(clientKey: string, updates: Partial<DraftIngredient>) {
     setItems((current) =>
       current.map((item) =>
@@ -281,6 +323,11 @@ export function ReceiptReview({
     );
     if (quantityError) {
       setError(quantityError);
+      return;
+    }
+
+    if (newUnitWarning) {
+      setError(newUnitWarning);
       return;
     }
 
@@ -352,6 +399,18 @@ export function ReceiptReview({
     setSaving(true);
     setError("");
 
+    const unitError = await findFirstUnitWarning(
+      validItems.map((item) => ({
+        ingredient_name: item.ingredient_name,
+        unit: item.unit.trim() || "each",
+      })),
+    );
+    if (unitError) {
+      setError(unitError);
+      setSaving(false);
+      return;
+    }
+
     try {
       const response = await apiFetch(`/api/receipts/${receiptId}/confirm`, {
         method: "POST",
@@ -419,11 +478,12 @@ export function ReceiptReview({
                       </span>
                       <input
                         value={item.ingredient_name}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          markItemEdited(item.clientKey);
                           updateItem(item.clientKey, {
                             ingredient_name: event.target.value,
-                          })
-                        }
+                          });
+                        }}
                         className={inputClassName}
                       />
                     </label>
@@ -461,11 +521,17 @@ export function ReceiptReview({
                       </span>
                       <UnitSelect
                         value={item.unit}
-                        onChange={(nextUnit) =>
-                          updateItem(item.clientKey, { unit: nextUnit })
-                        }
+                        onChange={(nextUnit) => {
+                          markItemEdited(item.clientKey);
+                          updateItem(item.clientKey, { unit: nextUnit });
+                        }}
                         required={false}
                         className={inputClassName}
+                      />
+                      <DraftItemUnitWarning
+                        name={item.ingredient_name}
+                        unit={item.unit}
+                        enabled={editedItemKeys.has(item.clientKey)}
                       />
                     </label>
                   </div>
@@ -508,6 +574,19 @@ export function ReceiptReview({
           />
           <UnitSelect value={newUnit} onChange={setNewUnit} required={false} />
         </div>
+        <p className="mt-2 text-xs leading-relaxed text-stone-400">
+          {UNIT_GENERAL_HINT}
+        </p>
+        {newUnitWarning && (
+          <p className="mt-1 text-xs leading-relaxed text-red-600">
+            {newUnitWarning}
+          </p>
+        )}
+        {checkingNewUnit && !newUnitWarning && newName.trim() && newUnit.trim() && (
+          <p className="mt-1 text-xs leading-relaxed text-stone-400">
+            Checking unit…
+          </p>
+        )}
         <button
           type="button"
           onClick={addItem}

@@ -4,10 +4,16 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import Ingredient, User
-from app.schemas import CreateManualIngredientRequest, DraftIngredientItem, IngredientResponse
+from app.schemas import (
+    CheckUnitRequest,
+    CheckUnitResponse,
+    CreateManualIngredientRequest,
+    DraftIngredientItem,
+    IngredientResponse,
+)
 from app.services.ingredient_merge import _merge_key, _sum_quantities
 from app.services.ingredients import create_ingredient
-from app.services.receipt_analyzer import ReceiptAnalysisError
+from app.services.receipt_analyzer import ReceiptAnalysisError, check_ingredient_unit
 from app.validation import validate_ingredient_input
 
 router = APIRouter(prefix="/ingredients", tags=["ingredients"])
@@ -51,6 +57,7 @@ def _consolidate_pantry(db: Session, user: User) -> list[Ingredient]:
             "fiber_g",
             "sodium_mg",
             "nutrition_notes",
+            "unit_warning",
         ):
             if getattr(existing, field) is None and getattr(ingredient, field) is not None:
                 setattr(existing, field, getattr(ingredient, field))
@@ -76,6 +83,26 @@ def list_ingredients(
 ) -> list[IngredientResponse]:
     ingredients = _consolidate_pantry(db, current_user)
     return [IngredientResponse.model_validate(item) for item in ingredients]
+
+
+@router.post("/unit-check", response_model=CheckUnitResponse)
+def check_unit(
+    payload: CheckUnitRequest,
+    current_user: User = Depends(get_current_user),
+) -> CheckUnitResponse:
+    del current_user
+    try:
+        warning = check_ingredient_unit(
+            payload.ingredient_name.strip(),
+            payload.unit.strip(),
+        )
+    except ReceiptAnalysisError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    return CheckUnitResponse(warning=warning)
 
 
 @router.post("/manual", response_model=IngredientResponse, status_code=status.HTTP_201_CREATED)

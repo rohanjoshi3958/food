@@ -9,6 +9,7 @@ from app.services.ingredient_deduction import (
     normalize_unit,
     parse_amount,
     parse_number,
+    servings_per_pantry_unit,
     UNIT_ALIASES,
     WEIGHT_TO_GRAMS,
     VOLUME_TO_ML,
@@ -723,3 +724,20 @@ class TestConversionFactors:
         """All conversion factors should be positive."""
         for factor in VOLUME_TO_ML.values():
             assert factor > 0
+
+
+class TestServingsPerPantryUnit:
+    def test_ml_to_tsp_serving(self):
+        servings = servings_per_pantry_unit(
+            "1 tsp (about 2.3 g, ~5 ml) ground paprika",
+            "ml",
+        )
+        assert servings == pytest.approx(1 / 4.929, rel=1e-3)
+
+    def test_same_unit(self):
+        servings = servings_per_pantry_unit("1 cup", "cup")
+        assert servings == pytest.approx(1.0)
+
+    def test_incompatible_units(self):
+        servings = servings_per_pantry_unit("1 slice", "each")
+        assert servings is None

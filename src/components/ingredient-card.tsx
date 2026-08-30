@@ -12,6 +12,7 @@ import {
   getIngredientStock,
   servingsNoun,
 } from "@/lib/ingredients";
+import { IngredientNutritionDisplay } from "@/components/ingredient-nutrition-display";
 
 export function IngredientCard({
   ingredient,
@@ -73,6 +74,12 @@ export function IngredientCard({
               quantityLabel && (
                 <span className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-stone-600 ring-1 ring-stone-200">
                   {quantityLabel}
+                  {servingsLeft != null && (
+                    <>
+                      {" "}
+                      · ~{formatServingCount(servingsLeft)} left
+                    </>
+                  )}
                 </span>
               )
             )}
@@ -93,7 +100,7 @@ export function IngredientCard({
       {(ingredient.serving_size ||
         (servingsLeft != null && !showServingsAsQuantity)) && (
         <p className={`text-xs text-stone-500 ${compact ? "" : "mt-2"}`}>
-          {ingredient.serving_size ? `Serving: ${ingredient.serving_size}` : null}
+          {ingredient.serving_size ? `Standard serving: ${ingredient.serving_size}` : null}
           {ingredient.serving_size &&
           servingsLeft != null &&
           !showServingsAsQuantity
@@ -111,57 +118,13 @@ export function IngredientCard({
         </p>
       )}
 
-      <NutritionFacts ingredient={ingredient} compact={compact} />
+      <IngredientNutritionDisplay ingredient={ingredient} compact={compact} />
 
       {ingredient.nutrition_notes && (
         <p className="mt-2 text-xs italic text-stone-400">
           {ingredient.nutrition_notes}
         </p>
       )}
-    </div>
-  );
-}
-
-function NutritionFacts({
-  ingredient,
-  compact,
-}: {
-  ingredient: Ingredient;
-  compact?: boolean;
-}) {
-  const facts = [
-    { label: "Calories", value: ingredient.calories, unit: "" },
-    { label: "Protein", value: ingredient.protein_g, unit: "g" },
-    { label: "Carbs", value: ingredient.carbs_g, unit: "g" },
-    { label: "Fat", value: ingredient.fat_g, unit: "g" },
-    { label: "Fiber", value: ingredient.fiber_g, unit: "g" },
-    { label: "Sodium", value: ingredient.sodium_mg, unit: "mg" },
-  ].filter((fact) => fact.value != null);
-
-  if (facts.length === 0) {
-    return null;
-  }
-
-  return (
-    <div
-      className={`grid grid-cols-2 gap-2 sm:grid-cols-3 ${
-        compact ? "mt-2" : "mt-3"
-      }`}
-    >
-      {facts.map((fact) => (
-        <div
-          key={fact.label}
-          className="rounded-xl bg-white px-3 py-2 ring-1 ring-stone-200"
-        >
-          <p className="text-[11px] uppercase tracking-wide text-stone-400">
-            {fact.label}
-          </p>
-          <p className="text-sm font-semibold text-stone-800">
-            {fact.value}
-            {fact.unit}
-          </p>
-        </div>
-      ))}
     </div>
   );
 }

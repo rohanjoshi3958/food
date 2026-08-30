@@ -9,6 +9,9 @@ export const PACKAGE_UNITS = [
   "head",
 ] as const;
 
+export const UNIT_GENERAL_HINT =
+  "Units are saved as entered. Implausible units (e.g. watermelon in gallon) are rejected.";
+
 export function isPackageUnit(unit: string | null | undefined): boolean {
   const normalized = (unit?.trim() || "each").toLowerCase();
   return PACKAGE_UNITS.includes(
