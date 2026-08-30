@@ -2,18 +2,15 @@
 
 ## Overview
 
-This directory contains automated backend tests for core inventory operations, including:
+This directory contains automated backend tests for:
 
-- Ingredient deduction logic (unit conversions, quantity calculations, serving sizes)
-- Ingredient merging (combining duplicate entries)
-- Unit normalization and parsing
-- Name matching and fuzzy search
+- **Receipt → inventory E2E flow** (`test_receipt_to_inventory_e2e.py`)
+- **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
+- **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
 
 ## Running Tests
 
 ### Prerequisites
-
-Install test dependencies:
 
 ```bash
 cd backend
@@ -30,10 +27,13 @@ pytest
 ### Run Specific Test Files
 
 ```bash
-# Test ingredient deduction
+# Receipt upload → review → confirm → inventory
+pytest tests/test_receipt_to_inventory_e2e.py
+
+# Ingredient deduction and unit logic
 pytest tests/test_ingredient_deduction.py
 
-# Test ingredient merge
+# Ingredient merge logic
 pytest tests/test_ingredient_merge.py
 ```
 
@@ -43,107 +43,61 @@ pytest tests/test_ingredient_merge.py
 pytest --cov=app --cov-report=html
 ```
 
-This will generate a coverage report in `htmlcov/index.html`.
+Coverage report: `htmlcov/index.html`
 
-### Run Specific Test Classes or Functions
-
-```bash
-# Run a specific test class
-pytest tests/test_ingredient_deduction.py::TestParseNumber
-
-# Run a specific test function
-pytest tests/test_ingredient_deduction.py::TestParseNumber::test_parse_fraction
-```
-
-### Verbose Output
+### Verbose / Single Test
 
 ```bash
 pytest -v
+pytest tests/test_receipt_to_inventory_e2e.py::TestReceiptToInventoryE2E::test_complete_receipt_flow -v
+pytest tests/test_ingredient_deduction.py::TestParseNumber::test_parse_fraction -v
 ```
 
-### Show Print Statements
+## Receipt E2E Tests
 
-```bash
-pytest -s
+End-to-end flow:
+
+```
+receipt → Claude-shaped response (mocked) → review → confirm → inventory
 ```
 
-## Test Coverage
+Test cases:
 
-The test suite covers the following acceptance criteria from FOOD-13:
+1. **`test_complete_receipt_flow`** — upload, review, confirm, verify inventory
+2. **`test_receipt_cancellation`** — cancel before confirm, no ingredients created
+3. **`test_receipt_with_item_removal`** — remove items during review
+4. **`test_multiple_receipts_flow`** — sequential receipt processing
 
-### ✅ Exact unit matches
-- `TestDeductionScenarios::test_sufficient_inventory_partial_depletion`
-- `TestConvertAmount::test_exact_unit_match_returns_same_quantity`
+Key features:
 
-### ✅ Weight conversion
-- `TestConvertAmount::test_weight_conversion_*` (multiple tests)
-- `TestDeductionScenarios::test_weight_to_weight_different_units`
+- Mocked Anthropic API (no real API calls)
+- Isolated SQLite database per test
+- FastAPI TestClient for HTTP requests
 
-### ✅ Volume conversion
-- `TestConvertAmount::test_volume_conversion_*` (multiple tests)
-- `TestDeductionScenarios::test_volume_to_volume_different_units`
+Fixtures in `conftest.py`: `test_db`, `client`, `test_user`, `auth_headers`, `mock_receipt_image`, `sample_receipt_response`, `sample_nutrition_estimates`, `create_mock_anthropic_response`
 
-### ✅ Fractional quantities
-- `TestParseNumber::test_parse_fraction`
-- `TestDeductionScenarios::test_fractional_quantity_deduction`
-
-### ✅ Package units
-- `TestDeductionScenarios::test_package_unit_deduction`
-- `TestUnitAliases::test_package_units_covered`
-
-### ✅ Insufficient inventory
-- `TestDeductionScenarios::test_insufficient_inventory`
-
-### ✅ Full depletion
-- `TestDeductionScenarios::test_full_depletion`
-
-### ✅ Partial depletion
-- `TestDeductionScenarios::test_sufficient_inventory_partial_depletion`
-
-### ✅ Unknown units
-- `TestDeductionScenarios::test_unknown_unit_deduction`
-- `TestNormalizeUnit::test_unknown_unit`
-
-### ✅ Ingredient name matching
-- `TestFindMatchingIngredient::*` (comprehensive test class)
-- Tests cover exact, case-insensitive, partial, and fuzzy matching
-
-## Test Structure
+## Inventory Unit Tests
 
 ### `test_ingredient_deduction.py`
-Tests for the deduction service (`app/services/ingredient_deduction.py`):
+
 - Unit parsing and normalization
 - Weight and volume conversions
-- Quantity formatting
+- Package units and serving-based deduction
 - Ingredient name matching
 - Deduction scenarios (partial, full, insufficient inventory)
 
 ### `test_ingredient_merge.py`
-Tests for the merge service (`app/services/ingredient_merge.py`):
+
 - Merging duplicate ingredients
 - Quantity summation
 - Unit normalization during merge
-- Preservation of nutrition data
 
 ## CI Integration
 
-These tests should be run in your CI pipeline:
-
 ```yaml
-# Example GitHub Actions
 - name: Run backend tests
   run: |
     cd backend
     pip install -r requirements.txt
     pytest --cov=app --cov-report=xml
 ```
-
-## Writing New Tests
-
-When adding new inventory features:
-
-1. Create test cases that cover edge cases
-2. Use the `MockIngredient` class for simple unit tests
-3. Test both success and failure scenarios
-4. Include tests for unit conversions if applicable
-5. Follow the existing test naming conventions
