@@ -62,33 +62,39 @@ def add_meal_to_cookbook(db: Session, meal: Meal, user: User) -> CookbookEntry:
 
     is_new_entry = entry is None
 
-    if is_new_entry:
-        entry = CookbookEntry(
-            user_id=user.id,
-            meal_id=meal.id,
-            title=meal.name,
-            description=meal.description,
-            ingredients=meal.ingredients_used,
-            instructions=meal.instructions,
-            photo_filename=photo_filename,
-            **_copy_meal_macros(meal),
-        )
-        db.add(entry)
-    else:
-        if entry.photo_filename and entry.photo_filename != photo_filename:
-            _remove_cookbook_photo(user.id, entry.photo_filename)
+    try:
+        if is_new_entry:
+            entry = CookbookEntry(
+                user_id=user.id,
+                meal_id=meal.id,
+                title=meal.name,
+                description=meal.description,
+                ingredients=meal.ingredients_used,
+                instructions=meal.instructions,
+                photo_filename=photo_filename,
+                **_copy_meal_macros(meal),
+            )
+            db.add(entry)
+        else:
+            if entry.photo_filename and entry.photo_filename != photo_filename:
+                _remove_cookbook_photo(user.id, entry.photo_filename)
 
-        entry.title = meal.name
-        entry.description = meal.description
-        entry.ingredients = meal.ingredients_used
-        entry.instructions = meal.instructions
-        entry.photo_filename = photo_filename
-        for field, value in _copy_meal_macros(meal).items():
-            setattr(entry, field, value)
+            entry.title = meal.name
+            entry.description = meal.description
+            entry.ingredients = meal.ingredients_used
+            entry.instructions = meal.instructions
+            entry.photo_filename = photo_filename
+            for field, value in _copy_meal_macros(meal).items():
+                setattr(entry, field, value)
 
-    if is_new_entry:
-        deduct_meal_ingredients(db, user, meal)
+        if is_new_entry:
+            deduct_meal_ingredients(db, user, meal)
 
-    db.commit()
-    db.refresh(entry)
-    return entry
+        db.commit()
+        db.refresh(entry)
+        return entry
+    except Exception:
+        db.rollback()
+        if is_new_entry and photo_filename:
+            _remove_cookbook_photo(user.id, photo_filename)
+        raise

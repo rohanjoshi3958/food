@@ -584,5 +584,3 @@ def deduct_meal_ingredients(db: Session, user: User, meal: Meal) -> None:
             pantry = [item for item in pantry if item.id != ingredient.id]
         else:
             ingredient.quantity = _format_quantity(remaining)
-
-    db.flush()
