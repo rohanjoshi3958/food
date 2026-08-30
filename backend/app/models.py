@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -112,6 +112,19 @@ class Meal(Base):
 
 class CookbookEntry(Base):
     __tablename__ = "cookbook_entries"
+    # A meal can only be completed once, so it may only ever have one cookbook
+    # entry. Completing a meal clears meal_id (ON DELETE SET NULL), and manually
+    # created entries have no meal at all, so rows without a meal are exempt.
+    __table_args__ = (
+        Index(
+            "uq_cookbook_entries_user_meal",
+            "user_id",
+            "meal_id",
+            unique=True,
+            postgresql_where=text("meal_id IS NOT NULL"),
+            sqlite_where=text("meal_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("User.id", ondelete="CASCADE"))
