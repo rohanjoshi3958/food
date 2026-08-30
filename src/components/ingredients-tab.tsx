@@ -97,12 +97,10 @@ function IngredientDetail({
   removing: boolean;
 }) {
   const stock = getIngredientStock(ingredient);
-  const persistedWarning = ingredient.unit_warning?.trim() || null;
-  const { warning: liveWarning } = useIngredientUnitWarning(
-    persistedWarning ? "" : ingredient.name,
-    persistedWarning ? "" : ingredient.unit ?? "",
+  const { warning: unitWarning } = useIngredientUnitWarning(
+    ingredient.name,
+    ingredient.unit ?? "",
   );
-  const unitWarning = persistedWarning || liveWarning;
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4 sm:p-6">

@@ -4,7 +4,11 @@ from app.models import Ingredient, User
 from app.schemas import DraftIngredientItem, IngredientResponse
 from app.services.ingredient_merge import _merge_key, _sum_quantities
 from app.services.ingredient_deduction import servings_per_pantry_unit
-from app.services.receipt_analyzer import ReceiptAnalysisError, estimate_ingredient_nutrition
+from app.services.receipt_analyzer import (
+    ReceiptAnalysisError,
+    check_ingredient_unit,
+    estimate_ingredient_nutrition,
+)
 
 
 def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
@@ -16,6 +20,11 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
             }
         )
 
+    effective_unit = (item.unit or "").strip() or "each"
+    unit_warning = check_ingredient_unit(item.ingredient_name, effective_unit)
+    if unit_warning:
+        raise ReceiptAnalysisError(unit_warning.strip())
+
     estimated = estimate_ingredient_nutrition(
         item.ingredient_name,
         item.quantity,
@@ -26,9 +35,6 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
             f'Could not recognize "{item.ingredient_name.strip()}" as a food ingredient. '
             "Use a specific grocery item name."
         )
-
-    if estimated.unit_warning:
-        raise ReceiptAnalysisError(estimated.unit_warning.strip())
 
     pantry_unit = item.unit or estimated.unit or "each"
     computed_servings_per = servings_per_pantry_unit(
@@ -54,7 +60,6 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
         fiber_g=estimated.fiber_g,
         sodium_mg=estimated.sodium_mg,
         nutrition_notes=estimated.nutrition_notes,
-        unit_warning=estimated.unit_warning,
         is_manual=item.is_manual,
         is_food=item.is_food,
     )
@@ -109,7 +114,6 @@ def create_ingredient(
             "fiber_g",
             "sodium_mg",
             "nutrition_notes",
-            "unit_warning",
         ):
             if getattr(existing, field) is None and getattr(resolved, field) is not None:
                 setattr(existing, field, getattr(resolved, field))
@@ -135,7 +139,6 @@ def create_ingredient(
         fiber_g=resolved.fiber_g,
         sodium_mg=resolved.sodium_mg,
         nutrition_notes=resolved.nutrition_notes,
-        unit_warning=resolved.unit_warning,
     )
     db.add(ingredient)
     db.commit()

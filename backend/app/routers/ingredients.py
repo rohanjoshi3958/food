@@ -57,7 +57,6 @@ def _consolidate_pantry(db: Session, user: User) -> list[Ingredient]:
             "fiber_g",
             "sodium_mg",
             "nutrition_notes",
-            "unit_warning",
         ):
             if getattr(existing, field) is None and getattr(ingredient, field) is not None:
                 setattr(existing, field, getattr(ingredient, field))

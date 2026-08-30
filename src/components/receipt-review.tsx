@@ -5,7 +5,6 @@ import { IngredientCard, type Ingredient } from "@/components/ingredient-card";
 import { UnitSelect } from "@/components/unit-select";
 import { useIngredientUnitWarning } from "@/hooks/use-ingredient-unit-warning";
 import { apiFetch, errorDetailFromBody, readJsonResponse } from "@/lib/api";
-import { findFirstUnitWarning } from "@/lib/ingredient-unit-check";
 import { validateQuantity } from "@/lib/validation";
 import { UNIT_GENERAL_HINT } from "@/lib/units";
 
@@ -225,7 +224,6 @@ function draftToPreview(item: DraftIngredient): Ingredient {
     nutrition_notes: item.is_manual
       ? "Nutrition will be estimated when you save."
       : item.nutrition_notes,
-    unit_warning: null,
     receipt_id: null,
     created_at: new Date().toISOString(),
   };
@@ -398,18 +396,6 @@ export function ReceiptReview({
 
     setSaving(true);
     setError("");
-
-    const unitError = await findFirstUnitWarning(
-      validItems.map((item) => ({
-        ingredient_name: item.ingredient_name,
-        unit: item.unit.trim() || "each",
-      })),
-    );
-    if (unitError) {
-      setError(unitError);
-      setSaving(false);
-      return;
-    }
 
     try {
       const response = await apiFetch(`/api/receipts/${receiptId}/confirm`, {

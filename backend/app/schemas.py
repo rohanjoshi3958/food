@@ -44,7 +44,6 @@ class IngredientResponse(BaseModel):
     fiber_g: float | None = None
     sodium_mg: float | None = None
     nutrition_notes: str | None = None
-    unit_warning: str | None = None
     receipt_id: str | None = None
     created_at: datetime | None = None
 
@@ -65,7 +64,6 @@ class DraftIngredientItem(BaseModel):
     fiber_g: float | None = None
     sodium_mg: float | None = None
     nutrition_notes: str | None = None
-    unit_warning: str | None = None
     is_manual: bool = False
     is_food: bool = True
 

@@ -106,18 +106,11 @@ Respond with ONLY valid JSON:
   "fat_g": 3,
   "fiber_g": 2,
   "sodium_mg": 150,
-  "nutrition_notes": "Brief note on data source",
-  "unit_plausible": true,
-  "unit_warning": null
+  "nutrition_notes": "Brief note on data source"
 }}
 
 For quantity and unit: echo the provided values when known; otherwise fill in your educated guess.
-Use null for unknown nutrition values. Base estimates on standard USDA or nutrition database / typical package sizes.
-
-Assess whether the provided purchase unit is plausible for how this item is normally sold or measured at a grocery store.
-Set "unit_plausible" to true when the unit is reasonable (including interpretable amounts like cups of diced fruit).
-Set "unit_plausible" to false when the unit is a poor fit (e.g. whole produce in gallon, dry spice in ml, liquids in lb).
-When unit_plausible is false, set "unit_warning" to one short sentence suggesting better units; otherwise set unit_warning to null. Items with unit_plausible false cannot be saved."""
+Use null for unknown nutrition values. Base estimates on standard USDA or nutrition database / typical package sizes."""
 
 UNIT_CHECK_PROMPT = """Assess whether this grocery purchase unit is plausible for the item.
 
@@ -152,7 +145,6 @@ class ParsedReceiptItem(BaseModel):
     fiber_g: float | None = None
     sodium_mg: float | None = None
     nutrition_notes: str | None = None
-    unit_warning: str | None = None
 
 
 class ParsedReceipt(BaseModel):
@@ -306,7 +298,6 @@ def estimate_ingredient_nutrition(
             fiber_g=payload.get("fiber_g"),
             sodium_mg=payload.get("sodium_mg"),
             nutrition_notes=payload.get("nutrition_notes"),
-            unit_warning=_unit_warning_from_payload(payload),
         )
     except (json.JSONDecodeError, ValueError) as exc:
         raise ReceiptAnalysisError(
@@ -354,7 +345,6 @@ def _enrich_item_with_nutrition(item: ParsedReceiptItem) -> ParsedReceiptItem:
             "fiber_g": estimated.fiber_g,
             "sodium_mg": estimated.sodium_mg,
             "nutrition_notes": estimated.nutrition_notes,
-            "unit_warning": estimated.unit_warning,
         }
     )
 

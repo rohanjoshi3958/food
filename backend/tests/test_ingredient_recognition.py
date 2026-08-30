@@ -13,7 +13,6 @@ def _estimated_item(
     *,
     recognized: bool,
     name: str = "Test",
-    unit_warning: str | None = None,
 ) -> ParsedReceiptItem:
     return ParsedReceiptItem(
         store_item_name=name,
@@ -30,7 +29,6 @@ def _estimated_item(
         fiber_g=1 if recognized else None,
         sodium_mg=50 if recognized else None,
         nutrition_notes="USDA estimate" if recognized else "Unrecognized item",
-        unit_warning=unit_warning,
     )
 
 
@@ -43,6 +41,9 @@ class TestResolveItemNutrition:
         )
 
         with patch(
+            "app.services.ingredients.check_ingredient_unit",
+            return_value=None,
+        ), patch(
             "app.services.ingredients.estimate_ingredient_nutrition",
             return_value=_estimated_item(recognized=True, name="Chicken breast"),
         ):
@@ -59,6 +60,9 @@ class TestResolveItemNutrition:
         )
 
         with patch(
+            "app.services.ingredients.check_ingredient_unit",
+            return_value=None,
+        ), patch(
             "app.services.ingredients.estimate_ingredient_nutrition",
             return_value=_estimated_item(recognized=False, name="po"),
         ):
@@ -78,6 +82,9 @@ class TestResolveItemNutrition:
         )
 
         with patch(
+            "app.services.ingredients.check_ingredient_unit",
+            return_value=None,
+        ), patch(
             "app.services.ingredients.estimate_ingredient_nutrition",
             return_value=_estimated_item(recognized=False, name="po"),
         ):
@@ -94,6 +101,9 @@ class TestResolveItemNutrition:
         )
 
         with patch(
+            "app.services.ingredients.check_ingredient_unit",
+            return_value=None,
+        ), patch(
             "app.services.ingredients.estimate_ingredient_nutrition",
             return_value=_estimated_item(recognized=True, name="Bananas"),
         ) as estimate:
@@ -114,12 +124,11 @@ class TestResolveItemNutrition:
         )
 
         with patch(
+            "app.services.ingredients.check_ingredient_unit",
+            return_value="Use each or lb for whole watermelon.",
+        ), patch(
             "app.services.ingredients.estimate_ingredient_nutrition",
-            return_value=_estimated_item(
-                recognized=True,
-                name="watermelon",
-                unit_warning="Use each or lb for whole watermelon.",
-            ),
+            return_value=_estimated_item(recognized=True, name="watermelon"),
         ):
             with pytest.raises(ReceiptAnalysisError) as exc_info:
                 resolve_item_nutrition(item)

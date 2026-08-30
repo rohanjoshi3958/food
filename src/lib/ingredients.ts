@@ -80,7 +80,6 @@ export type Ingredient = {
   fiber_g: number | null;
   sodium_mg: number | null;
   nutrition_notes: string | null;
-  unit_warning: string | null;
   receipt_id: string | null;
   created_at: string;
 };
