@@ -1,81 +1,103 @@
-# Receipt to Inventory End-to-End Tests
+# Backend Tests
 
-This directory contains comprehensive end-to-end tests for the receipt scanning → inventory flow.
+## Overview
 
-## Test Coverage
+This directory contains automated backend tests for:
 
-The tests cover the complete workflow:
+- **Receipt → inventory E2E flow** (`test_receipt_to_inventory_e2e.py`)
+- **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
+- **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
 
-```
-receipt
- ↓
-Claude-shaped response (mocked)
- ↓
-review  
- ↓
-confirm
- ↓
-inventory
-```
+## Running Tests
 
-## Test Cases
-
-1. **`test_complete_receipt_flow`** - Tests the full happy path:
-   - Upload a receipt image
-   - Mock Claude API to return parsed items and nutrition
-   - Review and edit draft items
-   - Confirm receipt to save to inventory
-   - Verify ingredients appear in the inventory
-
-2. **`test_receipt_cancellation`** - Tests cancelling a receipt review:
-   - Upload receipt
-   - Cancel before confirming
-   - Verify no ingredients were created
-
-3. **`test_receipt_with_item_removal`** - Tests removing items during review:
-   - Upload receipt with multiple items
-   - Remove some items before confirming
-   - Verify only kept items are in inventory
-
-4. **`test_multiple_receipts_flow`** - Tests sequential receipt processing:
-   - Upload and confirm first receipt
-   - Upload and confirm second receipt
-   - Verify all ingredients from both receipts are in inventory
-
-## Running the Tests
+### Prerequisites
 
 ```bash
 cd backend
-python3 -m pytest tests/test_receipt_to_inventory_e2e.py -v
+pip install -r requirements.txt
 ```
 
-Run a single test:
+### Run All Tests
 
 ```bash
-python3 -m pytest tests/test_receipt_to_inventory_e2e.py::TestReceiptToInventoryE2E::test_complete_receipt_flow -v
+cd backend
+pytest
 ```
 
-## Key Features
+### Run Specific Test Files
 
-- **Mocked Claude API**: Tests use mocked Anthropic API responses instead of making real API calls
-- **Isolated Database**: Each test uses a fresh SQLite database  
-- **No External Dependencies**: Tests run completely offline
-- **Fast Execution**: Full test suite runs in under 5 seconds
+```bash
+# Receipt upload → review → confirm → inventory
+pytest tests/test_receipt_to_inventory_e2e.py
 
-## Architecture
+# Ingredient deduction and unit logic
+pytest tests/test_ingredient_deduction.py
 
-The tests use:
-- `pytest` for test framework
-- `unittest.mock` to mock the Anthropic Claude API
-- SQLite in-memory database for test isolation
+# Ingredient merge logic
+pytest tests/test_ingredient_merge.py
+```
+
+### Run with Coverage
+
+```bash
+pytest --cov=app --cov-report=html
+```
+
+Coverage report: `htmlcov/index.html`
+
+### Verbose / Single Test
+
+```bash
+pytest -v
+pytest tests/test_receipt_to_inventory_e2e.py::TestReceiptToInventoryE2E::test_complete_receipt_flow -v
+pytest tests/test_ingredient_deduction.py::TestParseNumber::test_parse_fraction -v
+```
+
+## Receipt E2E Tests
+
+End-to-end flow:
+
+```
+receipt → Claude-shaped response (mocked) → review → confirm → inventory
+```
+
+Test cases:
+
+1. **`test_complete_receipt_flow`** — upload, review, confirm, verify inventory
+2. **`test_receipt_cancellation`** — cancel before confirm, no ingredients created
+3. **`test_receipt_with_item_removal`** — remove items during review
+4. **`test_multiple_receipts_flow`** — sequential receipt processing
+
+Key features:
+
+- Mocked Anthropic API (no real API calls)
+- Isolated SQLite database per test
 - FastAPI TestClient for HTTP requests
 
-## Test Fixtures
+Fixtures in `conftest.py`: `test_db`, `client`, `test_user`, `auth_headers`, `mock_receipt_image`, `sample_receipt_response`, `sample_nutrition_estimates`, `create_mock_anthropic_response`
 
-- `test_db`: Creates a fresh SQLite database for each test
-- `client`: FastAPI test client with mocked dependencies
-- `test_user`: Pre-created test user with authentication
-- `auth_headers`: Authentication headers for API requests
-- `mock_receipt_image`: Fake receipt image file
-- `sample_receipt_response`: Sample Claude API response for receipt parsing
-- `sample_nutrition_estimates`: Sample Claude API responses for nutrition estimation
+## Inventory Unit Tests
+
+### `test_ingredient_deduction.py`
+
+- Unit parsing and normalization
+- Weight and volume conversions
+- Package units and serving-based deduction
+- Ingredient name matching
+- Deduction scenarios (partial, full, insufficient inventory)
+
+### `test_ingredient_merge.py`
+
+- Merging duplicate ingredients
+- Quantity summation
+- Unit normalization during merge
+
+## CI Integration
+
+```yaml
+- name: Run backend tests
+  run: |
+    cd backend
+    pip install -r requirements.txt
+    pytest --cov=app --cov-report=xml
+```

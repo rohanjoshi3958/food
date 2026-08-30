@@ -1,7 +1,7 @@
 """
 Test fixtures and utilities for the test suite.
 """
-import os
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -10,6 +10,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
+
+backend_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(backend_dir))
 
 from app.auth_utils import hash_password
 from app.database import Base
@@ -24,22 +27,22 @@ _TestingSessionLocal = None
 def get_test_engine():
     """Get or create the test database engine."""
     global _test_engine, _TestingSessionLocal
-    
+
     if _test_engine is None:
         db_fd, db_path = tempfile.mkstemp()
         db_url = f"sqlite:///{db_path}"
-        
+
         _test_engine = create_engine(db_url, connect_args={"check_same_thread": False})
-        
+
         # Enable foreign key constraints for SQLite
         @event.listens_for(_test_engine, "connect")
         def set_sqlite_pragma(dbapi_conn, connection_record):
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
-        
+
         _TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_test_engine)
-    
+
     return _test_engine, _TestingSessionLocal
 
 
@@ -47,10 +50,10 @@ def get_test_engine():
 def test_db():
     """Create a test database for each test function."""
     engine, SessionLocal = get_test_engine()
-    
+
     # Create all tables
     Base.metadata.create_all(bind=engine)
-    
+
     # Create a new session for this test
     db = SessionLocal()
     try:
@@ -68,24 +71,24 @@ def client(test_db):
     with patch("app.database.engine", get_test_engine()[0]), \
          patch("app.database.SessionLocal", get_test_engine()[1]), \
          patch("app.db_migrate.run_migrations"):  # Skip migrations in tests
-        
+
         # Import app after patching
         from app.database import get_db
         from app.main import app
-        
+
         # Override the database dependency to use test database
         def override_get_db():
             try:
                 yield test_db
             finally:
                 pass  # Don't close here, test_db fixture handles it
-        
+
         app.dependency_overrides[get_db] = override_get_db
-        
+
         # Use raise_server_exceptions=False to prevent startup events from causing errors
         with TestClient(app, raise_server_exceptions=False) as test_client:
             yield test_client
-        
+
         # Clear overrides after test
         app.dependency_overrides.clear()
 

@@ -83,8 +83,10 @@ export function getIngredientStock(ingredient: Ingredient): IngredientStock {
 
   const isLowStock =
     servingsLeft != null &&
-    (servingsLeft <= 1 ||
-      (stockRatio != null && stockRatio <= 0.25));
+    stockRatio != null &&
+    originalServings != null &&
+    originalServings > 1 &&
+    stockRatio <= 0.25;
 
   const quantityLabel = [ingredient.quantity, ingredient.unit]
     .filter(Boolean)
