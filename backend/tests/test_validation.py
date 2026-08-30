@@ -23,6 +23,13 @@ class TestQuantityValidation:
         is_valid, error = validate_quantity("2.75")
         assert is_valid is True
         assert error is None
+
+    def test_valid_comma_separated_thousands(self):
+        """Correctly grouped comma separators should be valid."""
+        for quantity in ("1,000", "1,000,000", "10,000", "1,000.5"):
+            is_valid, error = validate_quantity(quantity)
+            assert is_valid is True, quantity
+            assert error is None
     
     def test_empty_quantity_is_valid(self):
         """Empty/None quantity should be valid (defaults to 1)."""
@@ -63,6 +70,102 @@ class TestQuantityValidation:
         is_valid, error = validate_quantity("five")
         assert is_valid is False
         assert "must be a number" in error.lower()
+
+    def test_reject_scientific_notation(self):
+        """Scientific notation should be rejected."""
+        for quantity in ("14e6", "1e-3", "1E6", "2.5e2"):
+            is_valid, error = validate_quantity(quantity)
+            assert is_valid is False, quantity
+            assert "must be a number" in error.lower()
+
+    def test_reject_expressions_and_symbols(self):
+        """Parentheses, fractions, and operators should be rejected."""
+        invalid = [
+            "(48)",
+            "1/2",
+            "1+2",
+            "3-1",
+            "1.2.3",
+            "+5",
+            "1 2",
+        ]
+        for quantity in invalid:
+            is_valid, error = validate_quantity(quantity)
+            assert is_valid is False, quantity
+            assert "must be a number" in error.lower()
+
+    def test_reject_invalid_comma_grouping(self):
+        """Misplaced comma separators should be rejected."""
+        invalid = [
+            "1,00,0,000",
+            "1,0000",
+            "12,34",
+            "1,23",
+            ",000",
+            "1,",
+        ]
+        for quantity in invalid:
+            is_valid, error = validate_quantity(quantity)
+            assert is_valid is False, quantity
+            assert "must be a number" in error.lower()
+
+
+class TestPackageQuantityValidation:
+    """Package units (bags, boxes, etc.) require whole-number quantities."""
+
+    PACKAGE_UNITS = (
+        "each",
+        "bag",
+        "box",
+        "can",
+        "bottle",
+        "pack",
+        "bunch",
+        "head",
+    )
+
+    def test_package_units_reject_decimals(self):
+        for unit in self.PACKAGE_UNITS:
+            is_valid, error = validate_quantity("1.5", unit)
+            assert is_valid is False, unit
+            assert "whole number" in error.lower()
+
+    def test_package_units_accept_whole_numbers(self):
+        for unit in self.PACKAGE_UNITS:
+            for quantity in ("1", "2", "10", "1,000"):
+                is_valid, error = validate_quantity(quantity, unit)
+                assert is_valid is True, (unit, quantity)
+                assert error is None
+
+    def test_non_package_units_allow_decimals(self):
+        for unit in ("lb", "oz", "g", "cup", "slice", "clove"):
+            is_valid, error = validate_quantity("1.5", unit)
+            assert is_valid is True, unit
+            assert error is None
+
+    def test_default_unit_rejects_decimal_quantity(self):
+        """Missing unit defaults to each, which requires whole numbers."""
+        is_valid, error = validate_quantity("1.5", assume_default_unit=True)
+        assert is_valid is False
+        assert "whole number" in error.lower()
+
+        is_valid, error = validate_ingredient_input("1.5", None)
+        assert is_valid is False
+        assert "whole number" in error.lower()
+
+        is_valid, error = validate_ingredient_input("1.5", "")
+        assert is_valid is False
+        assert "whole number" in error.lower()
+
+    def test_decimal_allowed_for_weight_units(self):
+        is_valid, error = validate_ingredient_input("1.5", "lb")
+        assert is_valid is True
+        assert error is None
+
+    def test_whole_package_quantity_with_unit(self):
+        is_valid, error = validate_ingredient_input("2", "box")
+        assert is_valid is True
+        assert error is None
 
 
 class TestUnitValidation:
@@ -175,3 +278,9 @@ class TestAcceptanceCriteria:
         """1 nonsense should be rejected."""
         is_valid, error = validate_ingredient_input("1", "nonsense")
         assert is_valid is False
+
+    def test_reject_scientific_notation_with_unit(self):
+        """14e6 lb should be rejected."""
+        is_valid, error = validate_ingredient_input("14e6", "lb")
+        assert is_valid is False
+        assert "must be a number" in error.lower()

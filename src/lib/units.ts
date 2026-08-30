@@ -1,3 +1,21 @@
+export const PACKAGE_UNITS = [
+  "each",
+  "bag",
+  "box",
+  "can",
+  "bottle",
+  "pack",
+  "bunch",
+  "head",
+] as const;
+
+export function isPackageUnit(unit: string | null | undefined): boolean {
+  const normalized = (unit?.trim() || "each").toLowerCase();
+  return PACKAGE_UNITS.includes(
+    normalized as (typeof PACKAGE_UNITS)[number],
+  );
+}
+
 export const INGREDIENT_UNITS = [
   { value: "each", label: "Each" },
   { value: "lb", label: "Pound (lb)" },

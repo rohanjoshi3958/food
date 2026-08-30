@@ -7,6 +7,7 @@ from app.models import Ingredient, User
 from app.schemas import CreateManualIngredientRequest, DraftIngredientItem, IngredientResponse
 from app.services.ingredient_merge import _merge_key, _sum_quantities
 from app.services.ingredients import create_ingredient
+from app.services.receipt_analyzer import ReceiptAnalysisError
 from app.validation import validate_ingredient_input
 
 router = APIRouter(prefix="/ingredients", tags=["ingredients"])
@@ -89,7 +90,6 @@ def create_manual_ingredient(
             detail="Enter an ingredient name.",
         )
 
-    # Validate quantity and unit
     is_valid, error_message = validate_ingredient_input(payload.quantity, payload.unit)
     if not is_valid:
         raise HTTPException(
@@ -105,7 +105,13 @@ def create_manual_ingredient(
         is_manual=True,
     )
 
-    return create_ingredient(db, current_user, item)
+    try:
+        return create_ingredient(db, current_user, item)
+    except ReceiptAnalysisError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @router.delete("/{ingredient_id}", status_code=status.HTTP_204_NO_CONTENT)

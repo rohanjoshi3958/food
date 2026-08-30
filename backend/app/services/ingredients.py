@@ -7,7 +7,7 @@ from app.services.receipt_analyzer import ReceiptAnalysisError, estimate_ingredi
 
 
 def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
-    if not item.is_food or not item.is_manual:
+    if not item.is_food:
         return item.model_copy(
             update={
                 "quantity": item.quantity or "1",
@@ -15,18 +15,15 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
             }
         )
 
-    try:
-        estimated = estimate_ingredient_nutrition(
-            item.ingredient_name,
-            item.quantity,
-            item.unit,
-        )
-    except ReceiptAnalysisError:
-        return item.model_copy(
-            update={
-                "quantity": item.quantity or "1",
-                "unit": item.unit or "each",
-            }
+    estimated = estimate_ingredient_nutrition(
+        item.ingredient_name,
+        item.quantity,
+        item.unit,
+    )
+    if not estimated.recognized:
+        raise ReceiptAnalysisError(
+            f'Could not recognize "{item.ingredient_name.strip()}" as a food ingredient. '
+            "Use a specific grocery item name."
         )
 
     return DraftIngredientItem(
@@ -43,7 +40,7 @@ def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
         fiber_g=estimated.fiber_g,
         sodium_mg=estimated.sodium_mg,
         nutrition_notes=estimated.nutrition_notes,
-        is_manual=True,
+        is_manual=item.is_manual,
         is_food=item.is_food,
     )
 

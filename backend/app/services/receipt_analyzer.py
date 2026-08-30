@@ -86,8 +86,16 @@ Examples:
 - unit "oz" for yogurt → servings_per_container ≈ servings per 1 oz
 - unit "lb" for bananas → servings_per_container ≈ servings per 1 lb
 
+Set "recognized" to true ONLY when the item name clearly identifies a real grocery food or beverage
+you can match to USDA-style nutrition data (e.g. "chicken breast", "bananas", "greek yogurt").
+Set "recognized" to false when the name is empty, too vague, ambiguous, profane, gibberish,
+not food, or cannot be matched to a plausible grocery product (e.g. "po", "food", "item").
+
+When recognized is false, set every nutrition field to null and explain briefly in nutrition_notes.
+
 Respond with ONLY valid JSON:
 {{
+  "recognized": true,
   "quantity": "1",
   "unit": "each",
   "serving_size": "1 serving (describe size)",
@@ -109,6 +117,7 @@ class ParsedReceiptItem(BaseModel):
     store_item_name: str
     ingredient_name: str
     is_food: bool = True
+    recognized: bool = False
     quantity: str | None = None
     unit: str | None = None
     serving_size: str | None = None
@@ -217,6 +226,7 @@ def estimate_ingredient_nutrition(
         return ParsedReceiptItem(
             store_item_name=ingredient_name,
             ingredient_name=ingredient_name,
+            recognized=payload.get("recognized") is True,
             quantity=guessed_quantity,
             unit=guessed_unit,
             serving_size=payload.get("serving_size"),

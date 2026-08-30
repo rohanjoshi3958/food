@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { apiFetch, parseError } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import type { Ingredient } from "@/lib/ingredients";
+import { getQuantityHint, INGREDIENT_NAME_HINT, validateQuantity } from "@/lib/validation";
 import { UnitSelect } from "@/components/unit-select";
 
 const inputClassName =
@@ -28,6 +29,12 @@ export function ManualIngredientList({
     const ingredientName = name.trim();
     if (!ingredientName) {
       setError("Enter an ingredient name.");
+      return;
+    }
+
+    const quantityError = validateQuantity(quantity.trim() || null, unit.trim() || null);
+    if (quantityError) {
+      setError(quantityError);
       return;
     }
 
@@ -84,27 +91,36 @@ export function ManualIngredientList({
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <input
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="Ingredient name"
-          disabled={disabled || saving}
-          className={inputClassName}
-        />
-        <input
-          value={quantity}
-          onChange={(event) => setQuantity(event.target.value)}
-          placeholder="Quantity"
-          disabled={disabled || saving}
-          className={inputClassName}
-        />
-        <UnitSelect
-          value={unit}
-          onChange={setUnit}
-          required={false}
-          disabled={disabled || saving}
-        />
+      <div className="space-y-2">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Ingredient name"
+            disabled={disabled || saving}
+            className={inputClassName}
+          />
+          <input
+            value={quantity}
+            onChange={(event) => setQuantity(event.target.value)}
+            placeholder="Quantity"
+            disabled={disabled || saving}
+            className={inputClassName}
+            aria-describedby="manual-quantity-hint"
+          />
+          <UnitSelect
+            value={unit}
+            onChange={setUnit}
+            required={false}
+            disabled={disabled || saving}
+          />
+        </div>
+        <p
+          id="manual-quantity-hint"
+          className="text-xs leading-relaxed text-stone-400"
+        >
+          {INGREDIENT_NAME_HINT} {getQuantityHint(unit)}
+        </p>
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { apiFetch, errorDetailFromBody, readJsonResponse } from "@/lib/api";
+import { validateQuantity } from "@/lib/validation";
 import { IngredientCard, type Ingredient } from "@/components/ingredient-card";
 import { UnitSelect } from "@/components/unit-select";
 
@@ -274,6 +275,15 @@ export function ReceiptReview({
       return;
     }
 
+    const quantityError = validateQuantity(
+      newQuantity.trim() || null,
+      newUnit.trim() || null,
+    );
+    if (quantityError) {
+      setError(quantityError);
+      return;
+    }
+
     setItems((current) => {
       const existingIndex = current.findIndex(
         (item) =>
@@ -326,6 +336,17 @@ export function ReceiptReview({
     if (validItems.length === 0) {
       setError("Add at least one ingredient before saving.");
       return;
+    }
+
+    for (const item of validItems) {
+      const quantityError = validateQuantity(
+        item.quantity.trim() || null,
+        item.unit.trim() || null,
+      );
+      if (quantityError) {
+        setError(`"${item.ingredient_name.trim()}": ${quantityError}`);
+        return;
+      }
     }
 
     setSaving(true);
