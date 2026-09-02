@@ -65,6 +65,9 @@ MIGRATIONS = [
 
 
 def run_migrations() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+
     with engine.begin() as connection:
         for statement in MIGRATIONS:
             connection.execute(text(statement))

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Annotated
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -6,12 +7,12 @@ from pydantic import BaseModel, EmailStr, Field
 class RegisterRequest(BaseModel):
     name: str = ""
     email: EmailStr
-    password: str = Field(min_length=8, max_length=72, repr=False)
+    password: Annotated[str, Field(min_length=8, max_length=72, repr=False)]
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str = Field(repr=False)
+    password: Annotated[str, Field(repr=False)]
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -19,8 +20,8 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    token: str = Field(min_length=1, repr=False)
-    password: str = Field(min_length=8, max_length=72, repr=False)
+    token: Annotated[str, Field(min_length=1, repr=False)]
+    password: Annotated[str, Field(min_length=8, max_length=72, repr=False)]
 
 
 class MessageResponse(BaseModel):

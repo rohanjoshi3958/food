@@ -225,7 +225,7 @@ class TestPasswordReset:
 
         response = client.post(
             "/api/auth/reset-password",
-            json={"token": token, "password": "short"},
+            json={"token": token, "password": "password"},
         )
 
         assert response.status_code == 400
