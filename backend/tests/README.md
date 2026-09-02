@@ -4,6 +4,7 @@
 
 This directory contains automated backend tests for:
 
+- **Authentication lifecycle** (`test_auth.py`) — login, logout, password reset, expired sessions, and cross-user access
 - **Receipt → inventory E2E flow** (`test_receipt_to_inventory_e2e.py`)
 - **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
 - **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
@@ -35,6 +36,9 @@ pytest tests/test_ingredient_deduction.py
 
 # Ingredient merge logic
 pytest tests/test_ingredient_merge.py
+
+# Auth sessions, password reset, and authorization
+pytest tests/test_auth.py
 ```
 
 ### Run with Coverage

@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,6 +14,10 @@ OPENAI_IMAGE_MODEL = "gpt-image-1"
 class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:postgres@localhost:5433/food"
     auth_secret: str = "change-me-in-production"
+    environment: str = "development"
+    cookie_secure: bool = False
+    session_ttl_days: int = 7
+    password_reset_ttl_minutes: int = 30
     upload_dir: str = "uploads/receipts"
     meal_upload_dir: str = "uploads/meals"
     cookbook_upload_dir: str = "uploads/cookbook"
@@ -29,6 +34,18 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def session_cookie_secure(self) -> bool:
+        return self.cookie_secure or self.environment.lower() == "production"
+
+    @property
+    def session_ttl(self) -> timedelta:
+        return timedelta(days=self.session_ttl_days)
+
+    @property
+    def password_reset_ttl(self) -> timedelta:
+        return timedelta(minutes=self.password_reset_ttl_minutes)
 
 
 def get_settings() -> Settings:

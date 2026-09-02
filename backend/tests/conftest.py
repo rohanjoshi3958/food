@@ -109,19 +109,23 @@ def test_user(test_db: Session):
 
 @pytest.fixture
 def auth_token(client, test_user):
-    """Get an auth token for the test user."""
+    """Log in the test user and return the HttpOnly session cookie value."""
+    from app.auth_utils import SESSION_COOKIE_NAME
+
     response = client.post(
         "/api/auth/login",
         json={"email": "test@example.com", "password": "testpassword123"}
     )
     assert response.status_code == 200
-    return response.json()["access_token"]
+    assert SESSION_COOKIE_NAME in response.cookies
+    return response.cookies[SESSION_COOKIE_NAME]
 
 
 @pytest.fixture
 def auth_headers(auth_token):
-    """Get auth headers for authenticated requests."""
-    return {"Authorization": f"Bearer {auth_token}"}
+    """Kept for existing tests; the session lives in the client cookie jar."""
+    del auth_token
+    return {}
 
 
 @pytest.fixture

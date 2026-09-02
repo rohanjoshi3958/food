@@ -1,37 +1,14 @@
-const TOKEN_KEY = "food_token";
-
 export type AuthUser = {
   id: string;
   name: string | null;
   email: string;
 };
 
-export function getToken(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
-}
-
 export async function apiFetch(
   path: string,
   options: RequestInit = {},
 ): Promise<Response> {
-  const token = getToken();
   const headers = new Headers(options.headers);
-
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
 
   if (
     options.body &&
@@ -44,6 +21,7 @@ export async function apiFetch(
   return fetch(path, {
     ...options,
     headers,
+    credentials: "include",
   });
 }
 
@@ -119,14 +97,17 @@ export async function login(email: string, password: string) {
     body: JSON.stringify({ email, password }),
   });
 
-  const data = await response.json();
+  const data = await readJsonResponse<{ user?: AuthUser }>(response);
 
   if (!response.ok) {
-    throw new Error(await parseError(response, "Invalid email or password."));
+    throw new Error(errorDetailFromBody(data, "Invalid email or password."));
   }
 
-  setToken(data.access_token);
-  return data.user as AuthUser;
+  if (!data.user) {
+    throw new Error("Unable to sign in.");
+  }
+
+  return data.user;
 }
 
 export async function register(name: string, email: string, password: string) {
@@ -135,27 +116,23 @@ export async function register(name: string, email: string, password: string) {
     body: JSON.stringify({ name, email, password }),
   });
 
-  const data = await response.json();
+  const data = await readJsonResponse<{ user?: AuthUser }>(response);
 
   if (!response.ok) {
-    throw new Error(await parseError(response, "Unable to create account."));
+    throw new Error(errorDetailFromBody(data, "Unable to create account."));
   }
 
-  setToken(data.access_token);
-  return data.user as AuthUser;
+  if (!data.user) {
+    throw new Error("Unable to create account.");
+  }
+
+  return data.user;
 }
 
 export async function getCurrentUser(): Promise<AuthUser | null> {
-  const token = getToken();
-
-  if (!token) {
-    return null;
-  }
-
   const response = await apiFetch("/api/auth/me");
 
   if (response.status === 401) {
-    clearToken();
     return null;
   }
 
@@ -166,6 +143,47 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   return response.json();
 }
 
-export function logout() {
-  clearToken();
+export async function logout() {
+  try {
+    await apiFetch("/api/auth/logout", { method: "POST" });
+  } catch {
+    // Client navigation should still proceed if the request fails.
+  }
+}
+
+export async function requestPasswordReset(email: string) {
+  const response = await apiFetch("/api/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+
+  const data = await readJsonResponse<{ message?: string }>(response);
+
+  if (!response.ok) {
+    throw new Error(
+      errorDetailFromBody(data, "Unable to request a password reset."),
+    );
+  }
+
+  return (
+    data.message ??
+    "If an account exists for that email, password reset instructions have been sent."
+  );
+}
+
+export async function resetPassword(token: string, password: string) {
+  const response = await apiFetch("/api/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+  });
+
+  const data = await readJsonResponse<{ message?: string }>(response);
+
+  if (!response.ok) {
+    throw new Error(
+      errorDetailFromBody(data, "Unable to reset your password."),
+    );
+  }
+
+  return data.message ?? "Your password has been reset. You can sign in now.";
 }

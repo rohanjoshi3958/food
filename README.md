@@ -54,7 +54,7 @@ ANTHROPIC_API_KEY="your-anthropic-api-key"
 OPENAI_API_KEY="your-openai-api-key"
 ```
 
-`AUTH_SECRET` is used to sign JWTs. Generate any long random string.
+`AUTH_SECRET` peppers session and password-reset tokens. Generate a long random string and never commit it. Sessions are stored in HttpOnly cookies and expire after 7 days.
 
 Receipt analysis uses Claude Opus; meal generation uses Claude Sonnet 5; meal images use OpenAI `gpt-image-1`.
 

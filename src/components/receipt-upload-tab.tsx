@@ -7,7 +7,6 @@ import { ReceiptReview } from "@/components/receipt-review";
 import {
   apiFetch,
   errorDetailFromBody,
-  getToken,
   parseError,
   readJsonResponse,
 } from "@/lib/api";
@@ -351,14 +350,8 @@ export function ReceiptUploadTab({
   }
 
   function discardPendingReceiptsKeepalive() {
-    const token = getToken();
-    if (!token) {
-      return;
-    }
-
-    void fetch("/api/receipts/discard-pending", {
+    void apiFetch("/api/receipts/discard-pending", {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
       keepalive: true,
     });
   }

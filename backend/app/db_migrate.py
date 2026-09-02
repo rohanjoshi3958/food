@@ -39,6 +39,28 @@ MIGRATIONS = [
     "ALTER TABLE cookbook_entries ADD COLUMN IF NOT EXISTS fat_g DOUBLE PRECISION",
     "ALTER TABLE cookbook_entries ADD COLUMN IF NOT EXISTS fiber_g DOUBLE PRECISION",
     "ALTER TABLE cookbook_entries ADD COLUMN IF NOT EXISTS sodium_mg DOUBLE PRECISION",
+    """
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+        id VARCHAR PRIMARY KEY,
+        user_id VARCHAR NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        token_hash VARCHAR NOT NULL UNIQUE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        revoked_at TIMESTAMPTZ
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_auth_sessions_token_hash ON auth_sessions (token_hash)",
+    """
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id VARCHAR PRIMARY KEY,
+        user_id VARCHAR NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+        token_hash VARCHAR NOT NULL UNIQUE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        used_at TIMESTAMPTZ
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_token_hash ON password_reset_tokens (token_hash)",
 ]
 
 
