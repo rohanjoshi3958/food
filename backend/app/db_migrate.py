@@ -39,6 +39,18 @@ MIGRATIONS = [
     "ALTER TABLE cookbook_entries ADD COLUMN IF NOT EXISTS fat_g DOUBLE PRECISION",
     "ALTER TABLE cookbook_entries ADD COLUMN IF NOT EXISTS fiber_g DOUBLE PRECISION",
     "ALTER TABLE cookbook_entries ADD COLUMN IF NOT EXISTS sodium_mg DOUBLE PRECISION",
+    # Drop pre-existing duplicates (keeping the freshest row) so the unique index
+    # below can be created on databases written before it existed.
+    "DELETE FROM cookbook_entries WHERE id IN ("
+    "  SELECT id FROM ("
+    "    SELECT id, ROW_NUMBER() OVER ("
+    "      PARTITION BY user_id, meal_id ORDER BY created_at DESC, id DESC"
+    "    ) AS rn"
+    "    FROM cookbook_entries WHERE meal_id IS NOT NULL"
+    "  ) ranked WHERE rn > 1"
+    ")",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_cookbook_entries_user_meal "
+    "ON cookbook_entries (user_id, meal_id) WHERE meal_id IS NOT NULL",
 ]
 
 

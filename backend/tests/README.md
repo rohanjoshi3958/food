@@ -7,6 +7,8 @@ This directory contains automated backend tests for:
 - **Receipt → inventory E2E flow** (`test_receipt_to_inventory_e2e.py`)
 - **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
 - **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
+- **Cookbook transactions** — cookbook entry and inventory deduction are atomic (`test_cookbook_transaction.py`)
+- **Duplicate meal completion** — a meal can only be completed once (`test_cookbook_duplicate_completion.py`)
 
 ## Running Tests
 
@@ -75,6 +77,21 @@ Key features:
 - FastAPI TestClient for HTTP requests
 
 Fixtures in `conftest.py`: `test_db`, `client`, `test_user`, `auth_headers`, `mock_receipt_image`, `sample_receipt_response`, `sample_nutrition_estimates`, `create_mock_anthropic_response`
+
+## Cookbook Tests
+
+### `test_cookbook_duplicate_completion.py`
+
+Completing a meal writes a cookbook entry and consumes the pantry ingredients it
+used, so it must not be possible to apply twice:
+
+- The partial unique index on `cookbook_entries (user_id, meal_id)` rejects a
+  second entry for the same meal, while entries without a meal link (and other
+  users' entries) stay unaffected
+- A completion that loses the insert race reuses the winning entry instead of
+  deducting inventory again
+- `POST /api/meals/{meal_id}/complete` returns 404 on a repeat call, leaving one
+  cookbook entry and one deduction
 
 ## Inventory Unit Tests
 
