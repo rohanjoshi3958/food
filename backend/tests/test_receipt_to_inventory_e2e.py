@@ -12,8 +12,6 @@ Tests the complete flow:
      ↓
     inventory
 """
-import json
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -22,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Ingredient, Receipt, User
 
-from tests.conftest import create_mock_anthropic_response
+from tests.conftest import build_receipt_flow_side_effect
 
 
 class TestReceiptToInventoryE2E:
@@ -51,23 +49,16 @@ class TestReceiptToInventoryE2E:
             # Step 1: Mock Claude API responses
             mock_client = Mock()
             mock_anthropic_class.return_value = mock_client
-            
-            # Mock receipt analysis response
-            receipt_response_json = json.dumps(sample_receipt_response)
-            mock_client.messages.create.return_value = create_mock_anthropic_response(
-                receipt_response_json
+
+            upload_nutrition = [
+                sample_nutrition_estimates["Organic Bananas"],
+                sample_nutrition_estimates["Almond Butter"],
+                sample_nutrition_estimates["Greek Yogurt"],
+            ]
+            mock_client.messages.create.side_effect = build_receipt_flow_side_effect(
+                sample_receipt_response,
+                upload_nutrition,
             )
-            
-            # Mock nutrition estimation responses (called in parallel for each item)
-            nutrition_responses = [
-                create_mock_anthropic_response(json.dumps(sample_nutrition_estimates["Organic Bananas"])),
-                create_mock_anthropic_response(json.dumps(sample_nutrition_estimates["Almond Butter"])),
-                create_mock_anthropic_response(json.dumps(sample_nutrition_estimates["Greek Yogurt"])),
-            ]
-            mock_client.messages.create.side_effect = [
-                create_mock_anthropic_response(receipt_response_json),
-                *nutrition_responses
-            ]
             
             # Step 2: Upload receipt
             with open(mock_receipt_image, "rb") as f:
@@ -228,17 +219,16 @@ class TestReceiptToInventoryE2E:
             # Mock Claude API responses
             mock_client = Mock()
             mock_anthropic_class.return_value = mock_client
-            
-            receipt_response_json = json.dumps(sample_receipt_response)
-            nutrition_responses = [
-                create_mock_anthropic_response(json.dumps(sample_nutrition_estimates["Organic Bananas"])),
-                create_mock_anthropic_response(json.dumps(sample_nutrition_estimates["Almond Butter"])),
-                create_mock_anthropic_response(json.dumps(sample_nutrition_estimates["Greek Yogurt"])),
+
+            upload_nutrition = [
+                sample_nutrition_estimates["Organic Bananas"],
+                sample_nutrition_estimates["Almond Butter"],
+                sample_nutrition_estimates["Greek Yogurt"],
             ]
-            mock_client.messages.create.side_effect = [
-                create_mock_anthropic_response(receipt_response_json),
-                *nutrition_responses
-            ]
+            mock_client.messages.create.side_effect = build_receipt_flow_side_effect(
+                sample_receipt_response,
+                upload_nutrition,
+            )
             
             # Upload receipt
             with open(mock_receipt_image, "rb") as f:
@@ -295,17 +285,21 @@ class TestReceiptToInventoryE2E:
             # Mock Claude API responses
             mock_client = Mock()
             mock_anthropic_class.return_value = mock_client
-            
-            receipt_response_json = json.dumps(sample_receipt_response)
-            nutrition_responses = [
-                create_mock_anthropic_response(json.dumps(sample_nutrition_estimates["Organic Bananas"])),
-                create_mock_anthropic_response(json.dumps(sample_nutrition_estimates["Almond Butter"])),
-                create_mock_anthropic_response(json.dumps(sample_nutrition_estimates["Greek Yogurt"])),
+
+            upload_nutrition = [
+                sample_nutrition_estimates["Organic Bananas"],
+                sample_nutrition_estimates["Almond Butter"],
+                sample_nutrition_estimates["Greek Yogurt"],
             ]
-            mock_client.messages.create.side_effect = [
-                create_mock_anthropic_response(receipt_response_json),
-                *nutrition_responses
+            confirm_nutrition = [
+                sample_nutrition_estimates["Organic Bananas"],
+                sample_nutrition_estimates["Almond Butter"],
             ]
+            mock_client.messages.create.side_effect = build_receipt_flow_side_effect(
+                sample_receipt_response,
+                upload_nutrition,
+                confirm_nutrition,
+            )
             
             # Upload receipt
             with open(mock_receipt_image, "rb") as f:
@@ -390,6 +384,7 @@ class TestReceiptToInventoryE2E:
             }
             
             first_nutrition = {
+                "recognized": True,
                 "quantity": "12",
                 "unit": "each",
                 "serving_size": "1 large egg (50g)",
@@ -400,13 +395,13 @@ class TestReceiptToInventoryE2E:
                 "fat_g": 5,
                 "fiber_g": 0,
                 "sodium_mg": 70,
-                "nutrition_notes": "USDA data"
+                "nutrition_notes": "USDA data",
             }
-            
-            mock_client.messages.create.side_effect = [
-                create_mock_anthropic_response(json.dumps(first_receipt_response)),
-                create_mock_anthropic_response(json.dumps(first_nutrition)),
-            ]
+
+            mock_client.messages.create.side_effect = build_receipt_flow_side_effect(
+                first_receipt_response,
+                [first_nutrition],
+            )
             
             # Upload first receipt
             with open(mock_receipt_image, "rb") as f:
@@ -444,6 +439,7 @@ class TestReceiptToInventoryE2E:
             }
             
             second_nutrition = {
+                "recognized": True,
                 "quantity": "1",
                 "unit": "gallon",
                 "serving_size": "1 cup (240ml)",
@@ -454,13 +450,13 @@ class TestReceiptToInventoryE2E:
                 "fat_g": 8,
                 "fiber_g": 0,
                 "sodium_mg": 120,
-                "nutrition_notes": "Whole milk"
+                "nutrition_notes": "Whole milk",
             }
-            
-            mock_client.messages.create.side_effect = [
-                create_mock_anthropic_response(json.dumps(second_receipt_response)),
-                create_mock_anthropic_response(json.dumps(second_nutrition)),
-            ]
+
+            mock_client.messages.create.side_effect = build_receipt_flow_side_effect(
+                second_receipt_response,
+                [second_nutrition],
+            )
             
             # Upload second receipt
             with open(mock_receipt_image, "rb") as f:

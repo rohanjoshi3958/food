@@ -1,6 +1,7 @@
 """
 Test fixtures and utilities for the test suite.
 """
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -180,6 +181,7 @@ def sample_nutrition_estimates():
     """Sample Claude API responses for nutrition estimation."""
     return {
         "Organic Bananas": {
+            "recognized": True,
             "quantity": "2.5",
             "unit": "lb",
             "serving_size": "1 medium banana (118g)",
@@ -193,6 +195,7 @@ def sample_nutrition_estimates():
             "nutrition_notes": "USDA standard nutrition data"
         },
         "Almond Butter": {
+            "recognized": True,
             "quantity": "1",
             "unit": "each",
             "serving_size": "2 tbsp (32g)",
@@ -206,6 +209,7 @@ def sample_nutrition_estimates():
             "nutrition_notes": "Typical almond butter jar"
         },
         "Greek Yogurt": {
+            "recognized": True,
             "quantity": "32",
             "unit": "oz",
             "serving_size": "5.3 oz (150g)",
@@ -229,3 +233,33 @@ def create_mock_anthropic_response(content: str):
     mock_content_block.text = content
     mock_response.content = [mock_content_block]
     return mock_response
+
+
+def mock_unit_check_response() -> Mock:
+    """Mock a plausible unit-check response."""
+    return create_mock_anthropic_response(
+        json.dumps({"unit_plausible": True, "unit_warning": None})
+    )
+
+
+def mock_nutrition_response(estimate: dict) -> Mock:
+    """Mock a nutrition estimate response, ensuring recognized is set."""
+    payload = {"recognized": True, **estimate}
+    return create_mock_anthropic_response(json.dumps(payload))
+
+
+def build_receipt_flow_side_effect(
+    receipt_response: dict,
+    upload_nutrition: list[dict],
+    confirm_nutrition: list[dict] | None = None,
+) -> list[Mock]:
+    """Anthropic calls: receipt scan, upload enrichment, then confirm checks."""
+    confirm_nutrition = confirm_nutrition if confirm_nutrition is not None else upload_nutrition
+    side_effect = [
+        create_mock_anthropic_response(json.dumps(receipt_response)),
+        *[mock_nutrition_response(estimate) for estimate in upload_nutrition],
+    ]
+    for estimate in confirm_nutrition:
+        side_effect.append(mock_unit_check_response())
+        side_effect.append(mock_nutrition_response(estimate))
+    return side_effect

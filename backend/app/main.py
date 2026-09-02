@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -8,7 +9,18 @@ from app.database import Base, engine
 from app.db_migrate import run_migrations
 from app.routers import auth, cookbook, ingredients, meals, receipts
 
-app = FastAPI(title="Food API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.meal_upload_dir).mkdir(parents=True, exist_ok=True)
+    Path(settings.cookbook_upload_dir).mkdir(parents=True, exist_ok=True)
+    Base.metadata.create_all(bind=engine)
+    run_migrations()
+    yield
+
+
+app = FastAPI(title="Food API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,15 +29,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
-    Path(settings.meal_upload_dir).mkdir(parents=True, exist_ok=True)
-    Path(settings.cookbook_upload_dir).mkdir(parents=True, exist_ok=True)
-    Base.metadata.create_all(bind=engine)
-    run_migrations()
 
 
 @app.get("/api/health")
