@@ -10,11 +10,18 @@ from app.schemas import (
     CreateManualIngredientRequest,
     DraftIngredientItem,
     IngredientResponse,
+    UpdateIngredientRequest,
+)
+from app.services.ingredient_deduction import (
+    _convert_amount,
+    _format_quantity,
+    normalize_unit,
+    parse_number,
 )
 from app.services.ingredient_merge import _merge_key, _sum_quantities
 from app.services.ingredients import create_ingredient
 from app.services.receipt_analyzer import ReceiptAnalysisError, check_ingredient_unit
-from app.validation import validate_ingredient_input
+from app.validation import PACKAGE_UNITS, validate_ingredient_input
 
 router = APIRouter(prefix="/ingredients", tags=["ingredients"])
 
@@ -138,6 +145,64 @@ def create_manual_ingredient(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+
+
+@router.patch("/{ingredient_id}", response_model=IngredientResponse)
+def update_ingredient(
+    ingredient_id: str,
+    payload: UpdateIngredientRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> IngredientResponse:
+    is_valid, error_message = validate_ingredient_input(payload.quantity, payload.unit)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_message,
+        )
+
+    ingredient = (
+        db.query(Ingredient)
+        .filter(Ingredient.id == ingredient_id, Ingredient.user_id == current_user.id)
+        .first()
+    )
+    if ingredient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ingredient not found.",
+        )
+
+    new_quantity_value = parse_number(payload.quantity.strip().replace(",", ""))
+    if new_quantity_value is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Quantity must be a number.",
+        )
+
+    new_unit = normalize_unit(payload.unit.strip()) or payload.unit.strip()
+    old_unit = normalize_unit(ingredient.unit) or ingredient.unit
+
+    # When the unit changes and the user hasn't typed a new quantity,
+    # try to convert the existing quantity to the new unit automatically.
+    # But we always respect whatever quantity the user explicitly sends.
+    # The conversion is offered client-side as a convenience; the server
+    # just persists the validated values the client sends.
+
+    final_quantity = _format_quantity(new_quantity_value)
+
+    # Package units require whole numbers
+    if new_unit in PACKAGE_UNITS and "." in payload.quantity.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Package quantities must be whole numbers.",
+        )
+
+    ingredient.quantity = final_quantity
+    ingredient.unit = new_unit
+    db.commit()
+    db.refresh(ingredient)
+
+    return IngredientResponse.model_validate(ingredient)
 
 
 @router.delete("/{ingredient_id}", status_code=status.HTTP_204_NO_CONTENT)

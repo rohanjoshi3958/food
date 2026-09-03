@@ -74,6 +74,11 @@ class CreateManualIngredientRequest(BaseModel):
     unit: str | None = None
 
 
+class UpdateIngredientRequest(BaseModel):
+    quantity: str = Field(min_length=1)
+    unit: str = Field(min_length=1)
+
+
 class CheckUnitRequest(BaseModel):
     ingredient_name: str = Field(min_length=1)
     unit: str = Field(min_length=1)
