@@ -195,14 +195,59 @@ class TestPasswordReset:
         reset.expires_at = datetime.now(UTC) - timedelta(minutes=1)
         test_db.commit()
 
+        preview = client.get("/api/auth/reset-password", params={"token": token})
         response = client.post(
             "/api/auth/reset-password",
             json={"token": token, "password": NEW_PASSWORD},
         )
 
+        assert preview.status_code == 400
+        assert preview.json()["detail"] == "This reset link is invalid or has expired."
         assert response.status_code == 400
         assert response.json()["detail"] == "This reset link is invalid or has expired."
         assert _login(client, test_user.email, "testpassword123").status_code == 200
+
+    def test_valid_reset_token_can_be_checked_without_consuming(
+        self, client, test_user, test_db: Session
+    ):
+        token = create_password_reset_token(test_db, test_user)
+
+        preview = client.get("/api/auth/reset-password", params={"token": token})
+        assert preview.status_code == 200
+
+        reset = test_db.query(PasswordResetToken).one()
+        assert reset.used_at is None
+
+        response = client.post(
+            "/api/auth/reset-password",
+            json={"token": token, "password": NEW_PASSWORD},
+        )
+        assert response.status_code == 200
+
+    def test_missing_reset_token_is_rejected(self, client):
+        response = client.get("/api/auth/reset-password")
+        assert response.status_code == 400
+        assert response.json()["detail"] == "This reset link is invalid or has expired."
+
+    def test_used_reset_token_is_rejected_on_preview(self, client, test_user, test_db: Session):
+        token = create_password_reset_token(test_db, test_user)
+        used = client.post(
+            "/api/auth/reset-password",
+            json={"token": token, "password": NEW_PASSWORD},
+        )
+        assert used.status_code == 200
+
+        preview = client.get("/api/auth/reset-password", params={"token": token})
+        assert preview.status_code == 400
+        assert preview.json()["detail"] == "This reset link is invalid or has expired."
+
+    def test_unknown_reset_token_is_rejected_on_preview(self, client):
+        preview = client.get(
+            "/api/auth/reset-password",
+            params={"token": "not-a-real-reset-token"},
+        )
+        assert preview.status_code == 400
+        assert preview.json()["detail"] == "This reset link is invalid or has expired."
 
     def test_reset_password_revokes_active_sessions(
         self, client, test_user, test_db: Session
@@ -229,8 +274,18 @@ class TestPasswordReset:
         )
 
         assert response.status_code == 400
+        assert response.json()["detail"] == "Password must include at least one uppercase letter."
         reset = test_db.query(PasswordResetToken).one()
         assert reset.used_at is None
+
+    def test_register_rejects_password_without_symbol(self, client):
+        response = client.post(
+            "/api/auth/register",
+            json={"email": "new@example.com", "password": "Validpass1", "name": "New"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Password must include at least one symbol."
 
 
 class TestCrossUserAccess:

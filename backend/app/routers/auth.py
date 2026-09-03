@@ -8,6 +8,7 @@ from app.auth_utils import (
     verify_password,
 )
 from app.database import get_db
+from app.email import send_password_reset_email
 from app.dependencies import get_current_user
 from app.models import User
 from app.password_utils import validate_password
@@ -26,6 +27,7 @@ from app.sessions import (
     create_password_reset_token,
     create_session,
     get_active_session,
+    get_valid_password_reset_token,
     revoke_all_sessions,
     revoke_session,
     set_session_cookie,
@@ -52,7 +54,8 @@ def register(
     db: Session = Depends(get_db),
 ) -> AuthResponse:
     email = payload.email.lower().strip()
-    password_error = validate_password(payload.password)
+    password = payload.password.get_secret_value()
+    password_error = validate_password(password)
 
     if password_error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=password_error)
@@ -68,7 +71,7 @@ def register(
     user = User(
         name=name,
         email=email,
-        password=hash_password(payload.password),
+        password=hash_password(password),
     )
     db.add(user)
     db.commit()
@@ -87,13 +90,13 @@ def login(
     user = db.query(User).filter(User.email == email).first()
 
     if user is None or not user.password:
-        verify_password(payload.password, dummy_password_hash())
+        verify_password(payload.password.get_secret_value(), dummy_password_hash())
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
         )
 
-    if not verify_password(payload.password, user.password):
+    if not verify_password(payload.password.get_secret_value(), user.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
@@ -131,9 +134,24 @@ def forgot_password(
     email = payload.email.lower().strip()
     user = db.query(User).filter(User.email == email).first()
     if user is not None and user.password:
-        create_password_reset_token(db, user)
+        raw_token = create_password_reset_token(db, user)
+        send_password_reset_email(to_email=user.email, reset_token=raw_token)
 
     return MessageResponse(message=GENERIC_RESET_MESSAGE)
+
+
+@router.get("/reset-password", response_model=MessageResponse)
+def validate_reset_password_token(
+    token: str = "",
+    db: Session = Depends(get_db),
+) -> MessageResponse:
+    if get_valid_password_reset_token(db, token) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=GENERIC_RESET_TOKEN_ERROR,
+        )
+
+    return MessageResponse(message="This reset link is valid.")
 
 
 @router.post("/reset-password", response_model=MessageResponse)
@@ -141,11 +159,12 @@ def reset_password(
     payload: ResetPasswordRequest,
     db: Session = Depends(get_db),
 ) -> MessageResponse:
-    password_error = validate_password(payload.password)
+    password = payload.password.get_secret_value()
+    password_error = validate_password(password)
     if password_error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=password_error)
 
-    reset = consume_password_reset_token(db, payload.token)
+    reset = consume_password_reset_token(db, payload.token.get_secret_value())
     if reset is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -159,7 +178,7 @@ def reset_password(
             detail=GENERIC_RESET_TOKEN_ERROR,
         )
 
-    user.password = hash_password(payload.password)
+    user.password = hash_password(password)
     db.commit()
     revoke_all_sessions(db, user.id)
 

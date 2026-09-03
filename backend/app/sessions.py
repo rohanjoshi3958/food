@@ -99,7 +99,10 @@ def create_password_reset_token(db: Session, user: User) -> str:
     return raw_token
 
 
-def consume_password_reset_token(db: Session, raw_token: str) -> PasswordResetToken | None:
+def get_valid_password_reset_token(db: Session, raw_token: str) -> PasswordResetToken | None:
+    if not raw_token:
+        return None
+
     reset = (
         db.query(PasswordResetToken)
         .filter(
@@ -109,6 +112,13 @@ def consume_password_reset_token(db: Session, raw_token: str) -> PasswordResetTo
         .first()
     )
     if reset is None or is_expired(reset.expires_at):
+        return None
+    return reset
+
+
+def consume_password_reset_token(db: Session, raw_token: str) -> PasswordResetToken | None:
+    reset = get_valid_password_reset_token(db, raw_token)
+    if reset is None:
         return None
 
     reset.used_at = utcnow()

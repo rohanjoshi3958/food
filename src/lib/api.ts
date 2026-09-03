@@ -171,6 +171,16 @@ export async function requestPasswordReset(email: string) {
   );
 }
 
+export async function validatePasswordResetToken(token: string) {
+  const response = await apiFetch(
+    `/api/auth/reset-password?token=${encodeURIComponent(token)}`,
+  );
+
+  if (!response.ok) {
+    throw new Error("This reset link is invalid or has expired.");
+  }
+}
+
 export async function resetPassword(token: string, password: string) {
   const response = await apiFetch("/api/auth/reset-password", {
     method: "POST",

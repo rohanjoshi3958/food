@@ -71,7 +71,8 @@ def client(test_db):
     # Patch the database engine and dependencies before importing the app
     with patch("app.database.engine", get_test_engine()[0]), \
          patch("app.database.SessionLocal", get_test_engine()[1]), \
-         patch("app.db_migrate.run_migrations"):  # Skip migrations in tests
+         patch("app.db_migrate.run_migrations"), \
+         patch("app.routers.auth.send_password_reset_email"):
 
         # Import app after patching
         from app.database import get_db

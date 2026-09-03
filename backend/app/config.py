@@ -17,13 +17,16 @@ class Settings(BaseSettings):
     environment: str = "development"
     cookie_secure: bool = False
     session_ttl_days: int = 7
-    password_reset_ttl_minutes: int = 30
+    password_reset_ttl_minutes: int = 10
     upload_dir: str = "uploads/receipts"
     meal_upload_dir: str = "uploads/meals"
     cookbook_upload_dir: str = "uploads/cookbook"
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    resend_api_key: str = ""
+    email_from: str = "Food <onboarding@resend.dev>"
+    frontend_url: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),
