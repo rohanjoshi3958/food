@@ -4,8 +4,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   AuthUser,
+  apiFetch,
   getCurrentUser,
-  getToken,
   logout,
 } from "@/lib/api";
 import { CookbookTab } from "@/components/cookbook-tab";
@@ -78,16 +78,12 @@ export function Dashboard() {
     }
   }, []);
 
-  function handleLogout() {
-    const token = getToken();
-    if (token) {
-      void fetch("/api/receipts/discard-pending", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        keepalive: true,
-      });
-    }
-    logout();
+  async function handleLogout() {
+    void apiFetch("/api/receipts/discard-pending", {
+      method: "POST",
+      keepalive: true,
+    });
+    await logout();
     router.replace("/login");
   }
 

@@ -28,6 +28,7 @@ A kitchen app that turns grocery receipts into a tracked pantry, then uses AI to
 - Docker (for Postgres)
 - An [Anthropic API key](https://console.anthropic.com/)
 - An [OpenAI API key](https://platform.openai.com/) (for AI meal images when no photo is uploaded)
+- A [Resend API key](https://resend.com/) (for password-reset emails)
 
 ## Setup
 
@@ -52,9 +53,14 @@ DATABASE_URL="postgresql://postgres:postgres@localhost:5433/food"
 AUTH_SECRET="replace-with-a-long-random-string"
 ANTHROPIC_API_KEY="your-anthropic-api-key"
 OPENAI_API_KEY="your-openai-api-key"
+RESEND_API_KEY="your-resend-api-key"
+EMAIL_FROM="Food <onboarding@resend.dev>"
+FRONTEND_URL="http://localhost:3000"
 ```
 
-`AUTH_SECRET` is used to sign JWTs. Generate any long random string.
+`AUTH_SECRET` peppers session and password-reset tokens. Generate a long random string and never commit it. Sessions are stored in HttpOnly cookies and expire after 7 days. Password-reset links expire after **10 minutes**; after that the reset page will not show the form.
+
+`RESEND_API_KEY` is used to email password-reset links. For local development you can use Resend’s `onboarding@resend.dev` sender (`EMAIL_FROM`); messages only deliver to addresses verified in your Resend account. If `RESEND_API_KEY` is unset, the reset URL is logged in the API console instead of being emailed.
 
 Receipt analysis uses Claude Opus; meal generation uses Claude Sonnet 5; meal images use OpenAI `gpt-image-1`.
 
