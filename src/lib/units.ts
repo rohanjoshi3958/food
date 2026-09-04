@@ -52,3 +52,50 @@ export function isKnownUnit(unit: string) {
     unit as (typeof INGREDIENT_UNIT_VALUES)[number],
   );
 }
+
+const WEIGHT_TO_GRAMS: Record<string, number> = {
+  g: 1,
+  kg: 1000,
+  oz: 28.3495,
+  lb: 453.592,
+};
+
+const VOLUME_TO_ML: Record<string, number> = {
+  ml: 1,
+  l: 1000,
+  cup: 236.588,
+  tbsp: 14.787,
+  tsp: 4.929,
+  pint: 473.176,
+  quart: 946.353,
+  gallon: 3785.41,
+  "fl oz": 29.5735,
+};
+
+export function convertAmount(
+  quantity: number,
+  fromUnit: string,
+  toUnit: string,
+): number | null {
+  if (fromUnit === toUnit) return quantity;
+
+  if (fromUnit in WEIGHT_TO_GRAMS && toUnit in WEIGHT_TO_GRAMS) {
+    const grams = quantity * WEIGHT_TO_GRAMS[fromUnit]!;
+    return grams / WEIGHT_TO_GRAMS[toUnit]!;
+  }
+
+  if (fromUnit in VOLUME_TO_ML && toUnit in VOLUME_TO_ML) {
+    const ml = quantity * VOLUME_TO_ML[fromUnit]!;
+    return ml / VOLUME_TO_ML[toUnit]!;
+  }
+
+  return null;
+}
+
+export function formatConvertedQuantity(value: number): string {
+  const rounded = Math.round(value * 10000) / 10000;
+  if (Math.abs(rounded - Math.round(rounded)) < 1e-6) {
+    return String(Math.round(rounded));
+  }
+  return rounded.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
