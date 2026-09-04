@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -13,10 +13,10 @@ from app.schemas import (
     UpdateIngredientRequest,
 )
 from app.services.ingredient_deduction import (
-    _convert_amount,
     _format_quantity,
     normalize_unit,
     parse_number,
+    remaining_servings,
 )
 from app.services.ingredient_merge import _merge_key, _sum_quantities
 from app.services.ingredients import create_ingredient
@@ -147,13 +147,17 @@ def create_manual_ingredient(
         ) from exc
 
 
-@router.patch("/{ingredient_id}", response_model=IngredientResponse)
+@router.patch(
+    "/{ingredient_id}",
+    response_model=IngredientResponse,
+    responses={204: {"description": "Ingredient removed because nothing usable remained."}},
+)
 def update_ingredient(
     ingredient_id: str,
     payload: UpdateIngredientRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> IngredientResponse:
+) -> IngredientResponse | Response:
     is_valid, error_message = validate_ingredient_input(payload.quantity, payload.unit)
     if not is_valid:
         raise HTTPException(
@@ -180,13 +184,20 @@ def update_ingredient(
         )
 
     new_unit = normalize_unit(payload.unit.strip()) or payload.unit.strip()
-    old_unit = normalize_unit(ingredient.unit) or ingredient.unit
 
-    # When the unit changes and the user hasn't typed a new quantity,
-    # try to convert the existing quantity to the new unit automatically.
-    # But we always respect whatever quantity the user explicitly sends.
-    # The conversion is offered client-side as a convenience; the server
-    # just persists the validated values the client sends.
+    try:
+        unit_warning = check_ingredient_unit(ingredient.name, new_unit)
+    except ReceiptAnalysisError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    if unit_warning:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=unit_warning.strip(),
+        )
 
     final_quantity = _format_quantity(new_quantity_value)
 
@@ -199,6 +210,17 @@ def update_ingredient(
 
     ingredient.quantity = final_quantity
     ingredient.unit = new_unit
+
+    # Same depletion rule as meal deduction: drop leftovers that are not
+    # practically usable (near-zero quantity or under ~1/4 serving).
+    servings_left = remaining_servings(ingredient)
+    if new_quantity_value <= 1e-6 or (
+        servings_left is not None and servings_left < 0.25
+    ):
+        db.delete(ingredient)
+        db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     db.commit()
     db.refresh(ingredient)
 

@@ -1,7 +1,8 @@
 """Tests for the inventory quantity/unit update endpoint (PATCH /api/ingredients/{id})."""
 
+from unittest.mock import patch
+
 import pytest
-from sqlalchemy.orm import Session
 
 from app.models import Ingredient, User
 from app.services.ingredient_deduction import _convert_amount, _format_quantity
@@ -20,6 +21,12 @@ class TestUpdateIngredientAPI:
         self.user = test_user
         self.headers = auth_headers
         self.db = test_db
+        # Avoid live AI unit checks for happy-path / validation tests.
+        with patch(
+            "app.routers.ingredients.check_ingredient_unit",
+            return_value=None,
+        ):
+            yield
 
     def _create_ingredient(self, **overrides):
         defaults = dict(
@@ -98,6 +105,35 @@ class TestUpdateIngredientAPI:
         )
         assert resp.status_code == 400
 
+    def test_reject_slash_fraction_quantity(self):
+        self._create_ingredient()
+        resp = self.client.patch(
+            "/api/ingredients/ing-api-1",
+            json={"quantity": "1/2", "unit": "ml"},
+            headers=self.headers,
+        )
+        assert resp.status_code == 400
+        assert "must be a number" in resp.json()["detail"].lower()
+
+        self.db.expire_all()
+        item = self.db.query(Ingredient).filter(Ingredient.id == "ing-api-1").first()
+        assert item.quantity == "500"
+        assert item.unit == "ml"
+
+    def test_reject_negative_slash_fraction_quantity(self):
+        self._create_ingredient()
+        resp = self.client.patch(
+            "/api/ingredients/ing-api-1",
+            json={"quantity": "-1/2", "unit": "ml"},
+            headers=self.headers,
+        )
+        assert resp.status_code == 400
+
+        self.db.expire_all()
+        item = self.db.query(Ingredient).filter(Ingredient.id == "ing-api-1").first()
+        assert item.quantity == "500"
+        assert item.unit == "ml"
+
     def test_reject_invalid_unit(self):
         self._create_ingredient()
         resp = self.client.patch(
@@ -117,6 +153,79 @@ class TestUpdateIngredientAPI:
         )
         assert resp.status_code == 400
         assert "whole" in resp.json()["detail"].lower()
+
+    def test_reject_implausible_unit_match(self):
+        self._create_ingredient(
+            id="ing-bananas",
+            name="Bananas",
+            quantity="6",
+            unit="each",
+        )
+        warning = (
+            "Bananas are sold by count or weight, so use pieces (each), kg, or lb "
+            "instead of liters."
+        )
+        with patch(
+            "app.routers.ingredients.check_ingredient_unit",
+            return_value=warning,
+        ):
+            resp = self.client.patch(
+                "/api/ingredients/ing-bananas",
+                json={"quantity": "1", "unit": "l"},
+                headers=self.headers,
+            )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == warning
+
+        self.db.expire_all()
+        item = self.db.query(Ingredient).filter(Ingredient.id == "ing-bananas").first()
+        assert item.quantity == "6"
+        assert item.unit == "each"
+
+    def test_depleted_edit_deletes_ingredient(self):
+        """Editing down to effectively no servings removes the pantry item."""
+        self._create_ingredient(
+            id="ing-tuna",
+            name="365 Light Chunk Tuna",
+            quantity="5",
+            unit="oz",
+            servings_per_container=0.5,  # 1 serving = 2 oz
+            original_quantity="5",
+        )
+        resp = self.client.patch(
+            "/api/ingredients/ing-tuna",
+            json={"quantity": "0.01", "unit": "oz"},
+            headers=self.headers,
+        )
+        assert resp.status_code == 204
+        self.db.expire_all()
+        assert (
+            self.db.query(Ingredient).filter(Ingredient.id == "ing-tuna").first()
+            is None
+        )
+
+    def test_edit_keeps_ingredient_when_enough_servings_remain(self):
+        self._create_ingredient(
+            id="ing-tuna-keep",
+            name="365 Light Chunk Tuna",
+            quantity="5",
+            unit="oz",
+            servings_per_container=0.5,
+            original_quantity="5",
+        )
+        resp = self.client.patch(
+            "/api/ingredients/ing-tuna-keep",
+            json={"quantity": "2", "unit": "oz"},
+            headers=self.headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["quantity"] == "2"
+        self.db.expire_all()
+        assert (
+            self.db.query(Ingredient).filter(Ingredient.id == "ing-tuna-keep").first()
+            is not None
+        )
 
     def test_not_found_returns_404(self):
         resp = self.client.patch(

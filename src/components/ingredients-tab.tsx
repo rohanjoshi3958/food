@@ -98,21 +98,24 @@ function IngredientDetail({
   ingredient: Ingredient;
   onClose: () => void;
   onRemove: () => void;
-  onUpdate: (updated: Ingredient) => void;
+  onUpdate: (updated: Ingredient | null) => void;
   removing: boolean;
 }) {
   const stock = getIngredientStock(ingredient);
-  const { warning: unitWarning } = useIngredientUnitWarning(
-    ingredient.name,
-    ingredient.unit ?? "",
-  );
-
   const [editing, setEditing] = useState(false);
   const [editQuantity, setEditQuantity] = useState(ingredient.quantity ?? "1");
   const [editUnit, setEditUnit] = useState(ingredient.unit ?? "each");
   const [editError, setEditError] = useState("");
   const [saving, setSaving] = useState(false);
   const prevEditUnit = useRef(editUnit);
+
+  const { warning: storedUnitWarning } = useIngredientUnitWarning(
+    ingredient.name,
+    ingredient.unit ?? "",
+    { enabled: !editing },
+  );
+  const { warning: editUnitWarning, checking: checkingEditUnit } =
+    useIngredientUnitWarning(ingredient.name, editUnit, { enabled: editing });
 
   function startEditing() {
     setEditQuantity(ingredient.quantity ?? "1");
@@ -139,6 +142,7 @@ function IngredientDetail({
     }
 
     setEditUnit(newUnit);
+    setEditError("");
     prevEditUnit.current = newUnit;
   }
 
@@ -149,6 +153,16 @@ function IngredientDetail({
     const quantityError = validateQuantity(trimmedQty, trimmedUnit);
     if (quantityError) {
       setEditError(quantityError);
+      return;
+    }
+
+    if (checkingEditUnit) {
+      setEditError("Still checking whether this unit makes sense…");
+      return;
+    }
+
+    if (editUnitWarning) {
+      setEditError(editUnitWarning);
       return;
     }
 
@@ -163,6 +177,12 @@ function IngredientDetail({
 
       if (!response.ok) {
         throw new Error(await parseError(response, "Unable to update ingredient."));
+      }
+
+      // Server removes items that are effectively empty (< ~1/4 serving).
+      if (response.status === 204) {
+        onUpdate(null);
+        return;
       }
 
       const updated: Ingredient = await response.json();
@@ -217,9 +237,9 @@ function IngredientDetail({
         </div>
       </div>
 
-      {unitWarning && !editing && (
+      {storedUnitWarning && !editing && (
         <p className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-          {unitWarning}
+          {storedUnitWarning}
         </p>
       )}
 
@@ -250,6 +270,14 @@ function IngredientDetail({
               />
             </div>
           </div>
+          {editUnitWarning && (
+            <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+              {editUnitWarning}
+            </p>
+          )}
+          {checkingEditUnit && !editUnitWarning && (
+            <p className="text-xs text-stone-500">Checking unit…</p>
+          )}
           {editError && (
             <p className="text-sm text-red-600">{editError}</p>
           )}
@@ -257,7 +285,9 @@ function IngredientDetail({
             <button
               type="button"
               onClick={saveEdit}
-              disabled={saving}
+              disabled={
+                saving || Boolean(editUnitWarning) || checkingEditUnit
+              }
               className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving ? "Saving..." : "Save"}
@@ -522,6 +552,13 @@ export function IngredientsTab({ refreshKey }: { refreshKey: number }) {
                     onClose={() => setSelectedId(null)}
                     onRemove={() => removeIngredient(item.id)}
                     onUpdate={(updated) => {
+                      if (updated == null) {
+                        setItems((current) =>
+                          current.filter((i) => i.id !== item.id),
+                        );
+                        setSelectedId(null);
+                        return;
+                      }
                       setItems((current) =>
                         current.map((i) => (i.id === updated.id ? updated : i)),
                       );
