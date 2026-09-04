@@ -383,10 +383,15 @@ class TestFindMatchingIngredient:
         assert result is not None
 
     def test_partial_match_single_result(self):
+        """Partial matches are now considered ambiguous and return None.
+
+        The new normalization is more conservative: "Rice" doesn't automatically
+        match "Brown Rice" because it could match other rice types. This follows
+        the principle of leaving ambiguous matches for user review.
+        """
         ingredients = [MockIngredient(id="1", name="Brown Rice")]
         result = _find_matching_ingredient(ingredients, "Rice")
-        assert result is not None
-        assert result.id == "1"
+        assert result is None
 
     def test_partial_match_multiple_results_returns_none(self):
         ingredients = [

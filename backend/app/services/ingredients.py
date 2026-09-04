@@ -4,6 +4,11 @@ from app.models import Ingredient, User
 from app.schemas import DraftIngredientItem, IngredientResponse
 from app.services.ingredient_merge import _merge_key, _sum_quantities
 from app.services.ingredient_deduction import servings_per_pantry_unit
+from app.services.ingredient_normalization import (
+    MatchConfidence,
+    find_matching_ingredient_with_confidence,
+    clean_display_name,
+)
 from app.services.receipt_analyzer import (
     ReceiptAnalysisError,
     check_ingredient_unit,
@@ -70,15 +75,47 @@ def _find_matching_pantry_item(
     user: User,
     name: str,
     unit: str | None,
-) -> Ingredient | None:
+) -> tuple[Ingredient | None, bool]:
+    """Find a matching pantry item using robust normalization.
+
+    Returns a tuple of (matched_ingredient, is_ambiguous).
+    - If is_ambiguous is True, the match was uncertain and should be
+      reviewed by the user rather than auto-merged.
+    - Uses canonical key matching first (fastest), then falls back to
+      confidence-based name matching for potential merges.
+
+    The normalization handles:
+    - Abbreviations: CHKN BRST → chicken breast
+    - Plurals: Chicken breasts → Chicken breast
+    - Qualifiers: ORG CHICKEN BREAST matches Chicken Breast
+    """
     target_key = _merge_key(name, unit)
     pantry = db.query(Ingredient).filter(Ingredient.user_id == user.id).all()
 
     for ingredient in pantry:
         if _merge_key(ingredient.name, ingredient.unit) == target_key:
-            return ingredient
+            return (ingredient, False)
 
-    return None
+    candidates = [(ingredient.id, ingredient.name) for ingredient in pantry]
+    matched_id, match_result = find_matching_ingredient_with_confidence(
+        name, candidates, require_high_confidence=True
+    )
+
+    if match_result and match_result.confidence == MatchConfidence.AMBIGUOUS:
+        return (None, True)
+
+    if matched_id and match_result:
+        if match_result.confidence in (MatchConfidence.EXACT, MatchConfidence.HIGH):
+            from app.services.ingredient_deduction import normalize_unit
+
+            target_unit = normalize_unit(unit) or ""
+            for ingredient in pantry:
+                if ingredient.id == matched_id:
+                    pantry_unit = normalize_unit(ingredient.unit) or ""
+                    if pantry_unit == target_unit:
+                        return (ingredient, False)
+
+    return (None, False)
 
 
 def create_ingredient(
@@ -87,11 +124,21 @@ def create_ingredient(
     item: DraftIngredientItem,
     receipt_id: str | None = None,
 ) -> IngredientResponse:
+    """Create or merge an ingredient into the user's inventory.
+
+    Uses robust normalization to match ingredients:
+    - Abbreviations: CHKN BRST → chicken breast
+    - Plurals: Chicken breasts → Chicken breast
+    - Qualifiers: ORG CHICKEN matches Chicken
+
+    Ambiguous matches are NOT auto-merged; they create new entries
+    for user review.
+    """
     resolved = resolve_item_nutrition(item)
     name = resolved.ingredient_name.strip()
-    existing = _find_matching_pantry_item(db, user, name, resolved.unit)
+    existing, is_ambiguous = _find_matching_pantry_item(db, user, name, resolved.unit)
 
-    if existing is not None:
+    if existing is not None and not is_ambiguous:
         existing.original_quantity = _sum_quantities(
             existing.original_quantity or existing.quantity,
             resolved.quantity,
@@ -122,10 +169,12 @@ def create_ingredient(
         db.refresh(existing)
         return IngredientResponse.model_validate(existing)
 
+    display_name = clean_display_name(name)
+
     ingredient = Ingredient(
         user_id=user.id,
         receipt_id=receipt_id,
-        name=name,
+        name=display_name,
         store_item_name=resolved.store_item_name or resolved.ingredient_name,
         quantity=resolved.quantity,
         original_quantity=resolved.quantity,
