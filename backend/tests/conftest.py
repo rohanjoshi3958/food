@@ -147,6 +147,129 @@ def temp_upload_dir(tmp_path):
 
 
 @pytest.fixture
+def local_uploads(tmp_path, monkeypatch):
+    """Point the local-disk storage fallback at per-test directories.
+
+    Returns the three roots keyed by object-key prefix.
+    """
+    from app import storage
+
+    monkeypatch.delenv("UPLOADS_BUCKET", raising=False)
+    roots = {
+        "receipts": tmp_path / "uploads" / "receipts",
+        "meals": tmp_path / "uploads" / "meals",
+        "cookbook": tmp_path / "uploads" / "cookbook",
+    }
+    monkeypatch.setenv("UPLOAD_DIR", str(roots["receipts"]))
+    monkeypatch.setenv("MEAL_UPLOAD_DIR", str(roots["meals"]))
+    monkeypatch.setenv("COOKBOOK_UPLOAD_DIR", str(roots["cookbook"]))
+    storage.reset_storage_cache()
+    yield roots
+    storage.reset_storage_cache()
+
+
+class FakeS3Client:
+    """Minimal in-memory stand-in for ``boto3.client("s3")``.
+
+    Implements only the calls ``app.storage.S3UploadStorage`` makes and mimics
+    botocore's ``ClientError`` shapes for missing objects so the backend's
+    error mapping is exercised for real.
+    """
+
+    def __init__(self):
+        self.objects: dict[tuple[str, str], dict] = {}
+        self.calls: list[tuple[str, dict]] = []
+
+    @staticmethod
+    def _not_found(operation: str, code: str):
+        from botocore.exceptions import ClientError
+
+        return ClientError(
+            {
+                "Error": {"Code": code, "Message": code},
+                "ResponseMetadata": {"HTTPStatusCode": 404},
+            },
+            operation,
+        )
+
+    def keys(self, bucket: str) -> set[str]:
+        return {key for (b, key) in self.objects if b == bucket}
+
+    def put_object(self, *, Bucket, Key, Body, ContentType=None, **_):
+        self.calls.append(("put_object", {"Bucket": Bucket, "Key": Key, "ContentType": ContentType}))
+        data = Body if isinstance(Body, bytes) else Body.read()
+        self.objects[(Bucket, Key)] = {"Body": data, "ContentType": ContentType}
+        return {"ETag": '"fake"'}
+
+    def get_object(self, *, Bucket, Key, **_):
+        import io
+
+        self.calls.append(("get_object", {"Bucket": Bucket, "Key": Key}))
+        obj = self.objects.get((Bucket, Key))
+        if obj is None:
+            raise self._not_found("GetObject", "NoSuchKey")
+        return {"Body": io.BytesIO(obj["Body"]), "ContentType": obj["ContentType"]}
+
+    def head_object(self, *, Bucket, Key, **_):
+        self.calls.append(("head_object", {"Bucket": Bucket, "Key": Key}))
+        if (Bucket, Key) not in self.objects:
+            raise self._not_found("HeadObject", "404")
+        return {"ContentLength": len(self.objects[(Bucket, Key)]["Body"])}
+
+    def delete_object(self, *, Bucket, Key, **_):
+        self.calls.append(("delete_object", {"Bucket": Bucket, "Key": Key}))
+        self.objects.pop((Bucket, Key), None)
+        return {}
+
+    def copy_object(self, *, Bucket, Key, CopySource, ContentType=None, **_):
+        self.calls.append(("copy_object", {"Bucket": Bucket, "Key": Key, "CopySource": CopySource}))
+        source = self.objects.get((CopySource["Bucket"], CopySource["Key"]))
+        if source is None:
+            raise self._not_found("CopyObject", "NoSuchKey")
+        self.objects[(Bucket, Key)] = {
+            "Body": source["Body"],
+            "ContentType": ContentType or source["ContentType"],
+        }
+        return {}
+
+    def generate_presigned_url(self, ClientMethod, Params, ExpiresIn):
+        self.calls.append(("generate_presigned_url", {"ClientMethod": ClientMethod, **Params}))
+        return (
+            f"https://{Params['Bucket']}.s3.amazonaws.com/{Params['Key']}"
+            f"?X-Amz-Expires={ExpiresIn}&X-Amz-Signature=fake"
+        )
+
+
+FAKE_BUCKET = "food-test-uploads"
+
+
+@pytest.fixture
+def fake_s3(tmp_path, monkeypatch):
+    """Run the app in S3 mode against an in-memory fake bucket.
+
+    Sets ``UPLOADS_BUCKET`` and intercepts ``boto3.client`` so no AWS
+    credentials, region, or network are needed. Local upload dirs are pointed
+    at paths that must stay absent, so tests can assert nothing hit disk.
+    """
+    from app import storage
+
+    fake = FakeS3Client()
+    monkeypatch.setenv("UPLOADS_BUCKET", FAKE_BUCKET)
+    never = tmp_path / "never-created"
+    monkeypatch.setenv("UPLOAD_DIR", str(never / "receipts"))
+    monkeypatch.setenv("MEAL_UPLOAD_DIR", str(never / "meals"))
+    monkeypatch.setenv("COOKBOOK_UPLOAD_DIR", str(never / "cookbook"))
+    storage.reset_storage_cache()
+
+    with patch("boto3.client", return_value=fake) as client_factory:
+        fake.client_factory = client_factory
+        fake.local_root = never
+        yield fake
+
+    storage.reset_storage_cache()
+
+
+@pytest.fixture
 def mock_receipt_image(tmp_path):
     """Create a mock receipt image file."""
     receipt_path = tmp_path / "receipt.jpg"

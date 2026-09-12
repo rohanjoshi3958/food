@@ -1,15 +1,12 @@
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import CookbookEntry, User
 from app.schemas import CookbookEntryResponse, cookbook_entry_response
-from app.services.cookbook import remove_cookbook_entry
+from app.services.cookbook import cookbook_photo_key, remove_cookbook_entry
+from app.storage import serve_object
 
 router = APIRouter(prefix="/cookbook", tags=["cookbook"])
 
@@ -25,10 +22,6 @@ def _get_entry_for_user(entry_id: str, current_user: User, db: Session) -> Cookb
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found.")
 
     return entry
-
-
-def _cookbook_photo_path(user_id: str, filename: str) -> Path:
-    return Path(settings.cookbook_upload_dir) / user_id / filename
 
 
 @router.get("", response_model=list[CookbookEntryResponse])
@@ -61,15 +54,13 @@ def get_cookbook_photo(
     entry_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> FileResponse:
+) -> Response:
     entry = _get_entry_for_user(entry_id, current_user, db)
 
     if not entry.photo_filename:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found.")
 
-    photo_path = _cookbook_photo_path(current_user.id, entry.photo_filename)
-
-    if not photo_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found.")
-
-    return FileResponse(photo_path)
+    return serve_object(
+        cookbook_photo_key(current_user.id, entry.photo_filename),
+        not_found_detail="Photo not found.",
+    )

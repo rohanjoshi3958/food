@@ -196,12 +196,13 @@ class ReceiptAnalysisError(Exception):
     pass
 
 
-def _media_type_for_path(path: Path) -> tuple[str, str]:
-    suffix = path.suffix.lower()
+def _media_type_for_filename(filename: str) -> tuple[str, str]:
+    name = Path(filename).name
+    suffix = Path(name).suffix.lower()
     media_type = SUPPORTED_MEDIA_TYPES.get(suffix)
 
     if not media_type:
-        guessed, _ = mimetypes.guess_type(path.name)
+        guessed, _ = mimetypes.guess_type(name)
         media_type = guessed
 
     if not media_type or media_type not in SUPPORTED_MEDIA_TYPES.values():
@@ -477,14 +478,15 @@ def _enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
     return ParsedReceipt(store_name=parsed.store_name, items=enriched_items)
 
 
-def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
+def analyze_receipt_image(contents: bytes, filename: str) -> ParsedReceipt:
+    """Analyze receipt bytes; ``filename`` is only used to infer the media type."""
     if not settings.anthropic_api_key:
         raise ReceiptAnalysisError(
             "Anthropic API key is not configured. Add ANTHROPIC_API_KEY to your .env file."
         )
 
-    media_type, content_type = _media_type_for_path(file_path)
-    encoded = base64.standard_b64encode(file_path.read_bytes()).decode("utf-8")
+    media_type, content_type = _media_type_for_filename(filename)
+    encoded = base64.standard_b64encode(contents).decode("utf-8")
 
     client = _get_client()
 

@@ -66,6 +66,18 @@ FRONTEND_URL="http://localhost:3000"
 
 Receipt analysis uses Claude Opus; meal generation uses Claude Sonnet 5; meal images use OpenAI `gpt-image-1`.
 
+### Upload storage (receipts, meal photos, cookbook photos)
+
+Uploads go to **S3 when `UPLOADS_BUCKET` is set** and to **local disk otherwise**, so nothing extra is needed for local development:
+
+| Env var | Default | Notes |
+| --- | --- | --- |
+| `UPLOADS_BUCKET` | unset | Name of the private S3 bucket. When set, objects are written under `receipts/`, `meals/` and `cookbook/` and the container filesystem is never used for uploads. In production this is set by Terraform and the App Runner instance role provides credentials; region comes from the standard `AWS_REGION` (no app-specific region setting). |
+| `UPLOADS_SIGNED_URL_TTL_SECONDS` | `300` | Lifetime of the presigned S3 URLs that `/api/meals/{id}/photo` and `/api/cookbook/{id}/photo` redirect to. Set to `0` to stream bytes through the API instead of redirecting. |
+| `UPLOAD_DIR`, `MEAL_UPLOAD_DIR`, `COOKBOOK_UPLOAD_DIR` | `uploads/receipts`, `uploads/meals`, `uploads/cookbook` | Local-disk fallback directories (relative to `backend/`), only used when `UPLOADS_BUCKET` is unset. |
+
+The database stores stable object keys (`<prefix>/<user id>/<uuid>_<filename>`) in both modes. To exercise S3 mode locally, export `UPLOADS_BUCKET` plus normal AWS credentials (`AWS_PROFILE` or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) and `AWS_REGION`; the SDK's default resolution is used as-is.
+
 ## Run locally
 
 From the project root:

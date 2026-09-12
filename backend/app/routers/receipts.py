@@ -1,11 +1,10 @@
 import json
-import uuid
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.orm import Session, joinedload
 
-from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import Receipt, User
@@ -25,7 +24,19 @@ from app.services.receipt_analyzer import (
     ReceiptAnalysisError,
     analyze_receipt_image,
 )
+from app.storage import (
+    RECEIPTS_PREFIX,
+    InvalidObjectKey,
+    StorageError,
+    build_object_key,
+    delete_quietly,
+    get_storage,
+    safe_filename,
+    validate_object_key,
+)
 from app.validation import validate_ingredient_input
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
 
@@ -36,9 +47,15 @@ MAX_RECEIPTS_PER_USER = 3
 def _delete_receipt_file(receipt: Receipt) -> None:
     if not receipt.filename:
         return
-    path = Path(receipt.filename)
-    if path.exists() and path.is_file():
-        path.unlink()
+    try:
+        validate_object_key(receipt.filename)
+    except InvalidObjectKey:
+        # Rows written before object keys existed hold a local filesystem path.
+        legacy = Path(receipt.filename)
+        if legacy.is_file():
+            legacy.unlink()
+        return
+    delete_quietly(receipt.filename)
 
 
 def _prune_old_receipts(db: Session, user: User) -> None:
@@ -240,21 +257,30 @@ async def upload_receipt(
             detail="A file is required.",
         )
 
-    upload_root = Path(settings.upload_dir) / current_user.id
-    upload_root.mkdir(parents=True, exist_ok=True)
-
-    safe_name = Path(file.filename).name
-    stored_name = f"{uuid.uuid4().hex}_{safe_name}"
-    destination = upload_root / stored_name
+    safe_name = safe_filename(file.filename)
+    object_key = build_object_key(RECEIPTS_PREFIX, current_user.id, safe_name)
 
     contents = await file.read()
-    destination.write_bytes(contents)
+    if not contents:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload a valid receipt file.",
+        )
 
     pre_manual_items = _parse_manual_items(manual_items)
 
+    try:
+        get_storage().put(object_key, contents, content_type=file.content_type)
+    except StorageError as exc:
+        logger.exception("Failed to store receipt upload %s", object_key)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to store the receipt right now. Please try again.",
+        ) from exc
+
     receipt = Receipt(
         user_id=current_user.id,
-        filename=str(destination),
+        filename=object_key,
         original_name=safe_name,
         analysis_status="processing",
     )
@@ -263,7 +289,7 @@ async def upload_receipt(
     db.refresh(receipt)
 
     try:
-        parsed = analyze_receipt_image(destination)
+        parsed = analyze_receipt_image(contents, safe_name)
 
         receipt.store_name = parsed.store_name
         receipt.analysis_status = "pending_review"
