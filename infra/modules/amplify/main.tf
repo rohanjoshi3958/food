@@ -24,8 +24,8 @@ locals {
           - .next/cache/**/*
   YAML
 
-  # BACKEND_URL is the hook for FOOD-48: next.config.ts should read it as the
-  # /api rewrite destination instead of the hard-coded localhost:8000.
+  # BACKEND_URL is the hook for FOOD-48: next.config.ts reads it as the /api
+  # rewrite destination (falling back to http://localhost:8000 for local dev).
   #
   # It is set on the *branch*, not the app, on purpose: the App Runner service
   # reads this app's default domain for CORS_ORIGINS / FRONTEND_URL (FOOD-50),
