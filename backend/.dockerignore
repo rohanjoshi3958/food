@@ -1,0 +1,24 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Tests and tooling config (not needed at runtime)
+tests/
+pytest.ini
+pyproject.toml
+*.md
+
+# Local state
+uploads/
+.env*
+
+# Docker
+Dockerfile
+.dockerignore
