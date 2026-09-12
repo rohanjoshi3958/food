@@ -2,6 +2,7 @@ import base64
 import json
 import mimetypes
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -194,6 +195,15 @@ class ParsedReceipt(BaseModel):
 
 class ReceiptAnalysisError(Exception):
     pass
+
+
+# Progress stages reported while a receipt is being analyzed. The poll endpoint
+# surfaces these so the UI can describe what is happening.
+STAGE_QUEUED = "queued"
+STAGE_READING_RECEIPT = "reading_receipt"
+STAGE_ESTIMATING_NUTRITION = "estimating_nutrition"
+
+ProgressCallback = Callable[[str], None]
 
 
 def _media_type_for_path(path: Path) -> tuple[str, str]:
@@ -477,16 +487,24 @@ def _enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
     return ParsedReceipt(store_name=parsed.store_name, items=enriched_items)
 
 
-def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
+def analyze_receipt_image(
+    file_path: Path,
+    on_progress: ProgressCallback | None = None,
+) -> ParsedReceipt:
     if not settings.anthropic_api_key:
         raise ReceiptAnalysisError(
             "Anthropic API key is not configured. Add ANTHROPIC_API_KEY to your .env file."
         )
 
+    def report(stage: str) -> None:
+        if on_progress is not None:
+            on_progress(stage)
+
     media_type, content_type = _media_type_for_path(file_path)
     encoded = base64.standard_b64encode(file_path.read_bytes()).decode("utf-8")
 
     client = _get_client()
+    report(STAGE_READING_RECEIPT)
 
     content_block = {
         "type": content_type,
@@ -532,4 +550,5 @@ def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
             "No food items were found on this receipt. Try a clearer photo."
         )
 
+    report(STAGE_ESTIMATING_NUTRITION)
     return _enrich_receipt_nutrition(parsed)
