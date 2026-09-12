@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.llm_usage import WORKFLOW_INGREDIENT_NORMALIZE, workflow_scope
 from app.models import Ingredient, User
 from app.schemas import DraftIngredientItem, IngredientResponse
 from app.services.ingredient_deduction import normalize_unit, servings_per_pantry_unit
@@ -166,6 +167,30 @@ def create_ingredient(
     Ambiguous pantry matches raise AmbiguousPantryMatchError instead of
     inserting a near-duplicate row.
     """
+    # One ingredient_normalize run per ingredient; only the Claude calls are
+    # observed, no validation behaviour changes.
+    with workflow_scope(
+        WORKFLOW_INGREDIENT_NORMALIZE,
+        user_id=user.id,
+        receipt_id=receipt_id,
+    ):
+        return _create_ingredient(
+            db,
+            user,
+            item,
+            receipt_id=receipt_id,
+            allow_llm_merge=allow_llm_merge,
+        )
+
+
+def _create_ingredient(
+    db: Session,
+    user: User,
+    item: DraftIngredientItem,
+    receipt_id: str | None,
+    *,
+    allow_llm_merge: bool | None,
+) -> IngredientResponse:
     resolved = resolve_item_nutrition(item)
     name = resolved.ingredient_name.strip()
     if allow_llm_merge is None:

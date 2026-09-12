@@ -19,6 +19,7 @@ from app.services.model_router import route_model
 MEAL_CALORIE_MIN = 500
 MEAL_CALORIE_MAX = 800
 MEAL_GENERATION_ATTEMPTS = 4
+STEP_MEAL_GENERATE = "meal_generate"
 
 # Cached system prefix: chef rules + calorie band + JSON schema. Only module
 # constants are formatted in, so the rendered text is byte-stable across
@@ -310,6 +311,7 @@ def generate_meal_from_ingredients(
             message = create_cached_message(
                 client,
                 call_site="meal.generate",
+                attempt=attempt + 1,
                 model=model,
                 max_tokens=4096,
                 system_prefix=system_prefix,

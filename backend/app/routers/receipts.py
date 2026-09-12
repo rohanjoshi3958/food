@@ -8,6 +8,11 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.llm_usage import (
+    WORKFLOW_INGREDIENT_NORMALIZE,
+    WORKFLOW_RECEIPT_PARSE,
+    workflow_scope,
+)
 from app.models import Receipt, User
 from app.schemas import (
     ConfirmReceiptRequest,
@@ -263,19 +268,19 @@ async def upload_receipt(
     db.refresh(receipt)
 
     try:
-        outcome = analyze_receipt(
-            destination,
-            contents,
-            db=db,
+        with workflow_scope(
+            WORKFLOW_RECEIPT_PARSE,
             user_id=current_user.id,
             receipt_id=receipt.id,
-        )
-        parsed = outcome.parsed
-        # TODO(FOOD-54): metrics wire-up goes here once Metrics eng exports the
-        # stable helper. Everything it needs is on `outcome`: path
-        # (cache|ocr|haiku|sonnet|opus_baseline), confidence, ocr_confidence,
-        # latency_ms, tokens (populated when available), gate_reasons,
-        # escalations, content_hash. Do not add interim counters/logging.
+        ):
+            outcome = analyze_receipt(
+                destination,
+                contents,
+                db=db,
+                user_id=current_user.id,
+                receipt_id=receipt.id,
+            )
+            parsed = outcome.parsed
 
         receipt.store_name = parsed.store_name
         receipt.analysis_status = "pending_review"
@@ -419,7 +424,15 @@ def confirm_receipt(
         item.model_dump() for item in payload.items if item.is_food
     ]
     # Canonicalize names before merge so abbreviation/plural variants collapse.
-    canonicalized_payloads = canonicalize_draft_items(db, current_user, food_payloads)
+    # Tagged as normalize spend without opening a run; create_ingredient below
+    # records one run per ingredient, which is the unit "cost per normalize" uses.
+    with workflow_scope(
+        WORKFLOW_INGREDIENT_NORMALIZE,
+        user_id=current_user.id,
+        receipt_id=receipt.id,
+        record_run=False,
+    ):
+        canonicalized_payloads = canonicalize_draft_items(db, current_user, food_payloads)
     merged_items = [
         DraftIngredientItem.model_validate(item)
         for item in merge_draft_items(canonicalized_payloads)

@@ -1,4 +1,5 @@
 import base64
+import contextvars
 import json
 import mimetypes
 import re
@@ -514,8 +515,13 @@ def _enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
     enriched_items = list(parsed.items)
 
     with ThreadPoolExecutor(max_workers=min(6, len(food_indexes))) as executor:
+        # Copy the context so worker threads inherit the LLM workflow scope.
         futures = {
-            executor.submit(_enrich_item_with_nutrition, parsed.items[index]): index
+            executor.submit(
+                contextvars.copy_context().run,
+                _enrich_item_with_nutrition,
+                parsed.items[index],
+            ): index
             for index in food_indexes
         }
         for future in as_completed(futures):
