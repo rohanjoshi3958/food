@@ -193,7 +193,8 @@ class FakeClaude:
                     )
             raise AssertionError(f"No golden nutrition for prompt:\n{text}")
 
-        if "Assess whether this grocery purchase unit" in text:
+        # Wording-tolerant: FOOD-56 moved "this" -> "the ... given in the user message".
+        if "grocery purchase unit" in text and "plausible" in text:
             return create_mock_anthropic_response(
                 json.dumps({"unit_plausible": True, "unit_warning": None})
             )

@@ -495,20 +495,27 @@ def _enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
     return ParsedReceipt(store_name=parsed.store_name, items=enriched_items)
 
 
-def _run_receipt_extraction(content: list[dict], model: str) -> ParsedReceipt:
-    """Send one extraction prompt to Anthropic and validate the ParsedReceipt JSON."""
+def _run_receipt_extraction(
+    user_content: list[dict],
+    *,
+    model: str,
+    call_site: str,
+) -> ParsedReceipt:
+    """One extraction call: cached RECEIPT_ANALYSIS_PROMPT prefix + per-request tail.
+
+    The receipt image/PDF or OCR text is unique per request, so it stays in
+    the user turn after the cache breakpoint (see backend/PROMPT_CACHING.md).
+    """
     client = _get_client()
 
-    # The receipt image/PDF or OCR text is unique per request, so it stays in
-    # the user turn after the cached instruction prefix.
     try:
         message = create_cached_message(
             client,
-            call_site="receipt.analyze_image",
+            call_site=call_site,
             model=model,
             max_tokens=4096,
             system_prefix=RECEIPT_ANALYSIS_PROMPT,
-            messages=[{"role": "user", "content": content}],
+            messages=[{"role": "user", "content": user_content}],
         )
     except anthropic.APIError as exc:
         raise ReceiptAnalysisError(_anthropic_error_message(exc)) from exc
@@ -539,30 +546,34 @@ def extract_receipt_vision(
         "type": content_type,
         "source": {"type": "base64", "media_type": media_type, "data": encoded},
     }
-    return _run_receipt_extraction([content_block], model)
+    return _run_receipt_extraction(
+        [content_block],
+        model=model,
+        call_site="receipt.analyze_image",
+    )
 
 
+# User-turn framing for the OCR-text rung. The instructions themselves stay in
+# the shared cached RECEIPT_ANALYSIS_PROMPT prefix.
 RECEIPT_TEXT_ANALYSIS_PREAMBLE = (
     "The following is OCR text from a grocery store receipt. Treat it exactly like "
-    "the receipt image described below; OCR may have garbled some characters.\n\n"
-    "--- OCR TEXT START ---\n"
+    "the receipt image described in the instructions; OCR may have garbled some "
+    "characters.\n\n--- OCR TEXT START ---\n"
 )
 
 
 def build_receipt_text_prompt(ocr_text: str) -> str:
-    # Plain concatenation: RECEIPT_ANALYSIS_PROMPT contains literal JSON braces.
-    return (
-        RECEIPT_TEXT_ANALYSIS_PREAMBLE
-        + ocr_text.strip()
-        + "\n--- OCR TEXT END ---\n\n"
-        + RECEIPT_ANALYSIS_PROMPT
-    )
+    # Plain concatenation: no str.format, the surrounding prompts contain JSON braces.
+    return RECEIPT_TEXT_ANALYSIS_PREAMBLE + ocr_text.strip() + "\n--- OCR TEXT END ---"
 
 
 def extract_receipt_text(ocr_text: str, *, model: str) -> ParsedReceipt:
-    """Text-only extraction from OCR output (soft fallback rung, e.g. Haiku)."""
-    prompt = build_receipt_text_prompt(ocr_text)
-    return _run_receipt_extraction([{"type": "text", "text": prompt}], model)
+    """Text-only extraction from OCR output (soft fallback rung, RECEIPT_OCR_CLEANUP_MODEL)."""
+    return _run_receipt_extraction(
+        [{"type": "text", "text": build_receipt_text_prompt(ocr_text)}],
+        model=model,
+        call_site="receipt.ocr_text_cleanup",
+    )
 
 
 def require_food_items(parsed: ParsedReceipt) -> ParsedReceipt:

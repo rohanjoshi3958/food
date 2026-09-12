@@ -225,8 +225,7 @@ class TestOcrFirstReceiptFlow:
         nutrition_models = {
             c.kwargs["model"]
             for c in mock_client.messages.create.call_args_list
-            if isinstance(c.kwargs["messages"][0]["content"], str)
-            and "Estimate nutritional facts" in c.kwargs["messages"][0]["content"]
+            if "Estimate nutritional facts" in (c.kwargs.get("system") or [{}])[0].get("text", "")
         }
         assert nutrition_models == {RECEIPT_ANTHROPIC_MODEL}
 

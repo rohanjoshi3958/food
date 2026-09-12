@@ -299,9 +299,14 @@ class TestExtractors:
 
         kwargs = mock_client.messages.create.call_args.kwargs
         assert kwargs["model"] == "claude-haiku-test"
-        prompt = kwargs["messages"][0]["content"][0]["text"]
-        assert "ORG BNNAS" in prompt and "OCR TEXT START" in prompt
-        assert '"store_name": "Store Name or null"' in prompt  # JSON braces survived
+        user_text = kwargs["messages"][0]["content"][0]["text"]
+        assert "ORG BNNAS" in user_text and "OCR TEXT START" in user_text
+        # Instructions + JSON shape ride in the cached system prefix (FOOD-56),
+        # never in the per-request user turn.
+        system_text = kwargs["system"][0]["text"]
+        assert '"store_name": "Store Name or null"' in system_text
+        assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
+        assert "Store Name or null" not in user_text
         assert parsed.store_name == "Whole Foods Market"
         assert parsed.items[0].ingredient_name == "Organic Bananas"
 
@@ -316,10 +321,11 @@ class TestExtractors:
 
         extract_receipt_vision(b"%PDF-1.4", "application/pdf", model="claude-sonnet-5")
         kwargs = mock_client.messages.create.call_args.kwargs
-        block = kwargs["messages"][0]["content"][0]
+        content = kwargs["messages"][0]["content"]
         assert kwargs["model"] == "claude-sonnet-5"
-        assert block["type"] == "document"
-        assert block["source"]["media_type"] == "application/pdf"
+        assert [block["type"] for block in content] == ["document"]  # image/PDF only after the breakpoint
+        assert content[0]["source"]["media_type"] == "application/pdf"
+        assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
 
 
 class TestOutcomeFields:

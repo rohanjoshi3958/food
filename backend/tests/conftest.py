@@ -202,13 +202,17 @@ def build_anthropic_router(
         text_response = receipt_response
 
     def _text_of(content) -> str:
+        if content is None:
+            return ""
         if isinstance(content, str):
             return content
         return " ".join(block.get("text", "") for block in content if block.get("type") == "text")
 
     def _route(**kwargs):
         content = kwargs["messages"][0]["content"]
-        text = _text_of(content)
+        # Prompt framing lives in the cached system block since FOOD-56; the
+        # per-request tail (item, OCR text, image) is in the user turn.
+        text = _text_of(kwargs.get("system")) + " " + _text_of(content)
         if isinstance(content, list) and any(
             block.get("type") in ("image", "document") for block in content
         ):
@@ -226,7 +230,7 @@ def build_anthropic_router(
             return mock_nutrition_response(
                 {"quantity": "1", "unit": "each", "calories": 1, "nutrition_notes": "generic"}
             )
-        if "Assess whether this grocery purchase unit" in text:
+        if "grocery purchase unit" in text and "plausible" in text:
             return mock_unit_check_response()
         if "Match an incoming grocery item" in text:
             return mock_pantry_match_response()
