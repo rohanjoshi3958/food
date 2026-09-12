@@ -49,28 +49,24 @@ _CACHEABLE_STATUSES = ("pending_review", "completed", "cancelled")
 
 @dataclass
 class ReceiptAnalysisOutcome:
+    """Result of one extraction plus the structured fields FOOD-54 will export.
+
+    Nothing here is emitted anywhere yet; the metrics helper from Metrics eng
+    is the single wire-up point (see the TODO in routers/receipts.py).
+    """
+
     parsed: ParsedReceipt
-    path: str
+    path: str  # cache|ocr|haiku|sonnet|opus_baseline
     content_hash: str
     latency_ms: float
-    confidence: float | None = None
-    ocr_confidence: float | None = None
+    confidence: float | None = None  # 0-1 gate score; 1.0 for cache, None for LLM rungs
+    ocr_confidence: float | None = None  # raw Tesseract mean word confidence, 0-100
+    # LLM tokens consumed by the winning rung. Left None until FOOD-54 defines
+    # how usage is attributed across escalations.
+    tokens: int | None = None
     gate_reasons: list[str] = field(default_factory=list)
     # Rungs tried (and failed) before ``path`` succeeded, in order.
     escalations: list[str] = field(default_factory=list)
-
-    def telemetry(self) -> dict:
-        return {
-            "path": self.path,
-            "confidence": self.confidence,
-            "ocr_confidence": self.ocr_confidence,
-            "latency_ms": round(self.latency_ms, 1),
-            "content_hash": self.content_hash[:12],
-            "gate_reasons": list(self.gate_reasons),
-            "escalations": list(self.escalations),
-            "item_count": len(self.parsed.items),
-            "food_item_count": sum(1 for item in self.parsed.items if item.is_food),
-        }
 
 
 def find_cached_analysis(

@@ -61,7 +61,7 @@ MIGRATIONS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_token_hash ON password_reset_tokens (token_hash)",
-    # FOOD-55: content-hash cache + extraction path telemetry on receipts.
+    # FOOD-55: content-hash cache + which extraction path produced each receipt.
     "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS content_hash VARCHAR",
     "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS analysis_path VARCHAR",
     "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS analysis_result JSONB",

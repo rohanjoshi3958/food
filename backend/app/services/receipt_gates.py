@@ -24,7 +24,7 @@ TOTALS_ABSOLUTE_FLOOR = 0.05
 @dataclass
 class GateDecision:
     passed: bool
-    # 0-1 score reported in telemetry; derived from OCR confidence and checks.
+    # 0-1 score derived from OCR confidence and checks (exported by FOOD-54 later).
     confidence: float
     reasons: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)

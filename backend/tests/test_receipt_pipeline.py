@@ -19,11 +19,6 @@ from app.services.receipt_pipeline import (
     path_for_model,
 )
 from app.services.receipt_preprocess import content_hash
-from app.services.receipt_telemetry import (
-    clear_receipt_path_listeners,
-    emit_receipt_path,
-    register_receipt_path_listener,
-)
 
 PIPELINE = "app.services.receipt_pipeline"
 
@@ -300,35 +295,21 @@ class TestExtractors:
         assert block["source"]["media_type"] == "application/pdf"
 
 
-class TestTelemetry:
+class TestOutcomeFields:
+    """The structured fields FOOD-54's metrics helper will read off the outcome."""
+
     def test_path_for_model(self):
         assert path_for_model("claude-haiku-4") == PATH_HAIKU
         assert path_for_model("claude-sonnet-5") == PATH_SONNET
         assert path_for_model("claude-opus-5") == PATH_OPUS_BASELINE
 
-    def test_outcome_telemetry_fields(self, flags, test_db, test_user, real_receipt_image):
+    def test_outcome_exposes_metrics_fields(self, flags, test_db, test_user, real_receipt_image):
         contents = real_receipt_image.read_bytes()
         with patch(f"{PIPELINE}.analyze_receipt_image", return_value=_parsed("EGGS", "MILK")):
-            event = analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id).telemetry()
-        assert event["path"] == PATH_OPUS_BASELINE
-        assert set(event) >= {"path", "confidence", "ocr_confidence", "latency_ms", "content_hash", "gate_reasons", "escalations", "item_count", "food_item_count"}
-        assert event["content_hash"] == content_hash(contents)[:12]
-        assert event["item_count"] == 2
-
-    def test_emit_logs_json_and_notifies_listeners(self, caplog):
-        received: list[dict] = []
-        register_receipt_path_listener(received.append)
-        try:
-            with caplog.at_level("INFO", logger="app.receipts.telemetry"):
-                emit_receipt_path({"path": PATH_CACHE, "status": "ok"})
-        finally:
-            clear_receipt_path_listeners()
-        assert received == [{"event": "receipt_analysis", "path": PATH_CACHE, "status": "ok"}]
-        assert '"path": "cache"' in caplog.text
-
-    def test_listener_errors_do_not_propagate(self):
-        register_receipt_path_listener(Mock(side_effect=RuntimeError("listener down")))
-        try:
-            emit_receipt_path({"path": PATH_OCR})
-        finally:
-            clear_receipt_path_listeners()
+            outcome = analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id)
+        assert outcome.path == PATH_OPUS_BASELINE
+        assert outcome.content_hash == content_hash(contents)
+        assert outcome.latency_ms >= 0
+        assert outcome.confidence is None and outcome.ocr_confidence is None
+        assert outcome.tokens is None  # reserved for FOOD-54
+        assert outcome.gate_reasons == [] and outcome.escalations == []

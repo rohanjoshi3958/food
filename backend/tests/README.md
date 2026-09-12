@@ -8,7 +8,7 @@ This directory contains automated backend tests for:
 - **Meal generation call budget** (`test_meal_generator.py`) — parsing, calorie retry loop, attempt cap, and fallback behaviour
 - **Authentication lifecycle** (`test_auth.py`) — login, logout, password reset, expired sessions, and cross-user access
 - **Receipt → inventory E2E flow** (`test_receipt_to_inventory_e2e.py`)
-- **OCR-first receipt pipeline (FOOD-55)** — `test_receipt_preprocess.py` (hash, downsample), `test_receipt_ocr.py` (Tesseract wrapper), `test_receipt_parser.py` (deterministic parser), `test_receipt_gates.py` (confidence gates), `test_receipt_pipeline.py` (cache hit/miss, escalation ladder, telemetry), `test_receipt_ocr_first_e2e.py` (flag ON end-to-end with mocked OCR text), `test_receipt_evals.py` (eval scaffold + scoring)
+- **OCR-first receipt pipeline (FOOD-55)** — `test_receipt_preprocess.py` (hash, downsample), `test_receipt_ocr.py` (Tesseract wrapper), `test_receipt_parser.py` (deterministic parser), `test_receipt_gates.py` (confidence gates), `test_receipt_pipeline.py` (cache hit/miss, escalation ladder, outcome fields), `test_receipt_ocr_first_e2e.py` (flag ON end-to-end with mocked OCR text), `test_receipt_evals.py` (eval scaffold + scoring)
 - **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
 - **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
 
