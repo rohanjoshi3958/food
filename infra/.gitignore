@@ -1,0 +1,17 @@
+# Local state and plans contain secrets (RDS password, DATABASE_URL)
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Provider binaries / lock is committed, .terraform is not
+.terraform/
+
+# Per-user variable files and backend config
+terraform.tfvars
+*.auto.tfvars
+*.auto.tfvars.json
+backend.tf
+.terraformrc
+terraform.rc
