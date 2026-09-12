@@ -28,6 +28,19 @@ class Settings(BaseSettings):
     email_from: str = "Food <onboarding@resend.dev>"
     frontend_url: str = "http://localhost:3000"
 
+    # LLM usage instrumentation / cost dashboard (FOOD-54).
+    # Emit one JSON line per Claude call to stdout in addition to the DB store.
+    llm_usage_log_enabled: bool = True
+    # Optional JSON override of the USD/MTok pricing table (see app/llm_usage/pricing.py).
+    llm_pricing_json: str = ""
+    # Who may read /api/metrics/llm/*: comma-separated emails of signed-in
+    # users, and/or a static bearer token for ops tooling. When neither is set
+    # outside production, any signed-in user may view the dashboard locally.
+    admin_emails: str = ""
+    metrics_api_token: str = ""
+    # Anthropic Admin API key (sk-ant-admin...) for billing reconciliation.
+    anthropic_admin_api_key: str = ""
+
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),
         env_file_encoding="utf-8",
@@ -37,7 +50,6 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
-
     @property
     def session_cookie_secure(self) -> bool:
         return self.cookie_secure or self.environment.lower() == "production"

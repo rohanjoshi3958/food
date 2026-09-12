@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -166,3 +166,75 @@ class CookbookEntry(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="cookbook_entries")
+
+
+class LlmWorkflowRun(Base):
+    """One product-level LLM workflow invocation (e.g. a receipt parse).
+
+    A run groups every Claude call made while fulfilling it, including retries,
+    so we can report $ per *successful* receipt / normalize / meal and how
+    often a workflow needed more than one call.
+    """
+
+    __tablename__ = "llm_workflow_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    workflow: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="running")
+    # Existing app identifiers only; no new PII.
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    receipt_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    meal_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False, index=True
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class LlmUsageEvent(Base):
+    """One Claude Messages API call with its token usage and estimated cost."""
+
+    __tablename__ = "llm_usage_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False, index=True
+    )
+    workflow: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    step: Mapped[str] = mapped_column(String, nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    provider: Mapped[str] = mapped_column(String, nullable=False, default="anthropic")
+    model: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    service_tier: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ok")
+    error_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    stop_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    uncached_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_write_5m_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_write_1h_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    image_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    document_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    approx_visual_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_text_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    estimated_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    input_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cache_write_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cache_read_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    output_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    pricing_known: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    pricing_version: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    receipt_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    meal_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    anthropic_request_id: Mapped[str | None] = mapped_column(String, nullable=True)

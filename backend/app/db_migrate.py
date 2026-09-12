@@ -61,6 +61,11 @@ MIGRATIONS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_token_hash ON password_reset_tokens (token_hash)",
+    # FOOD-54: Claude usage instrumentation. Tables are created by
+    # Base.metadata.create_all; these composite indexes back the dashboard's
+    # time-window aggregates.
+    "CREATE INDEX IF NOT EXISTS ix_llm_usage_events_workflow_created_at ON llm_usage_events (workflow, created_at)",
+    "CREATE INDEX IF NOT EXISTS ix_llm_workflow_runs_workflow_started_at ON llm_workflow_runs (workflow, started_at)",
 ]
 
 

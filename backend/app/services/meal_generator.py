@@ -5,6 +5,7 @@ import anthropic
 from pydantic import BaseModel, Field
 
 from app.config import MEAL_ANTHROPIC_MODEL, settings
+from app.llm_usage import create_message
 from app.models import Ingredient
 from app.services.ingredient_deduction import (
     clamp_meal_ingredients_to_pantry,
@@ -17,6 +18,7 @@ from app.services.meal_nutrition import calculate_meal_macros
 MEAL_CALORIE_MIN = 500
 MEAL_CALORIE_MAX = 800
 MEAL_GENERATION_ATTEMPTS = 4
+STEP_MEAL_GENERATE = "meal_generate"
 
 MEAL_GENERATION_PROMPT = """You are a helpful home chef. Given the ingredients available in the user's kitchen, suggest ONE practical meal for a single person (one plate / one bowl).
 
@@ -296,7 +298,10 @@ def generate_meal_from_ingredients(
             )
 
         try:
-            message = client.messages.create(
+            message = create_message(
+                client,
+                step=STEP_MEAL_GENERATE,
+                attempt=attempt + 1,
                 model=MEAL_ANTHROPIC_MODEL,
                 max_tokens=4096,
                 messages=conversation,

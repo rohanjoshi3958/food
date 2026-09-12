@@ -4,10 +4,13 @@ import anthropic
 from openai import OpenAI
 
 from app.config import MEAL_ANTHROPIC_MODEL, OPENAI_IMAGE_MODEL, settings
+from app.llm_usage import create_message
 from app.models import Meal
 
 PROMPT_SYSTEM = """You write short prompts for photorealistic food photography.
 Respond with ONLY the image prompt text — no quotes, labels, or explanation."""
+
+STEP_IMAGE_PROMPT = "image_prompt"
 
 
 class MealImageError(Exception):
@@ -40,7 +43,9 @@ def _build_image_prompt(meal: Meal) -> str:
 
     try:
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-        response = client.messages.create(
+        response = create_message(
+            client,
+            step=STEP_IMAGE_PROMPT,
             model=MEAL_ANTHROPIC_MODEL,
             max_tokens=200,
             system=PROMPT_SYSTEM,

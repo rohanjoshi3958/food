@@ -1,4 +1,5 @@
 import base64
+import contextvars
 import json
 import mimetypes
 import re
@@ -9,6 +10,13 @@ import anthropic
 from pydantic import BaseModel, Field
 
 from app.config import RECEIPT_ANTHROPIC_MODEL, settings
+from app.llm_usage import create_message
+
+# Step names recorded on llm_usage_events for this module's Claude calls.
+STEP_RECEIPT_SCAN = "receipt_scan"
+STEP_NUTRITION_ESTIMATE = "nutrition_estimate"
+STEP_UNIT_CHECK = "unit_check"
+STEP_PANTRY_MATCH = "pantry_match"
 
 
 def _anthropic_error_message(exc: Exception) -> str:
@@ -260,7 +268,9 @@ def check_ingredient_unit(
         return None
 
     client = _get_client()
-    message = client.messages.create(
+    message = create_message(
+        client,
+        step=STEP_UNIT_CHECK,
         model=RECEIPT_ANTHROPIC_MODEL,
         max_tokens=256,
         messages=[
@@ -312,7 +322,9 @@ def match_ingredient_to_pantry(
     # Always ask the LLM for a canonical display name, even when the pantry is
     # empty. match_id must stay null when there are no candidates.
     client = _get_client()
-    message = client.messages.create(
+    message = create_message(
+        client,
+        step=STEP_PANTRY_MATCH,
         model=RECEIPT_ANTHROPIC_MODEL,
         max_tokens=256,
         messages=[
@@ -364,7 +376,9 @@ def estimate_ingredient_nutrition(
     qty = (quantity or "").strip() or "unknown"
     unit_label = (unit or "").strip() or "unknown"
 
-    message = client.messages.create(
+    message = create_message(
+        client,
+        step=STEP_NUTRITION_ESTIMATE,
         model=RECEIPT_ANTHROPIC_MODEL,
         max_tokens=1024,
         messages=[
@@ -466,8 +480,13 @@ def _enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
     enriched_items = list(parsed.items)
 
     with ThreadPoolExecutor(max_workers=min(6, len(food_indexes))) as executor:
+        # Copy the context so worker threads inherit the LLM workflow scope.
         futures = {
-            executor.submit(_enrich_item_with_nutrition, parsed.items[index]): index
+            executor.submit(
+                contextvars.copy_context().run,
+                _enrich_item_with_nutrition,
+                parsed.items[index],
+            ): index
             for index in food_indexes
         }
         for future in as_completed(futures):
@@ -498,7 +517,9 @@ def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
     }
 
     try:
-        message = client.messages.create(
+        message = create_message(
+            client,
+            step=STEP_RECEIPT_SCAN,
             model=RECEIPT_ANTHROPIC_MODEL,
             max_tokens=4096,
             messages=[
