@@ -14,6 +14,13 @@ prefix to match a recent request byte for byte. That gives one rule:
 
 ## Call sites and where the breakpoint sits
 
+The model column is each site's *default* tier. Since FOOD-58 the model id
+comes from `app/services/model_router.py::route_model(call_site)`; with
+`MODEL_ROUTING_ENABLED` off (the default) that resolves to exactly these
+constants. See `MODEL_ROUTING.md` for the routed tiers and remember caches
+are per model: a site that escalates re-asks on a different model and pays
+its own cache write.
+
 | Call site (`call_site` log tag) | Model | Cached prefix (`system`) | After the breakpoint (`messages`) |
 | --- | --- | --- | --- |
 | `receipt.analyze_image` | `RECEIPT_ANTHROPIC_MODEL` | `RECEIPT_ANALYSIS_PROMPT` (extraction rules + JSON shape) | the receipt image / PDF block |
@@ -64,7 +71,8 @@ on every call.
 
 Anthropic silently skips caching when the prefix is shorter than the
 model's minimum (currently 512 tokens for Claude Opus 5, 1,024 for Claude
-Sonnet 5; check the
+Sonnet 5, 4,096 for Claude Haiku 4.5 — so Haiku-routed sites will not cache
+at all; check the
 [prompt caching docs](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
 for the current table). No error is returned; both cache counters are just
 `0`.
@@ -97,7 +105,7 @@ uvicorn's default logging, which otherwise only configures its own
 loggers):
 
 ```
-anthropic call_site=receipt.pantry_match input_tokens=143 output_tokens=41 cache_creation_input_tokens=0 cache_read_input_tokens=612
+anthropic call_site=receipt.pantry_match model=claude-opus-5 input_tokens=143 output_tokens=41 cache_creation_input_tokens=0 cache_read_input_tokens=612
 ```
 
 - `cache_creation_input_tokens > 0`: prefix was written to the cache.

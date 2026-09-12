@@ -1,0 +1,162 @@
+{
+  "_comment": [
+    "Ingredient match / pantry normalize corpus. Each case seeds a pantry, sends one",
+    "incoming item through create_ingredient (unit check -> nutrition -> pantry match ->",
+    "merge or insert) with the pantry-match model response scripted, and labels the",
+    "outcome a reviewer expects: merge into an existing row, a new row with a display",
+    "name, or an ambiguous hold. `llm_calls` is the expected number of pantry-match",
+    "calls (0 when the cheap local key already matches). `hallucinated_id` marks",
+    "responses whose match_id is not in the offered pantry; `ambiguous_flagged` marks",
+    "responses where ambiguous=true. Both must never produce a merge."
+  ],
+  "cases": [
+    {
+      "id": "abbrev_merges_into_existing",
+      "incoming": {"ingredient_name": "CHKN BRST", "quantity": "1.5", "unit": "lb"},
+      "pantry": [{"id": "chicken-1", "name": "Chicken Breast", "quantity": "2", "unit": "lb"}],
+      "model_response": {"match_id": "chicken-1", "ambiguous": false, "canonical_name": "Chicken Breast"},
+      "expected": {"decision": "merge", "into": "chicken-1", "llm_calls": 1}
+    },
+    {
+      "id": "plural_variant_merges",
+      "incoming": {"ingredient_name": "Tomatoes", "quantity": "4", "unit": "each"},
+      "pantry": [{"id": "tomato-1", "name": "Tomato", "quantity": "2", "unit": "each"}],
+      "model_response": {"match_id": "tomato-1", "ambiguous": false, "canonical_name": "Tomato"},
+      "expected": {"decision": "merge", "into": "tomato-1", "llm_calls": 1}
+    },
+    {
+      "id": "qualifier_changes_identity_new_row",
+      "incoming": {"ingredient_name": "Skim Milk", "quantity": "64", "unit": "fl oz"},
+      "pantry": [{"id": "milk-1", "name": "Whole Milk", "quantity": "64", "unit": "fl oz"}],
+      "model_response": {"match_id": null, "ambiguous": false, "canonical_name": "Skim Milk"},
+      "expected": {"decision": "new", "display_name": "Skim Milk", "llm_calls": 1}
+    },
+    {
+      "id": "ambiguous_rice_held_for_review",
+      "incoming": {"ingredient_name": "Rice", "quantity": "2", "unit": "lb"},
+      "pantry": [
+        {"id": "rice-brown", "name": "Brown Rice", "quantity": "2", "unit": "lb"},
+        {"id": "rice-white", "name": "White Rice", "quantity": "5", "unit": "lb"}
+      ],
+      "model_response": {"match_id": null, "ambiguous": true, "canonical_name": "Rice"},
+      "ambiguous_flagged": true,
+      "expected": {"decision": "ambiguous", "llm_calls": 1}
+    },
+    {
+      "id": "ambiguous_with_stray_match_id_still_held",
+      "incoming": {"ingredient_name": "Rice", "quantity": "2", "unit": "lb"},
+      "pantry": [
+        {"id": "rice-brown", "name": "Brown Rice", "quantity": "2", "unit": "lb"},
+        {"id": "rice-white", "name": "White Rice", "quantity": "5", "unit": "lb"}
+      ],
+      "model_response": {"match_id": "rice-brown", "ambiguous": true, "canonical_name": "Rice"},
+      "ambiguous_flagged": true,
+      "expected": {"decision": "ambiguous", "llm_calls": 1}
+    },
+    {
+      "id": "hallucinated_id_rejected",
+      "incoming": {"ingredient_name": "Quinoa", "quantity": "1", "unit": "lb"},
+      "pantry": [{"id": "rice-brown", "name": "Brown Rice", "quantity": "2", "unit": "lb"}],
+      "model_response": {"match_id": "ing-404-does-not-exist", "ambiguous": false, "canonical_name": "Quinoa"},
+      "hallucinated_id": true,
+      "expected": {"decision": "new", "display_name": "Quinoa", "llm_calls": 1}
+    },
+    {
+      "id": "exact_local_key_skips_llm",
+      "incoming": {"ingredient_name": "chicken breast", "quantity": "1", "unit": "lbs"},
+      "pantry": [{"id": "chicken-1", "name": "Chicken Breast", "quantity": "2", "unit": "lb"}],
+      "model_response": {"match_id": null, "ambiguous": false, "canonical_name": "SHOULD NOT BE CALLED"},
+      "expected": {"decision": "merge", "into": "chicken-1", "llm_calls": 0}
+    },
+    {
+      "id": "empty_pantry_gets_canonical_name",
+      "incoming": {"ingredient_name": "ORG BNNAS", "quantity": "6", "unit": "each"},
+      "pantry": [],
+      "model_response": {"match_id": null, "ambiguous": false, "canonical_name": "Organic Bananas"},
+      "expected": {"decision": "new", "display_name": "Organic Banana", "llm_calls": 1}
+    },
+    {
+      "id": "unit_incompatible_row_never_offered",
+      "incoming": {"ingredient_name": "Greek Yogurt", "quantity": "32", "unit": "oz"},
+      "pantry": [{"id": "yogurt-1", "name": "Greek Yogurt", "quantity": "1", "unit": "each"}],
+      "model_response": {"match_id": "yogurt-1", "ambiguous": false, "canonical_name": "Greek Yogurt"},
+      "hallucinated_id": true,
+      "expected": {"decision": "new", "display_name": "Greek Yogurt", "llm_calls": 1}
+    },
+    {
+      "id": "unexpanded_abbreviation_is_a_name_miss",
+      "incoming": {"ingredient_name": "CHDR CHZ", "quantity": "8", "unit": "oz"},
+      "pantry": [],
+      "model_response": {"match_id": null, "ambiguous": false, "canonical_name": "Chdr Chz"},
+      "expected": {"decision": "new", "display_name": "Cheddar Cheese", "llm_calls": 1}
+    },
+    {
+      "id": "garbage_response_falls_back_to_clean_display_name",
+      "incoming": {"ingredient_name": "Sweet Potatoes", "quantity": "3", "unit": "each"},
+      "pantry": [],
+      "model_response": "I'm sorry, I can't help with that request.",
+      "expected": {"decision": "new", "display_name": "Sweet Potato", "llm_calls": 1}
+    },
+    {
+      "id": "brand_prefix_merges_into_core_food",
+      "incoming": {"ingredient_name": "365 Organic Black Beans", "quantity": "2", "unit": "can"},
+      "pantry": [{"id": "beans-1", "name": "Black Beans", "quantity": "1", "unit": "can"}],
+      "model_response": {"match_id": "beans-1", "ambiguous": false, "canonical_name": "Organic Black Beans"},
+      "expected": {"decision": "merge", "into": "beans-1", "llm_calls": 1}
+    },
+    {
+      "id": "store_prefix_stripped_in_display_name",
+      "incoming": {"ingredient_name": "GG Marinara Sauce", "quantity": "24", "unit": "oz"},
+      "pantry": [],
+      "model_response": {"match_id": null, "ambiguous": false, "canonical_name": "Marinara Sauce"},
+      "expected": {"decision": "new", "display_name": "Marinara Sauce", "llm_calls": 1}
+    },
+    {
+      "id": "multiword_expansion_new_row",
+      "incoming": {"ingredient_name": "UNSWTND ALMND MLK", "quantity": "32", "unit": "fl oz"},
+      "pantry": [{"id": "milk-1", "name": "Whole Milk", "quantity": "64", "unit": "fl oz"}],
+      "model_response": {"match_id": null, "ambiguous": false, "canonical_name": "Unsweetened Almond Milk"},
+      "expected": {"decision": "new", "display_name": "Unsweetened Almond Milk", "llm_calls": 1}
+    }
+  ],
+  "draft_collapse": [
+    {
+      "id": "plural_variants_collapse_to_one_draft",
+      "pantry": [],
+      "items": [
+        {"ingredient_name": "Bananas", "quantity": "3", "unit": "each", "is_food": true},
+        {"ingredient_name": "Banana", "quantity": "2", "unit": "each", "is_food": true}
+      ],
+      "model_responses": {
+        "Bananas": {"match_id": null, "ambiguous": false, "canonical_name": "Banana"},
+        "Banana": {"match_id": null, "ambiguous": false, "canonical_name": "Banana"}
+      },
+      "expected": {"rows": 1, "names": ["Banana"], "quantities": ["5"]}
+    },
+    {
+      "id": "abbreviation_and_expanded_form_collapse",
+      "pantry": [],
+      "items": [
+        {"ingredient_name": "CHKN BRST", "quantity": "1", "unit": "lb", "is_food": true},
+        {"ingredient_name": "Chicken Breast", "quantity": "2", "unit": "lb", "is_food": true}
+      ],
+      "model_responses": {
+        "CHKN BRST": {"match_id": null, "ambiguous": false, "canonical_name": "Chicken Breast"},
+        "Chicken Breast": {"match_id": null, "ambiguous": false, "canonical_name": "Chicken Breast"}
+      },
+      "expected": {"rows": 1, "names": ["Chicken Breast"], "quantities": ["3"]}
+    },
+    {
+      "id": "different_units_stay_separate",
+      "pantry": [],
+      "items": [
+        {"ingredient_name": "Milk", "quantity": "1", "unit": "gallon", "is_food": true},
+        {"ingredient_name": "Milk", "quantity": "16", "unit": "fl oz", "is_food": true}
+      ],
+      "model_responses": {
+        "Milk": {"match_id": null, "ambiguous": false, "canonical_name": "Milk"}
+      },
+      "expected": {"rows": 2, "names": ["Milk", "Milk"], "quantities": ["1", "16"]}
+    }
+  ]
+}

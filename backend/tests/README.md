@@ -10,6 +10,9 @@ This directory contains automated backend tests for:
 - **Receipt → inventory E2E flow** (`test_receipt_to_inventory_e2e.py`)
 - **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
 - **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
+- **Prompt caching breakpoints** on every Claude call site (`test_prompt_caching.py`)
+- **Model routing** policy, flag-off guarantee, and escalation wiring (`test_model_router.py`)
+- **Quality evals** — receipt accuracy, ingredient match rate, meal-plan acceptability against documented baselines (`evals/`, see `evals/README.md`)
 
 ## Running Tests
 
@@ -41,6 +44,12 @@ pytest tests/test_ingredient_merge.py
 
 # Auth sessions, password reset, and authorization
 pytest tests/test_auth.py
+
+# Quality evals (mocked; prints a metrics table against baselines.json)
+pytest tests/evals
+
+# Quality evals against a real model tier (paid, opt-in)
+FOOD_EVAL_LIVE=1 FOOD_EVAL_MODEL=claude-haiku-4-5 pytest tests/evals -m live -s
 ```
 
 ### Run with Coverage
@@ -112,5 +121,13 @@ tests mock provider clients so no real AI calls are made.
     OPENAI_API_KEY: ""
   run: |
     pip install -r requirements.txt
-    pytest
+    pytest --ignore=tests/evals
+
+- name: Quality evals (mocked)
+  working-directory: backend
+  run: pytest tests/evals
 ```
+
+The evals step fails the job when a metric in `tests/evals/baselines.json`
+regresses and appends the metrics table to the GitHub step summary. Live
+(paid) evals never run in CI; they are gated behind `FOOD_EVAL_LIVE=1`.
