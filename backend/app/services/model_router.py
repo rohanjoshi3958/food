@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from typing import Iterator
@@ -186,17 +185,22 @@ class RouteDecision:
     confidence: float | None = None
 
 
-_forced_model: ContextVar[str | None] = ContextVar("food_forced_model", default=None)
+# Process-wide (not a ContextVar) on purpose: the receipt pipeline fans
+# nutrition calls out over a ThreadPoolExecutor, and worker threads must see
+# the forced model too. Eval harness only; never set this in production code.
+_forced_model: str | None = None
 
 
 @contextmanager
 def forced_model(model: str) -> Iterator[str]:
     """Force every decision to ``model`` (eval harness only; see tests/evals)."""
-    token = _forced_model.set(model)
+    global _forced_model
+    previous = _forced_model
+    _forced_model = model
     try:
         yield model
     finally:
-        _forced_model.reset(token)
+        _forced_model = previous
 
 
 def routing_enabled() -> bool:
@@ -245,7 +249,7 @@ def route_model(
     policy = policy_for(call_site)
     is_enabled = routing_enabled() if enabled is None else enabled
 
-    forced = _forced_model.get()
+    forced = _forced_model
     if forced is not None:
         tier = next((t for t, m in TIER_MODELS.items() if m == forced), policy.default)
         decision = RouteDecision(
