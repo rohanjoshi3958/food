@@ -9,6 +9,7 @@ import anthropic
 from pydantic import BaseModel, Field
 
 from app.config import RECEIPT_ANTHROPIC_MODEL, settings
+from app.services.anthropic_cache import create_cached_message
 
 
 def _anthropic_error_message(exc: Exception) -> str:
@@ -77,10 +78,12 @@ Respond with ONLY valid JSON in this exact shape:
 Include non-food receipt lines (tax, bags, coupons, etc.) with is_food set to false.
 Prefer accurate extraction from the receipt; only guess quantity/unit when they are not printed."""
 
-NUTRITION_ESTIMATE_PROMPT = """Estimate nutritional facts per standard serving for this grocery item:
-- Item: {ingredient_name}
-- Quantity purchased: {quantity}
-- Unit: {unit}
+# Prompt layout for caching: each *_PROMPT below is a byte-stable prefix
+# (task framing + rules + JSON response shape) sent as a cached system block.
+# The matching *_USER_PROMPT carries only per-request values and is sent in
+# the user turn, after the cache breakpoint. See backend/PROMPT_CACHING.md.
+
+NUTRITION_ESTIMATE_PROMPT = """Estimate nutritional facts per standard serving for the grocery item described in the user message (item name, quantity purchased, and unit).
 
 If quantity or unit is missing/unknown, guess a typical grocery purchase quantity and unit for this item
 (e.g. almond butter jar → quantity "1", unit "each"; bananas → quantity "1", unit "lb" or "each").
@@ -99,7 +102,7 @@ not food, or cannot be matched to a plausible grocery product (e.g. "po", "food"
 When recognized is false, set every nutrition field to null and explain briefly in nutrition_notes.
 
 Respond with ONLY valid JSON:
-{{
+{
   "recognized": true,
   "quantity": "1",
   "unit": "each",
@@ -112,15 +115,16 @@ Respond with ONLY valid JSON:
   "fiber_g": 2,
   "sodium_mg": 150,
   "nutrition_notes": "Brief note on data source"
-}}
+}
 
 For quantity and unit: echo the provided values when known; otherwise fill in your educated guess.
 Use null for unknown nutrition values. Base estimates on standard USDA or nutrition database / typical package sizes."""
 
-UNIT_CHECK_PROMPT = """Assess whether this grocery purchase unit is plausible for the item.
+NUTRITION_ESTIMATE_USER_PROMPT = """- Item: {ingredient_name}
+- Quantity purchased: {quantity}
+- Unit: {unit}"""
 
-- Item: {ingredient_name}
-- Unit: {unit}
+UNIT_CHECK_PROMPT = """Assess whether the grocery purchase unit given in the user message is plausible for the item.
 
 Set "unit_plausible" to true when the unit fits how this is normally bought or measured.
 Set "unit_plausible" to false when the unit is a poor fit (e.g. whole produce in gallon, dry spice in ml).
@@ -128,19 +132,17 @@ When false, set "unit_warning" to one short sentence suggesting better units; ot
 The app rejects ingredients that fail this check.
 
 Respond with ONLY valid JSON:
-{{
+{
   "unit_plausible": true,
   "unit_warning": null
-}}"""
+}"""
+
+UNIT_CHECK_USER_PROMPT = """- Item: {ingredient_name}
+- Unit: {unit}"""
 
 PANTRY_MATCH_PROMPT = """Match an incoming grocery item to the user's existing pantry.
 
-Incoming item:
-- name: {ingredient_name}
-- unit: {unit}
-
-Existing pantry items (JSON):
-{pantry_json}
+The user message provides the incoming item (name and unit) and the existing pantry items as JSON.
 
 Rules:
 - Expand receipt abbreviations when interpreting the incoming name
@@ -157,16 +159,23 @@ Rules:
   (e.g. "Rice" vs both "Brown Rice" and "White Rice"), or when the match is only partial.
   When ambiguous, match_id must be null.
 - Set match_id to null when nothing clearly matches.
-- Never invent pantry ids; only use ids from the list above.
+- Never invent pantry ids; only use ids from the existing pantry items list.
 - canonical_name should be a clear plain-English display name for the incoming item
   (expanded abbreviations, sensible singular/plural, title-friendly).
 
 Respond with ONLY valid JSON:
-{{
+{
   "match_id": null,
   "ambiguous": false,
   "canonical_name": "Chicken Breast"
-}}"""
+}"""
+
+PANTRY_MATCH_USER_PROMPT = """Incoming item:
+- name: {ingredient_name}
+- unit: {unit}
+
+Existing pantry items (JSON):
+{pantry_json}"""
 
 
 class ParsedReceiptItem(BaseModel):
@@ -260,13 +269,16 @@ def check_ingredient_unit(
         return None
 
     client = _get_client()
-    message = client.messages.create(
+    message = create_cached_message(
+        client,
+        call_site="receipt.unit_check",
         model=RECEIPT_ANTHROPIC_MODEL,
         max_tokens=256,
+        system_prefix=UNIT_CHECK_PROMPT,
         messages=[
             {
                 "role": "user",
-                "content": UNIT_CHECK_PROMPT.format(
+                "content": UNIT_CHECK_USER_PROMPT.format(
                     ingredient_name=name,
                     unit=unit_label,
                 ),
@@ -312,13 +324,16 @@ def match_ingredient_to_pantry(
     # Always ask the LLM for a canonical display name, even when the pantry is
     # empty. match_id must stay null when there are no candidates.
     client = _get_client()
-    message = client.messages.create(
+    message = create_cached_message(
+        client,
+        call_site="receipt.pantry_match",
         model=RECEIPT_ANTHROPIC_MODEL,
         max_tokens=256,
+        system_prefix=PANTRY_MATCH_PROMPT,
         messages=[
             {
                 "role": "user",
-                "content": PANTRY_MATCH_PROMPT.format(
+                "content": PANTRY_MATCH_USER_PROMPT.format(
                     ingredient_name=name,
                     unit=unit_label,
                     pantry_json=json.dumps(pantry_items, ensure_ascii=True),
@@ -364,13 +379,16 @@ def estimate_ingredient_nutrition(
     qty = (quantity or "").strip() or "unknown"
     unit_label = (unit or "").strip() or "unknown"
 
-    message = client.messages.create(
+    message = create_cached_message(
+        client,
+        call_site="receipt.nutrition_estimate",
         model=RECEIPT_ANTHROPIC_MODEL,
         max_tokens=1024,
+        system_prefix=NUTRITION_ESTIMATE_PROMPT,
         messages=[
             {
                 "role": "user",
-                "content": NUTRITION_ESTIMATE_PROMPT.format(
+                "content": NUTRITION_ESTIMATE_USER_PROMPT.format(
                     ingredient_name=ingredient_name,
                     quantity=qty,
                     unit=unit_label,
@@ -497,19 +515,16 @@ def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
         },
     }
 
+    # The receipt image/PDF is unique per request, so it must stay in the
+    # user turn after the cached instruction prefix.
     try:
-        message = client.messages.create(
+        message = create_cached_message(
+            client,
+            call_site="receipt.analyze_image",
             model=RECEIPT_ANTHROPIC_MODEL,
             max_tokens=4096,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        content_block,
-                        {"type": "text", "text": RECEIPT_ANALYSIS_PROMPT},
-                    ],
-                }
-            ],
+            system_prefix=RECEIPT_ANALYSIS_PROMPT,
+            messages=[{"role": "user", "content": [content_block]}],
         )
     except anthropic.APIError as exc:
         raise ReceiptAnalysisError(_anthropic_error_message(exc)) from exc
