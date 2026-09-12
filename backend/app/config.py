@@ -18,9 +18,18 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     session_ttl_days: int = 7
     password_reset_ttl_minutes: int = 10
+    # Local-disk fallback (used when UPLOADS_BUCKET is unset). One directory per
+    # object-key prefix; see app/storage.py.
     upload_dir: str = "uploads/receipts"
     meal_upload_dir: str = "uploads/meals"
     cookbook_upload_dir: str = "uploads/cookbook"
+    # S3 mode: name of the private uploads bucket (Terraform output, injected by
+    # App Runner as UPLOADS_BUCKET). Region and credentials come from the default
+    # AWS SDK chain (AWS_REGION + instance role in prod), never from app config.
+    uploads_bucket: str = ""
+    # Lifetime of presigned GET URLs handed to the browser. 0 disables redirects
+    # and streams object bytes through the API instead.
+    uploads_signed_url_ttl_seconds: int = 300
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
@@ -37,6 +46,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def uploads_use_s3(self) -> bool:
+        return bool(self.uploads_bucket.strip())
 
     @property
     def session_cookie_secure(self) -> bool:

@@ -1,11 +1,8 @@
-import uuid
-from pathlib import Path
+import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import Ingredient, Meal, User
@@ -20,6 +17,17 @@ from app.services.meal_generator import (
     format_ingredients_used,
     generate_meal_from_ingredients,
 )
+from app.storage import (
+    MEALS_PREFIX,
+    StorageError,
+    build_object_key,
+    delete_quietly,
+    get_storage,
+    resolve_photo_key,
+    serve_object,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/meals", tags=["meals"])
 
@@ -44,8 +52,8 @@ def _get_meal_for_user(meal_id: str, current_user: User, db: Session) -> Meal:
     return meal
 
 
-def _meal_photo_path(user_id: str, filename: str) -> Path:
-    return Path(settings.meal_upload_dir) / user_id / filename
+def _meal_photo_key(user_id: str, stored_value: str) -> str:
+    return resolve_photo_key(MEALS_PREFIX, user_id, stored_value)
 
 
 def _store_meal_photo_bytes(
@@ -53,20 +61,22 @@ def _store_meal_photo_bytes(
     meal: Meal,
     contents: bytes,
     filename: str,
+    content_type: str | None = None,
 ) -> None:
-    upload_root = Path(settings.meal_upload_dir) / current_user.id
-    upload_root.mkdir(parents=True, exist_ok=True)
+    object_key = build_object_key(MEALS_PREFIX, current_user.id, filename)
+    try:
+        get_storage().put(object_key, contents, content_type=content_type)
+    except StorageError as exc:
+        logger.exception("Failed to store meal photo %s", object_key)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to store the photo right now. Please try again.",
+        ) from exc
 
     if meal.photo_filename:
-        existing = _meal_photo_path(current_user.id, meal.photo_filename)
-        if existing.exists():
-            existing.unlink()
+        delete_quietly(_meal_photo_key(current_user.id, meal.photo_filename))
 
-    safe_name = Path(filename).name
-    stored_name = f"{uuid.uuid4().hex}_{safe_name}"
-    destination = upload_root / stored_name
-    destination.write_bytes(contents)
-    meal.photo_filename = stored_name
+    meal.photo_filename = object_key
 
 
 def _finalize_meal_to_cookbook(
@@ -79,9 +89,7 @@ def _finalize_meal_to_cookbook(
     response = meal_response(meal)
 
     if meal.photo_filename:
-        meal_photo = _meal_photo_path(current_user.id, meal.photo_filename)
-        if meal_photo.exists():
-            meal_photo.unlink()
+        delete_quietly(_meal_photo_key(current_user.id, meal.photo_filename))
 
     db.delete(meal)
     db.commit()
@@ -194,7 +202,13 @@ async def complete_meal(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Upload a valid image file.",
             )
-        _store_meal_photo_bytes(current_user, meal, contents, file.filename)
+        _store_meal_photo_bytes(
+            current_user,
+            meal,
+            contents,
+            file.filename,
+            content_type=file.content_type,
+        )
     elif not skip_photo:
         try:
             image_bytes = generate_meal_image(meal)
@@ -208,6 +222,7 @@ async def complete_meal(
             meal,
             image_bytes,
             f"{meal.name.replace(' ', '_').lower()[:40] or 'meal'}.png",
+            content_type="image/png",
         )
 
     db.commit()
@@ -242,15 +257,13 @@ def get_meal_photo(
     meal_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> FileResponse:
+) -> Response:
     meal = _get_meal_for_user(meal_id, current_user, db)
 
     if not meal.photo_filename:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found.")
 
-    photo_path = _meal_photo_path(current_user.id, meal.photo_filename)
-
-    if not photo_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found.")
-
-    return FileResponse(photo_path)
+    return serve_object(
+        _meal_photo_key(current_user.id, meal.photo_filename),
+        not_found_detail="Photo not found.",
+    )
