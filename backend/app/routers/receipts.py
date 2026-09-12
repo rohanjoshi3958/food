@@ -15,7 +15,11 @@ from app.schemas import (
     IngredientResponse,
     ReceiptResponse,
 )
-from app.services.ingredients import create_ingredient
+from app.services.ingredients import (
+    AmbiguousPantryMatchError,
+    canonicalize_draft_items,
+    create_ingredient,
+)
 from app.services.ingredient_merge import merge_draft_items
 from app.services.receipt_analyzer import (
     ReceiptAnalysisError,
@@ -395,28 +399,51 @@ def confirm_receipt(
     for existing in list(receipt.ingredients):
         db.delete(existing)
 
+    food_payloads = [
+        item.model_dump() for item in payload.items if item.is_food
+    ]
+    # Canonicalize names before merge so abbreviation/plural variants collapse.
+    canonicalized_payloads = canonicalize_draft_items(db, current_user, food_payloads)
     merged_items = [
         DraftIngredientItem.model_validate(item)
-        for item in merge_draft_items(
-            [item.model_dump() for item in payload.items if item.is_food]
-        )
+        for item in merge_draft_items(canonicalized_payloads)
     ]
 
     for item in merged_items:
         _validate_draft_item(item)
 
+    ambiguous_drafts: list[dict] = []
     try:
         for item in merged_items:
-            create_ingredient(db, current_user, item, receipt_id=receipt.id)
+            try:
+                create_ingredient(
+                    db,
+                    current_user,
+                    item,
+                    receipt_id=receipt.id,
+                    allow_llm_merge=True,
+                )
+            except AmbiguousPantryMatchError as amb:
+                # Keep ambiguous rows pending instead of inserting duplicates.
+                draft = amb.draft_item.model_dump()
+                draft["ingredient_name"] = amb.canonical_name or amb.ingredient_name
+                ambiguous_drafts.append(draft)
     except ReceiptAnalysisError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
 
-    receipt.analysis_status = "completed"
-    receipt.draft_items = None
-    receipt.analysis_error = None
+    if ambiguous_drafts:
+        receipt.analysis_status = "pending_review"
+        receipt.draft_items = ambiguous_drafts
+        receipt.analysis_error = (
+            "Some ingredients matched more than one pantry item and need review."
+        )
+    else:
+        receipt.analysis_status = "completed"
+        receipt.draft_items = None
+        receipt.analysis_error = None
 
     db.commit()
     db.refresh(receipt)

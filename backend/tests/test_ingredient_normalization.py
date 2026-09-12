@@ -169,11 +169,8 @@ class TestMatchIngredientNames:
         result = match_ingredient_names(
             "Chicken", "Chicken Breast", require_high_confidence=True
         )
-        assert result.confidence in (
-            MatchConfidence.AMBIGUOUS,
-            MatchConfidence.MEDIUM,
-            MatchConfidence.NO_MATCH,
-        )
+        assert result is not None
+        assert result.confidence == MatchConfidence.AMBIGUOUS
 
     def test_empty_source(self):
         result = match_ingredient_names("", "Chicken Breast")
@@ -224,8 +221,8 @@ class TestFindMatchingIngredient:
         ]
         matched_id, result = find_matching_ingredient_with_confidence("Rice", candidates)
         assert matched_id is None
-        if result:
-            assert result.confidence == MatchConfidence.AMBIGUOUS
+        assert result is not None
+        assert result.confidence == MatchConfidence.AMBIGUOUS
 
     def test_empty_candidates(self):
         matched_id, _result = find_matching_ingredient_with_confidence(
@@ -333,11 +330,21 @@ class TestMatchIngredientToPantry:
         assert result.match_id is None
         assert result.ambiguous is False
 
-    def test_empty_pantry_skips_llm(self):
+    def test_empty_pantry_still_requests_canonical_name(self):
         with patch("app.services.receipt_analyzer._get_client") as mock_client:
+            mock_client.return_value.messages.create.return_value.content = [
+                MagicMock(
+                    type="text",
+                    text=(
+                        '{"match_id": null, "ambiguous": false, '
+                        '"canonical_name": "Chicken Breast"}'
+                    ),
+                )
+            ]
             result = match_ingredient_to_pantry("CHKN BRST", "lb", [])
-        mock_client.assert_not_called()
+        mock_client.assert_called_once()
         assert result.match_id is None
+        assert result.canonical_name == "Chicken Breast"
 
     @patch("app.services.receipt_analyzer._get_client")
     def test_clear_match_returns_id(self, mock_get_client):
@@ -499,7 +506,9 @@ class TestCreateIngredientLlmMatch:
                 canonical_name="Chicken Breast",
             ),
         ):
-            result = create_ingredient(test_db, test_user, item)
+            result = create_ingredient(
+                test_db, test_user, item, allow_llm_merge=True
+            )
 
         assert result.id == "ing-chicken"
         assert result.quantity == "3"
@@ -551,12 +560,14 @@ class TestCreateIngredientLlmMatch:
                 canonical_name="Tomato",
             ),
         ):
-            result = create_ingredient(test_db, test_user, item)
+            result = create_ingredient(
+                test_db, test_user, item, allow_llm_merge=True
+            )
 
         assert result.id == "ing-tomato"
         assert result.quantity == "5"
 
-    def test_creates_new_when_llm_ambiguous(self, test_db, test_user):
+    def test_raises_when_llm_ambiguous(self, test_db, test_user):
         from app.models import Ingredient
         from app.schemas import DraftIngredientItem
         from app.services.ingredients import create_ingredient
@@ -598,6 +609,9 @@ class TestCreateIngredientLlmMatch:
             calories=100,
         )
 
+        from app.services.ingredients import AmbiguousPantryMatchError
+        import pytest
+
         with patch(
             "app.services.ingredients.check_ingredient_unit",
             return_value=None,
@@ -612,8 +626,63 @@ class TestCreateIngredientLlmMatch:
                 canonical_name="Rice",
             ),
         ):
-            result = create_ingredient(test_db, test_user, item)
+            with pytest.raises(AmbiguousPantryMatchError):
+                create_ingredient(test_db, test_user, item, allow_llm_merge=True)
 
-        assert result.id not in {"ing-brown", "ing-white"}
-        assert result.name == "Rice"
-        assert test_db.query(Ingredient).count() == 3
+        assert test_db.query(Ingredient).count() == 2
+
+    def test_manual_path_does_not_auto_merge_llm_match(self, test_db, test_user):
+        from app.models import Ingredient
+        from app.schemas import DraftIngredientItem
+        from app.services.ingredients import create_ingredient
+        from app.services.receipt_analyzer import ParsedReceiptItem
+
+        test_db.add(
+            Ingredient(
+                id="ing-chicken",
+                user_id=test_user.id,
+                name="Chicken Breast",
+                quantity="1",
+                unit="lb",
+            )
+        )
+        test_db.commit()
+
+        item = DraftIngredientItem(
+            ingredient_name="CHKN BRST",
+            store_item_name="CHKN BRST",
+            quantity="2",
+            unit="lb",
+            is_manual=True,
+        )
+        estimated = ParsedReceiptItem(
+            store_item_name="CHKN BRST",
+            ingredient_name="CHKN BRST",
+            recognized=True,
+            quantity="2",
+            unit="lb",
+            calories=120,
+        )
+
+        with patch(
+            "app.services.ingredients.check_ingredient_unit",
+            return_value=None,
+        ), patch(
+            "app.services.ingredients.estimate_ingredient_nutrition",
+            return_value=estimated,
+        ), patch(
+            "app.services.ingredients.match_ingredient_to_pantry",
+            return_value=PantryMatchResult(
+                match_id="ing-chicken",
+                ambiguous=False,
+                canonical_name="Chicken Breast",
+            ),
+        ):
+            result = create_ingredient(
+                test_db, test_user, item, allow_llm_merge=False
+            )
+
+        assert result.id != "ing-chicken"
+        assert result.name == "Chicken Breast"
+        assert test_db.query(Ingredient).count() == 2
+

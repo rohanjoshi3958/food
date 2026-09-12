@@ -309,9 +309,8 @@ def match_ingredient_to_pantry(
         if item.get("id") is not None
     }
 
-    if not pantry_items:
-        return PantryMatchResult(canonical_name=None)
-
+    # Always ask the LLM for a canonical display name, even when the pantry is
+    # empty. match_id must stay null when there are no candidates.
     client = _get_client()
     message = client.messages.create(
         model=RECEIPT_ANTHROPIC_MODEL,
@@ -341,7 +340,7 @@ def match_ingredient_to_pantry(
         return PantryMatchResult()
 
     match_id = _as_optional_str(payload.get("match_id"))
-    if match_id is not None and match_id not in valid_ids:
+    if not valid_ids or (match_id is not None and match_id not in valid_ids):
         match_id = None
 
     ambiguous = payload.get("ambiguous") is True

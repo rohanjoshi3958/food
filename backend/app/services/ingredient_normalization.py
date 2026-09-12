@@ -221,8 +221,8 @@ def find_matching_ingredient_with_confidence(
     require_high_confidence: bool = True,
 ) -> tuple[str | None, MatchResult | None]:
     """Find the best matching ingredient from a list of candidates (cheap local)."""
-    best_match: tuple[str | None, MatchResult | None] = (None, None)
     high_confidence_matches: list[tuple[str, MatchResult]] = []
+    medium_confidence_matches: list[tuple[str, MatchResult]] = []
     ambiguous_matches: list[tuple[str, MatchResult]] = []
 
     for candidate_id, candidate_name in candidates:
@@ -235,6 +235,8 @@ def find_matching_ingredient_with_confidence(
 
         if result.confidence == MatchConfidence.HIGH:
             high_confidence_matches.append((candidate_id, result))
+        elif result.confidence == MatchConfidence.MEDIUM:
+            medium_confidence_matches.append((candidate_id, result))
         elif result.confidence == MatchConfidence.AMBIGUOUS:
             ambiguous_matches.append((candidate_id, result))
 
@@ -254,7 +256,39 @@ def find_matching_ingredient_with_confidence(
             ),
         )
 
-    if require_high_confidence and ambiguous_matches:
+    if require_high_confidence:
+        if ambiguous_matches:
+            return (
+                None,
+                MatchResult(
+                    confidence=MatchConfidence.AMBIGUOUS,
+                    source_normalized=normalize_ingredient_name(source_name).canonical,
+                    target_normalized="",
+                    reason=(
+                        "Ambiguous matches need user review: "
+                        f"{[c[1].target_normalized for c in ambiguous_matches]}"
+                    ),
+                ),
+            )
+        return (None, None)
+
+    if len(medium_confidence_matches) == 1:
+        return medium_confidence_matches[0]
+    if len(medium_confidence_matches) > 1:
+        return (
+            None,
+            MatchResult(
+                confidence=MatchConfidence.AMBIGUOUS,
+                source_normalized=normalize_ingredient_name(source_name).canonical,
+                target_normalized="",
+                reason=(
+                    "Multiple medium-confidence matches found: "
+                    f"{[c[1].target_normalized for c in medium_confidence_matches]}"
+                ),
+            ),
+        )
+
+    if ambiguous_matches:
         return (
             None,
             MatchResult(
@@ -268,7 +302,7 @@ def find_matching_ingredient_with_confidence(
             ),
         )
 
-    return best_match
+    return (None, None)
 
 
 def clean_display_name(name: str) -> str:

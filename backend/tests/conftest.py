@@ -273,24 +273,38 @@ def build_receipt_flow_side_effect(
     confirm_nutrition: list[dict] | None = None,
     *,
     existing_pantry_items: int = 0,
+    confirm_create_match_flags: list[bool] | None = None,
 ) -> list[Mock]:
     """Anthropic calls: receipt scan, upload enrichment, then confirm checks.
 
-    Confirm sequence per food item: unit-check, nutrition, and (when the
-    pantry is already non-empty) pantry match.
+    Confirm sequence:
+    1. canonicalize_draft_items → one pantry-match call per food item
+    2. per food item create: unit-check, nutrition, and pantry-match when
+       ``confirm_create_match_flags[i]`` is True (default: always, because an
+       empty or unit-filtered pantry still requests a canonical name).
     """
     confirm_nutrition = (
         confirm_nutrition if confirm_nutrition is not None else upload_nutrition
     )
+    if confirm_create_match_flags is None:
+        confirm_create_match_flags = [True] * len(confirm_nutrition)
+    if len(confirm_create_match_flags) != len(confirm_nutrition):
+        raise ValueError(
+            "confirm_create_match_flags must match confirm_nutrition length"
+        )
+
     side_effect = [
         create_mock_anthropic_response(json.dumps(receipt_response)),
         *[mock_nutrition_response(estimate) for estimate in upload_nutrition],
     ]
-    pantry_size = existing_pantry_items
-    for estimate in confirm_nutrition:
+    # canonicalize_draft_items always requests a pantry match / canonical name.
+    for _estimate in confirm_nutrition:
+        side_effect.append(mock_pantry_match_response())
+    for estimate, needs_create_match in zip(
+        confirm_nutrition, confirm_create_match_flags, strict=True
+    ):
         side_effect.append(mock_unit_check_response())
         side_effect.append(mock_nutrition_response(estimate))
-        if pantry_size > 0:
+        if needs_create_match:
             side_effect.append(mock_pantry_match_response())
-        pantry_size += 1
     return side_effect

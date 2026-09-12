@@ -23,9 +23,10 @@
 # misc
 .DS_Store
 *.pem
-# macOS Finder duplicate copies (e.g. "package 2.json")
-*[[:space:]]2.*
-*[[:space:]]2
+# macOS Finder "Copy" duplicates (e.g. "package copy.json")
+# Avoid broad "* 2" globs that hide legitimate names like "step 2.sql".
+*[[:space:]][Cc]opy
+*[[:space:]][Cc]opy.*
 
 # debug
 npm-debug.log*

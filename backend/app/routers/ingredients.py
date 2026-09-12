@@ -19,7 +19,7 @@ from app.services.ingredient_deduction import (
     remaining_servings,
 )
 from app.services.ingredient_merge import _merge_key, _sum_quantities
-from app.services.ingredients import create_ingredient
+from app.services.ingredients import AmbiguousPantryMatchError, create_ingredient
 from app.services.receipt_analyzer import ReceiptAnalysisError, check_ingredient_unit
 from app.validation import PACKAGE_UNITS, validate_ingredient_input
 
@@ -139,7 +139,12 @@ def create_manual_ingredient(
     )
 
     try:
-        return create_ingredient(db, current_user, item)
+        return create_ingredient(db, current_user, item, allow_llm_merge=False)
+    except AmbiguousPantryMatchError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except ReceiptAnalysisError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
