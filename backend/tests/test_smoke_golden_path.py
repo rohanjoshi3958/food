@@ -129,17 +129,27 @@ EXPECTED_COMPLETE_CALLS = 0  # skip_photo=true must not call Claude or OpenAI
 # ---------------------------------------------------------------------------
 
 
-def _prompt_text(kwargs: dict) -> str:
-    """Return the last user message as text (image blocks stripped)."""
-    messages = kwargs.get("messages") or []
-    if not messages:
-        return ""
-    content = messages[-1].get("content", "")
+def _content_text(content) -> str:
     if isinstance(content, str):
         return content
-    return " ".join(
-        block.get("text", "") for block in content if block.get("type") == "text"
-    )
+    if isinstance(content, list):
+        return " ".join(
+            block.get("text", "") for block in content if block.get("type") == "text"
+        )
+    return ""
+
+
+def _prompt_text(kwargs: dict) -> str:
+    """System prompt (if any) plus the last user message, as text.
+
+    Routing on both keeps the fake valid whether prompt instructions live in
+    the user turn (today) or in a cached ``system`` prefix (FOOD-56).
+    """
+    parts = [_content_text(kwargs.get("system", ""))]
+    messages = kwargs.get("messages") or []
+    if messages:
+        parts.append(_content_text(messages[-1].get("content", "")))
+    return "\n".join(part for part in parts if part)
 
 
 def _has_image_block(kwargs: dict) -> bool:

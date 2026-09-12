@@ -127,7 +127,10 @@ class TestCallBudget:
         kwargs = claude.messages.create.call_args.kwargs
         assert kwargs["model"] == MEAL_ANTHROPIC_MODEL
         assert kwargs["max_tokens"] == 4096
-        assert "system" not in kwargs, "no system prompt today (relevant to prompt caching)"
+        # The pantry (variable part) must be in the user turn, never in a
+        # cached system prefix, or caching would silently stop hitting.
+        user_turn = kwargs["messages"][0]["content"]
+        assert "Chicken Breast" in user_turn and "maximum available: 2 lb" in user_turn
 
     def test_out_of_range_meal_triggers_one_retry_with_feedback(self, claude):
         _script(claude, TOO_LIGHT, IN_RANGE)
