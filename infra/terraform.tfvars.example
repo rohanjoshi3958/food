@@ -1,0 +1,44 @@
+# Copy to terraform.tfvars (git-ignored) and adjust. Never put secret values
+# here - API keys go into Secrets Manager, the GitHub token goes into
+# TF_VAR_github_access_token.
+
+region      = "us-east-1"
+project     = "food"
+environment = "prod"
+
+# --- Network -------------------------------------------------------------
+vpc_cidr           = "10.40.0.0/16"
+az_count           = 2
+single_nat_gateway = true
+
+# --- Database ------------------------------------------------------------
+db_instance_class      = "db.t4g.micro"
+db_allocated_storage   = 20
+db_multi_az            = false
+db_deletion_protection = true
+
+# --- Backend (App Runner) -----------------------------------------------
+# First apply: false (ECR repo is empty). After pushing an image: true.
+create_app_runner_service = false
+backend_image_tag         = "latest"
+backend_cpu               = "1024"
+backend_memory            = "2048"
+
+# --- Frontend (Amplify) -------------------------------------------------
+create_amplify_app = true
+github_repository  = "https://github.com/rohanjoshi3958/food"
+amplify_branch     = "main"
+
+# Uncomment once a domain is ready; this also lets Terraform derive
+# FRONTEND_URL / CORS_ORIGINS on the first apply (FOOD-50).
+# frontend_custom_domain        = "example.com"
+# frontend_custom_domain_prefix = "app"
+
+# Without a custom domain, set these after the first apply from
+# `terraform output frontend_url` and apply again.
+# frontend_url = "https://main.d1234abcd.amplifyapp.com"
+# cors_origins = ["https://main.d1234abcd.amplifyapp.com"]
+
+# FOOD-48 option B (edge rewrite). Leave false unless you accept the ~30 s
+# Amplify proxy limit - see README.
+amplify_enable_api_rewrite = false
