@@ -332,6 +332,7 @@ class TestCrossUserAccess:
         assert client.delete(f"/api/ingredients/{ingredient.id}").status_code == 404
         assert client.get(f"/api/meals/{meal.id}").status_code == 404
         assert client.delete(f"/api/cookbook/{entry.id}").status_code == 404
+        assert client.get(f"/api/receipts/{receipt.id}").status_code == 404
         assert (
             client.patch(
                 f"/api/receipts/{receipt.id}/draft",

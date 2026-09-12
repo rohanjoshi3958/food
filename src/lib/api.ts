@@ -36,9 +36,7 @@ export async function readJsonResponse<T = unknown>(response: Response): Promise
     return JSON.parse(text) as T;
   } catch {
     if (text.startsWith("Internal Server Error")) {
-      throw new Error(
-        "The server timed out or restarted. Receipt analysis can take up to a minute — please try again.",
-      );
+      throw new Error("The server timed out or restarted. Please try again.");
     }
 
     throw new Error(text.slice(0, 300));
