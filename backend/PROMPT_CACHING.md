@@ -67,16 +67,34 @@ model's minimum (currently 512 tokens for Claude Opus 5, 1,024 for Claude
 Sonnet 5; check the
 [prompt caching docs](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
 for the current table). No error is returned; both cache counters are just
-`0`. Several prefixes here (`UNIT_CHECK_PROMPT`, `PROMPT_SYSTEM`) are well
-below that and will not cache today. **Do not pad prompts to reach the
-minimum** — that changes prompt semantics, which this spike explicitly
-avoids. The breakpoints are still correct and become effective as soon as a
-prompt grows past the threshold or Anthropic lowers it.
+`0`.
+
+Current prefix sizes versus those minimums (rough, ~4 chars/token):
+
+| Prefix | Model minimum | Status today |
+| --- | --- | --- |
+| `UNIT_CHECK_PROMPT` | 512 (Opus 5) | well below — will not cache |
+| `PANTRY_MATCH_PROMPT` | 512 (Opus 5) | below — will not cache |
+| `NUTRITION_ESTIMATE_PROMPT` | 512 (Opus 5) | likely below — will not cache |
+| `PROMPT_SYSTEM` (meal image) | 1,024 (Sonnet 5) | well below — will not cache |
+| `RECEIPT_ANALYSIS_PROMPT` | 512 (Opus 5) | near the line — verify in logs |
+| `MEAL_GENERATION_PROMPT` (rendered) | 1,024 (Sonnet 5) | below — verify in logs |
+
+**Expect near-zero `cache_read_input_tokens` across the board until these
+prefixes grow past their model's minimum or Anthropic lowers the
+minimums.** That is the expected state of this spike, not a regression.
+**Do not pad prompts to reach the minimum** — that changes prompt
+semantics, which this spike explicitly avoids. The breakpoints are already
+in the right place and start paying off the moment a prefix crosses the
+threshold.
 
 ## Verifying hits
 
 `create_cached_message` logs one INFO line per call from the
-`app.services.anthropic_cache` logger:
+`app.services.anthropic_cache` logger (`app/main.py` calls
+`logging.basicConfig(level=logging.INFO)` so these lines are emitted under
+uvicorn's default logging, which otherwise only configures its own
+loggers):
 
 ```
 anthropic call_site=receipt.pantry_match input_tokens=143 output_tokens=41 cache_creation_input_tokens=0 cache_read_input_tokens=612
@@ -86,6 +104,20 @@ anthropic call_site=receipt.pantry_match input_tokens=143 output_tokens=41 cache
 - `cache_read_input_tokens > 0`: prefix was served from cache.
 - both `0` on repeated calls: prefix is below the minimum length, or
   something volatile sits before the breakpoint.
+
+### Concurrent bursts write the cache more than once
+
+`_enrich_receipt_nutrition` fans out `estimate_ingredient_nutrition` over a
+`ThreadPoolExecutor` (up to 6 workers). Those parallel requests all start
+against a cold cache, so the *first wave* of a receipt scan will show
+`cache_creation_input_tokens > 0` on every in-flight call rather than one
+write followed by reads — a cache entry only becomes readable once its
+first response has started. Later waves within the 5-minute TTL (remaining
+items on the same receipt, the confirm-step unit-check / nutrition /
+pantry-match calls, the next receipt) are where reads should appear. When
+judging hit rate, count reads across the whole receipt flow, not the first
+`N` parallel calls. Serialising the burst to force a single write is a
+latency trade-off and is out of scope here.
 
 This logging is intentionally tiny. Cost / hit-rate dashboards are FOOD-54
 and should wrap `create_cached_message` rather than the individual call
