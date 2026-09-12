@@ -89,6 +89,8 @@ def _find_matching_pantry_item(
     - Plurals: Chicken breasts → Chicken breast
     - Qualifiers: ORG CHICKEN BREAST matches Chicken Breast
     """
+    from app.services.ingredient_deduction import normalize_unit
+
     target_key = _merge_key(name, unit)
     pantry = db.query(Ingredient).filter(Ingredient.user_id == user.id).all()
 
@@ -96,7 +98,16 @@ def _find_matching_pantry_item(
         if _merge_key(ingredient.name, ingredient.unit) == target_key:
             return (ingredient, False)
 
-    candidates = [(ingredient.id, ingredient.name) for ingredient in pantry]
+    # Only consider unit-compatible pantry rows for name matching so an
+    # exact name with an incompatible unit cannot beat a high-confidence
+    # name match that shares the target unit.
+    target_unit = normalize_unit(unit) or ""
+    unit_compatible = [
+        ingredient
+        for ingredient in pantry
+        if (normalize_unit(ingredient.unit) or "") == target_unit
+    ]
+    candidates = [(ingredient.id, ingredient.name) for ingredient in unit_compatible]
     matched_id, match_result = find_matching_ingredient_with_confidence(
         name, candidates, require_high_confidence=True
     )
@@ -106,14 +117,9 @@ def _find_matching_pantry_item(
 
     if matched_id and match_result:
         if match_result.confidence in (MatchConfidence.EXACT, MatchConfidence.HIGH):
-            from app.services.ingredient_deduction import normalize_unit
-
-            target_unit = normalize_unit(unit) or ""
-            for ingredient in pantry:
+            for ingredient in unit_compatible:
                 if ingredient.id == matched_id:
-                    pantry_unit = normalize_unit(ingredient.unit) or ""
-                    if pantry_unit == target_unit:
-                        return (ingredient, False)
+                    return (ingredient, False)
 
     return (None, False)
 

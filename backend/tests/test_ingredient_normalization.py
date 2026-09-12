@@ -47,7 +47,7 @@ class TestRemovePunctuation:
     """Tests for punctuation removal."""
 
     def test_remove_periods(self):
-        assert _remove_punctuation("chicken.breast") == "chickenbreast"
+        assert _remove_punctuation("chicken.breast") == "chicken breast"
 
     def test_remove_commas(self):
         assert _remove_punctuation("salt, pepper") == "salt pepper"
@@ -279,11 +279,8 @@ class TestMatchIngredientNames:
         result = match_ingredient_names(
             "Chicken", "Chicken Breast", require_high_confidence=True
         )
-        assert result.confidence in (
-            MatchConfidence.AMBIGUOUS,
-            MatchConfidence.MEDIUM,
-            MatchConfidence.NO_MATCH,
-        )
+        assert result is not None
+        assert result.confidence == MatchConfidence.AMBIGUOUS
 
     def test_empty_source(self):
         result = match_ingredient_names("", "Chicken Breast")
@@ -336,8 +333,8 @@ class TestFindMatchingIngredient:
         ]
         matched_id, result = find_matching_ingredient_with_confidence("Rice", candidates)
         assert matched_id is None
-        if result:
-            assert result.confidence == MatchConfidence.AMBIGUOUS
+        assert result is not None
+        assert result.confidence == MatchConfidence.AMBIGUOUS
 
     def test_empty_candidates(self):
         matched_id, result = find_matching_ingredient_with_confidence(
@@ -392,7 +389,7 @@ class TestGroceryReceiptVariations:
             # Ground meat variations
             ("GRND BF", "ground beef"),
             ("GROUND BEEF", "ground beef"),
-            ("GRD BEEF 80/20", "ground beef 8020"),
+            ("GRD BEEF 80/20", "ground beef 80 20"),
             ("LEAN GROUND BEEF", "ground beef"),
             ("GRND TRKY", "ground turkey"),
             # Produce variations
@@ -508,7 +505,8 @@ class TestAmbiguousMatchHandling:
         result = match_ingredient_names(
             "Chicken", "Chicken Breast", require_high_confidence=True
         )
-        assert result.confidence != MatchConfidence.HIGH
+        assert result is not None
+        assert result.confidence == MatchConfidence.AMBIGUOUS
 
     def test_multiple_candidates_ambiguous(self):
         candidates = [
@@ -518,6 +516,8 @@ class TestAmbiguousMatchHandling:
         ]
         matched_id, result = find_matching_ingredient_with_confidence("Rice", candidates)
         assert matched_id is None
+        assert result is not None
+        assert result.confidence == MatchConfidence.AMBIGUOUS
 
     def test_distinct_ingredient_not_ambiguous(self):
         candidates = [
@@ -548,3 +548,43 @@ class TestUnitCompatibility:
         key1 = compute_canonical_key("Chicken Breast", None)
         key2 = compute_canonical_key("Chicken Breast", None)
         assert key1 == key2
+
+
+class TestCodeRabbitRegressions:
+    """Regressions for CodeRabbit review findings on FOOD-34."""
+
+    def test_separator_punctuation_preserves_tokens(self):
+        dotted = normalize_ingredient_name("CHKN.BRST")
+        slashed = normalize_ingredient_name("CHKN/BRST")
+        assert dotted.canonical == "chicken breast"
+        assert slashed.canonical == "chicken breast"
+
+    def test_cookie_plural_does_not_become_cooky(self):
+        assert _singularize("cookies") == "cookie"
+        assert _singularize("berries") == "berry"
+        assert normalize_ingredient_name("Cookies").canonical == "cookie"
+        assert normalize_ingredient_name("Cookie").canonical == "cookie"
+
+    def test_display_name_preserves_percent_and_slash(self):
+        assert clean_display_name("MLK 2%") == "Milk 2%"
+        assert clean_display_name("GROUND BEEF 80/20") == "Ground Beef 80/20"
+
+    def test_medium_match_returned_when_allowed(self):
+        matched_id, result = find_matching_ingredient_with_confidence(
+            "Chicken",
+            [("1", "Chicken Breast")],
+            require_high_confidence=False,
+        )
+        assert matched_id == "1"
+        assert result is not None
+        assert result.confidence == MatchConfidence.MEDIUM
+
+    def test_multiple_medium_matches_are_ambiguous(self):
+        matched_id, result = find_matching_ingredient_with_confidence(
+            "Chicken",
+            [("1", "Chicken Breast"), ("2", "Chicken Thigh")],
+            require_high_confidence=False,
+        )
+        assert matched_id is None
+        assert result is not None
+        assert result.confidence == MatchConfidence.AMBIGUOUS

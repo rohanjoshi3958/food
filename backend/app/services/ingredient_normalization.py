@@ -224,7 +224,6 @@ ABBREVIATION_MAP: dict[str, str] = {
     "appls": "apples",
     "apl": "apple",
     "apls": "apples",
-    "orng": "orange",
     "orngs": "oranges",
     "strwb": "strawberry",
     "strwbry": "strawberry",
@@ -336,7 +335,6 @@ ABBREVIATION_MAP: dict[str, str] = {
     "unswt": "unsweetened",
     "unswtnd": "unsweetened",
     "swtnd": "sweetened",
-    "swt": "sweet",
     "salted": "salted",
     "unsalt": "unsalted",
     "unsltd": "unsalted",
@@ -456,10 +454,40 @@ def _normalize_whitespace(text: str) -> str:
 
 
 def _remove_punctuation(text: str) -> str:
-    """Remove punctuation except hyphens between words."""
-    result = re.sub(r"[^\w\s-]", "", text)
-    result = re.sub(r"(?<!\w)-|-(?!\w)", "", result)
-    return result
+    """Normalize punctuation for matching while preserving token boundaries.
+
+    Separator punctuation (periods, slashes, commas, etc.) becomes whitespace so
+    ``CHKN.BRST`` and ``CHKN/BRST`` still expand as two tokens. Apostrophes are
+    removed so contractions stay concatenated (``joe's`` → ``joes``). Hyphens
+    between words are kept.
+    """
+    result = re.sub(r"'", "", text)
+    result = re.sub(r"[^\w\s-]", " ", result)
+    result = re.sub(r"(?<!\w)-|-(?!\w)", " ", result)
+    return _normalize_whitespace(result)
+
+
+def _remove_punctuation_for_display(text: str) -> str:
+    """Light punctuation cleanup for display names.
+
+    Preserves meaningful characters like ``%`` and ``/`` so labels such as
+    ``MLK 2%`` and ``GROUND BEEF 80/20`` stay readable.
+    """
+    result = re.sub(r"'", "", text)
+    result = re.sub(r"[^\w\s%/-]", " ", result)
+    result = re.sub(r"(?<!\w)-|-(?!\w)", " ", result)
+    return _normalize_whitespace(result)
+
+
+# Grocery nouns whose plural ends in -ies but singular ends in -ie (not -y).
+_IES_TO_IE_EXCEPTIONS: set[str] = {
+    "cookies",
+    "brownies",
+    "pies",
+    "smoothies",
+    "veggies",
+    "freebies",
+}
 
 
 def _singularize(word: str) -> str:
@@ -470,6 +498,9 @@ def _singularize(word: str) -> str:
     if len(word) <= 2:
         return word
     if word_lower.endswith("ies") and len(word) > 3:
+        # cookies → cookie (not cooky); berries → berry
+        if word_lower in _IES_TO_IE_EXCEPTIONS:
+            return word[:-1]
         return word[:-3] + "y"
     if word_lower.endswith("es"):
         if word_lower.endswith(("sses", "xes", "ches", "shes", "zes")):
@@ -746,8 +777,8 @@ def find_matching_ingredient_with_confidence(
         Returns (None, MatchResult) with AMBIGUOUS confidence if multiple
         potential matches are found.
     """
-    best_match: tuple[str | None, MatchResult | None] = (None, None)
     high_confidence_matches: list[tuple[str, MatchResult]] = []
+    medium_confidence_matches: list[tuple[str, MatchResult]] = []
     ambiguous_matches: list[tuple[str, MatchResult]] = []
 
     for candidate_id, candidate_name in candidates:
@@ -760,19 +791,24 @@ def find_matching_ingredient_with_confidence(
 
         if result.confidence == MatchConfidence.HIGH:
             high_confidence_matches.append((candidate_id, result))
+        elif result.confidence == MatchConfidence.MEDIUM:
+            medium_confidence_matches.append((candidate_id, result))
         elif result.confidence == MatchConfidence.AMBIGUOUS:
             ambiguous_matches.append((candidate_id, result))
 
     if len(high_confidence_matches) == 1:
         return high_confidence_matches[0]
-    elif len(high_confidence_matches) > 1:
+    if len(high_confidence_matches) > 1:
         return (
             None,
             MatchResult(
                 confidence=MatchConfidence.AMBIGUOUS,
                 source_normalized=normalize_ingredient_name(source_name).canonical,
                 target_normalized="",
-                reason=f"Multiple high-confidence matches found: {[c[1].target_normalized for c in high_confidence_matches]}",
+                reason=(
+                    "Multiple high-confidence matches found: "
+                    f"{[c[1].target_normalized for c in high_confidence_matches]}"
+                ),
             ),
         )
 
@@ -784,25 +820,60 @@ def find_matching_ingredient_with_confidence(
                     confidence=MatchConfidence.AMBIGUOUS,
                     source_normalized=normalize_ingredient_name(source_name).canonical,
                     target_normalized="",
-                    reason=f"Ambiguous matches need user review: {[c[1].target_normalized for c in ambiguous_matches]}",
+                    reason=(
+                        "Ambiguous matches need user review: "
+                        f"{[c[1].target_normalized for c in ambiguous_matches]}"
+                    ),
                 ),
             )
+        return (None, None)
 
-    return best_match
+    if len(medium_confidence_matches) == 1:
+        return medium_confidence_matches[0]
+    if len(medium_confidence_matches) > 1:
+        return (
+            None,
+            MatchResult(
+                confidence=MatchConfidence.AMBIGUOUS,
+                source_normalized=normalize_ingredient_name(source_name).canonical,
+                target_normalized="",
+                reason=(
+                    "Multiple medium-confidence matches found: "
+                    f"{[c[1].target_normalized for c in medium_confidence_matches]}"
+                ),
+            ),
+        )
+
+    if ambiguous_matches:
+        return (
+            None,
+            MatchResult(
+                confidence=MatchConfidence.AMBIGUOUS,
+                source_normalized=normalize_ingredient_name(source_name).canonical,
+                target_normalized="",
+                reason=(
+                    "Ambiguous matches need user review: "
+                    f"{[c[1].target_normalized for c in ambiguous_matches]}"
+                ),
+            ),
+        )
+
+    return (None, None)
 
 
 def clean_display_name(name: str) -> str:
     """Clean an ingredient name for display purposes.
 
     Unlike full normalization, this preserves useful information like
-    "organic" while fixing obvious issues like excessive whitespace
-    and expanding obvious abbreviations.
+    "organic" and meaningful punctuation such as ``%`` and ``/`` while
+    fixing obvious issues like excessive whitespace and expanding
+    obvious abbreviations.
     """
     if not name or not name.strip():
         return name
 
     cleaned = _normalize_whitespace(name)
-    cleaned = _remove_punctuation(cleaned)
+    cleaned = _remove_punctuation_for_display(cleaned)
     expanded, _ = _expand_abbreviations(cleaned)
     expanded = _normalize_whitespace(expanded)
 
