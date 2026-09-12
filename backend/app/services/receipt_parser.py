@@ -59,7 +59,9 @@ _HEADER_NOISE = re.compile(
 
 _SUMMARY_TOTAL = re.compile(r"^\s*\**\s*(grand\s+)?total\b", re.IGNORECASE)
 _SUMMARY_SUBTOTAL = re.compile(r"^\s*\**\s*sub\s*-?\s*total\b", re.IGNORECASE)
-_SUMMARY_TAX = re.compile(r"^\s*\**\s*(sales\s+)?tax\b|\btax\s+\d", re.IGNORECASE)
+_SUMMARY_TAX = re.compile(
+    r"^\s*\**\s*(sales\s+)?(tax|tx)\b|\b(tax|tx)\s+\d|\d\.\d+\s*%", re.IGNORECASE
+)
 _SUMMARY_OTHER = re.compile(
     r"\b(change|cash|visa|mastercard|master\s*card|amex|american\s+express|discover|debit|credit"
     r"|tender|balance|amount\s+due|payment|paid|approved|auth|account|card|chip|items?\s+sold"
@@ -71,9 +73,17 @@ _SUMMARY_OTHER = re.compile(
 _NON_FOOD_NAME = re.compile(
     r"\b(bag|bags|paper\s+bag|plastic\s+bag|bottle\s+dep(osit)?|crv|deposit|fee|coupon|cpn"
     r"|discount|disc|promo|md\s+disc|bag\s+credit|donation|gift\s+card|lottery|tobacco|cigarette"
-    r"|cig|battery|batteries|detergent|soap|shampoo|toothpaste|tissue|toilet\s+paper|paper\s+towel"
-    r"|foil|wrap|trash|napkin|diaper|wipes|deodorant|razor|vitamin|supplement|dog\s+food|cat\s+food"
-    r"|pet|litter|candle|light\s*bulb|magazine|greeting\s+card|floral|flowers)\b",
+    r"|cig|battery|batteries|detergent|soap|shampoo|toothpaste|tissues?|toilet\s+paper|paper\s+towels?"
+    r"|foil|wrap|trash|napkins?|diapers?|wipes|deodorant|razors?|vitamins?|supplements?|dog\s+food|cat\s+food"
+    r"|pet|litter|candles?|light\s*bulbs?|magazines?|greeting\s+cards?|floral|flowers)\b",
+    re.IGNORECASE,
+)
+
+# Store brands spelled out in full ("GOOD&GATHER EGGS", "GREAT VALUE MILK").
+_STORE_BRAND_WORDS = re.compile(
+    r"^(good\s*&\s*gather|great\s+value|kirkland(\s+signature)?|market\s+pantry|simply\s+balanced"
+    r"|365(\s+everyday\s+value)?|trader\s+joe'?s|o\s+organics|signature\s+select|private\s+selection"
+    r"|simple\s+truth|h-?e-?b|whole\s+foods|sprouts|publix|kroger|wegmans|meijer|aldi|target|walmart)\b\s*",
     re.IGNORECASE,
 )
 
@@ -262,9 +272,13 @@ ABBREVIATIONS: dict[str, str] = {
 _PRODUCE_HINT = re.compile(
     r"\b(banana|apple|orange|lemon|lime|avocado|tomato|potato|onion|pepper|grape|peach|pear|plum"
     r"|mango|cherry|cherries|berry|berries|melon|squash|zucchini|cucumber|carrot|broccoli|cauliflower"
-    r"|lettuce|spinach|kale|celery|garlic|ginger|corn|mushroom|cabbage|asparagus|grapefruit|kiwi|nectarine)s?\b",
+    r"|lettuce|spinach|kale|celery|garlic|ginger|corn|mushroom|cabbage|asparagus|grapefruit|kiwi|nectarine)(?:es|s)?\b",
     re.IGNORECASE,
 )
+
+# Store-brand prefixes that carry no meaning for the pantry (Great Value,
+# Kirkland Signature, Good & Gather, Market Pantry, Simply Balanced, ...).
+STORE_BRAND_PREFIXES = {"gv", "ks", "gg", "mp", "sb", "ht", "tj", "pl", "sig"}
 
 _LOWER_WORDS = {"and", "or", "of", "with", "in", "the", "a", "n"}
 
@@ -311,6 +325,41 @@ class ParseOutcome:
     lines: list[ParsedLine]
 
 
+# Frequent Tesseract confusions on thermal receipts.
+_OCR_OZ = re.compile(r"(?<=\d)\s*O?0Z\b", re.IGNORECASE)
+_OCR_DOLLAR = re.compile(r"(?<![A-Za-z0-9])S(?=\d{1,4}[.,]\d{2}\b)")
+_OCR_PRICE_L = re.compile(r"(?<![A-Za-z0-9])[lI](?=\d{0,3}[.,]\d{2}\b)")
+_OCR_WORD = re.compile(r"[A-Za-z0-9]{3,}")
+_DIGIT_TO_LETTER = str.maketrans({"0": "O", "1": "I", "3": "E", "4": "A", "5": "S", "8": "B"})
+
+
+def _fix_word(match: re.Match) -> str:
+    word = match.group(0)
+    letters = sum(ch.isalpha() for ch in word)
+    digits = len(word) - letters
+    # "T0TAL", "BNN4S", "0RG": a mostly-alphabetic word with a stray digit.
+    # Leave size tokens ("16OZ"), codes, and trailing counts ("BUTTER16") alone.
+    if (
+        digits == 0
+        or letters < 2
+        or digits * 2 > letters
+        or word[-1].isdigit()
+        or _SIZE_TOKEN.fullmatch(word)
+    ):
+        return word
+    return word.translate(_DIGIT_TO_LETTER)
+
+
+def clean_ocr_line(line: str) -> str:
+    """Fix character confusions that break size/price/summary patterns
+    ("320Z" -> "32 OZ", "S9.99" -> "$9.99", "l.48" -> "1.48", "T0TAL" -> "TOTAL")."""
+    line = _OCR_OZ.sub(" OZ", line)
+    line = _OCR_DOLLAR.sub("$", line)
+    line = _OCR_PRICE_L.sub("1", line)
+    line = _OCR_WORD.sub(_fix_word, line)
+    return line
+
+
 def _to_float(text: str) -> float | None:
     try:
         return float(text.replace(",", ".").replace(" ", ""))
@@ -342,13 +391,19 @@ def _clean_store_item_name(name: str) -> str:
 def expand_abbreviations(store_item_name: str) -> str:
     """Rule-based expansion of receipt shorthand into a readable grocery name."""
     text = _SIZE_TOKEN.sub(" ", store_item_name)
+    stripped = _STORE_BRAND_WORDS.sub("", text.strip())
+    if _letter_count(stripped) >= 2:
+        text = stripped
     text = re.sub(r"[^\w%'&/-]+", " ", text)
     words: list[str] = []
-    for raw in text.split():
+    raw_tokens = text.split()
+    for position, raw in enumerate(raw_tokens):
         token = raw.strip("-/'")
         if not token or token.isdigit():
             continue
         lowered = token.lower()
+        if position == 0 and len(raw_tokens) > 1 and lowered in STORE_BRAND_PREFIXES:
+            continue
         expansion = ABBREVIATIONS.get(lowered)
         if expansion:
             words.extend(expansion.split())
@@ -447,7 +502,7 @@ def _apply_modifier(target: ParsedLine, modifier: _Modifier) -> None:
 
 
 def parse_receipt_text(text: str) -> ParseOutcome:
-    raw_lines = [line.strip() for line in text.splitlines()]
+    raw_lines = [clean_ocr_line(line).strip() for line in text.splitlines()]
     lines = [line for line in raw_lines if line]
     diagnostics = ParseDiagnostics(line_count=len(lines))
 

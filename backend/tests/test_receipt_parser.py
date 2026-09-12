@@ -79,7 +79,7 @@ class TestLineItems:
         assert items["BANANAS"].quantity == "2.31"
         assert items["BANANAS"].unit == "lb"
         assert items["KIND BAR"].quantity == "2"
-        assert items["GV WHL MLK 1 GAL"].ingredient_name == "Gv Whole Milk"
+        assert items["GV WHL MLK 1 GAL"].ingredient_name == "Whole Milk"  # store-brand prefix dropped
         assert (items["GV WHL MLK 1 GAL"].quantity, items["GV WHL MLK 1 GAL"].unit) == ("1", "gallon")
         assert items["GRND BF 80/20"].ingredient_name == "Ground Beef 80/20"
         # Item codes are stripped from the store name.
@@ -108,6 +108,18 @@ class TestLineItems:
         item = _by_store_name(parse_receipt_text(SPLIT_COLUMN_TEXT).receipt)["AVOCADOS"]
         assert item.quantity == "1"
         assert item.unit is None
+
+    def test_plural_produce_is_recognized(self):
+        text = "FARM STAND\nTOMATOES 4.00\nPEACHES 6.50\nTOTAL 10.50\n"
+        outcome = parse_receipt_text(text)
+        assert all(item.unit is None for item in outcome.receipt.items)
+        assert outcome.diagnostics.missing_qty_unit_ratio == 1.0
+
+    def test_percentage_tax_line_is_not_an_item(self):
+        text = "TARGET\n2% MILK 1 GAL 3.19 F\nT = TX 8.2500% 0.26\nTOTAL 3.45\n"
+        outcome = parse_receipt_text(text)
+        assert [item.store_item_name for item in outcome.receipt.items] == ["2% MILK 1 GAL"]
+        assert outcome.diagnostics.tax == pytest.approx(0.26)
 
     def test_packaged_goods_default_to_one_each(self):
         item = _by_store_name(parse_receipt_text("MARKET\nKIND BAR 1.99\nTOTAL 1.99\n").receipt)["KIND BAR"]

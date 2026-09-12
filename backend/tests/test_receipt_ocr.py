@@ -95,6 +95,11 @@ class TestCleanOcrLine:
             ("ALMOND BUTTER16O0Z 9.99", "ALMOND BUTTER16 OZ 9.99"),
             ("MILK S3.49", "MILK $3.49"),
             ("SALSA 2.99", "SALSA 2.99"),
+            ("0RG BNN4S l.48 F", "ORG BNNAS 1.48 F"),
+            ("SU8T0TAL l6.96", "SUBTOTAL 16.96"),
+            ("T = TX 8.2500% 1.07", "T = TX 8.2500% 1.07"),
+            ("EGGS 12CT 3.29 F", "EGGS 12CT 3.29 F"),
+            ("V8 JUICE 46OZ 3.99", "V8 JUICE 46OZ 3.99"),
         ],
     )
     def test_confusions(self, raw, expected):
