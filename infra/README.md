@@ -146,7 +146,7 @@ Plain env vars set by Terraform (`modules/app_runner`, names from `backend/app/c
 | `FRONTEND_URL` | `https://main.<app-id>.amplifyapp.com`, or the Amplify custom domain, or `var.frontend_url` | Amplify module output → App Runner |
 | `CORS_ORIGINS` | comma-joined: Amplify default branch URL + custom domain (if any) + `frontend_url` override (if any) + `additional_cors_origins` | Amplify module output → App Runner |
 | `EMAIL_FROM` | `var.email_from` | variable |
-| `UPLOADS_BUCKET` | S3 bucket name — hook for FOOD-47 (the app still uses local `upload_dir`s until that lands) | storage module |
+| `UPLOADS_BUCKET` | S3 bucket name. When set, the API stores receipts / meal photos / cookbook photos under `receipts/`, `meals/`, `cookbook/` (FOOD-47) and serves photos via presigned GET URLs; when unset it falls back to local disk. Region comes from `AWS_REGION` (injected by App Runner), credentials from the instance role. | storage module |
 
 Secrets injected by App Runner from Secrets Manager at start (`runtime_environment_secrets`, instance role has `GetSecretValue` on exactly these ARNs):
 

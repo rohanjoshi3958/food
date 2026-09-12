@@ -159,7 +159,7 @@ module "app_runner" {
       ENVIRONMENT    = "production"
       COOKIE_SECURE  = "true"
       EMAIL_FROM     = var.email_from
-      UPLOADS_BUCKET = module.storage.bucket_name # FOOD-47 hook; AWS_REGION is injected by App Runner
+      UPLOADS_BUCKET = module.storage.bucket_name # FOOD-47: app/storage.py switches to S3 when set; AWS_REGION is injected by App Runner
     },
     local.frontend_url == null ? {} : { FRONTEND_URL = local.frontend_url },
     length(local.cors_origins) == 0 ? {} : { CORS_ORIGINS = join(",", local.cors_origins) },
