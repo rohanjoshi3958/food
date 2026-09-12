@@ -34,6 +34,11 @@ output "image_identifier" {
   value = local.image_identifier
 }
 
+output "runtime_secret_env_vars" {
+  description = "Env var names populated from Secrets Manager at start."
+  value       = sort(keys(var.runtime_secrets))
+}
+
 output "instance_role_arn" {
   value = aws_iam_role.instance.arn
 }
@@ -44,4 +49,9 @@ output "access_role_arn" {
 
 output "vpc_connector_arn" {
   value = aws_apprunner_vpc_connector.this.arn
+}
+
+output "effective_environment" {
+  description = "Plain-text env vars passed to the service (no secrets)."
+  value       = var.environment_variables
 }

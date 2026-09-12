@@ -14,7 +14,8 @@ Terraform for the production AWS stack described in
 
 ```
 Browser ──► Amplify Hosting (Next.js)              ──► App Runner (FastAPI :8000)
-                │  BACKEND_URL env / optional /api/<*> rewrite      │ VPC connector (private subnets)
+                │  BACKEND_URL env / optional /api/<*> rewrite      │ CORS_ORIGINS / FRONTEND_URL ◄── Amplify domain
+                │                                                   │ VPC connector (private subnets)
                 │                                                   ├─► RDS PostgreSQL 16   (SG: 5432 from App Runner only)
                 │                                                   ├─► S3 uploads bucket   (gateway endpoint; receipts/ meals/ cookbook/)
                 │                                                   ├─► Secrets Manager     (5 secrets → env vars at boot)
@@ -86,13 +87,15 @@ terraform output app_runner_service_url
 curl "$(terraform output -raw app_runner_service_url)/api/health"   # {"status":"ok"}
 ```
 
-**5. Wire the frontend ↔ backend URLs** (see FOOD-48 / FOOD-50 below). Without custom domains this needs one more apply, because Amplify's default domain is only known after creation:
+This apply also wires the URLs in both directions (FOOD-50 / FOOD-48): App Runner receives `FRONTEND_URL` and `CORS_ORIGINS` from the Amplify app's domain, and the Amplify production branch receives `BACKEND_URL` from App Runner. Verify with:
 
 ```bash
-terraform apply -var "frontend_url=$(terraform output -raw frontend_url)"
+terraform output backend_frontend_url        # https://main.<app-id>.amplifyapp.com (or your custom domain)
+terraform output backend_cors_origins        # includes the Amplify domain
+terraform output backend_runtime_secret_env_vars
 ```
 
-Once `main` is pushed (or via *Run build* in the Amplify console) the frontend deploys automatically.
+**5. Deploy the frontend.** Once `main` is pushed (or via *Run build* in the Amplify console) the frontend builds with `BACKEND_URL` set and deploys automatically.
 
 ## Required / notable variables
 
@@ -106,8 +109,9 @@ Once `main` is pushed (or via *Run build* in the Amplify console) the frontend d
 | `create_app_runner_service` | `true` | Set `false` on the first apply (empty ECR) |
 | `backend_image_identifier` / `backend_image_tag` | `null` / `latest` | Defaults to the Terraform-managed ECR repo |
 | `backend_cpu` / `backend_memory` | `1024` / `2048` | App Runner instance size |
-| `frontend_url` | `null` | `FRONTEND_URL` + default `CORS_ORIGINS`; derived automatically when `frontend_custom_domain` is set |
-| `cors_origins` | `[]` | Explicit override for `CORS_ORIGINS` |
+| `frontend_url` | `null` | Override for `FRONTEND_URL`; default is the Amplify custom domain if set, else the Amplify default branch URL |
+| `additional_cors_origins` | `[]` | Extra origins appended to `CORS_ORIGINS` (Amplify default domain / custom domain are always included) |
+| `amplify_environment_variables` / `amplify_branch_environment_variables` | `{}` | Extra Amplify env vars (app-level must not reference App Runner; branch-level may) |
 | `frontend_custom_domain` / `frontend_custom_domain_prefix` | `null` / `""` | Amplify domain association (you create the DNS records from the outputs) |
 | `backend_custom_domain` | `null` | e.g. `api.example.com`; App Runner custom domain association |
 | `amplify_enable_api_rewrite` | `false` | FOOD-48 option B, see caveats |
@@ -123,6 +127,7 @@ Full list with descriptions: `variables.tf` and each `modules/*/variables.tf`.
 | --- | --- |
 | `amplify_default_domain`, `amplify_branch_url`, `frontend_url` | Amplify domain / URL (custom domain wins when configured) |
 | `app_runner_service_url`, `backend_url` | App Runner URL / the URL the frontend should call |
+| `backend_frontend_url`, `backend_cors_origins`, `backend_runtime_secret_env_vars` | The FOOD-50 env wiring App Runner actually received |
 | `rds_endpoint`, `rds_address`, `rds_database_name` | Database endpoint (private) |
 | `uploads_bucket_name`, `uploads_bucket_arn` | S3 bucket |
 | `secret_arns`, `secret_names` | The five Secrets Manager secrets |
@@ -130,21 +135,30 @@ Full list with descriptions: `variables.tf` and each `modules/*/variables.tf`.
 | `backend_custom_domain_*`, `amplify_domain_verification_record` | DNS records to create for custom domains |
 | `nat_gateway_public_ips` | Backend egress IPs |
 
-## Runtime environment given to FastAPI
+## Runtime environment given to FastAPI (FOOD-50)
 
 Plain env vars set by Terraform (`modules/app_runner`, names from `backend/app/config.py`):
 
-| Env var | Value |
-| --- | --- |
-| `ENVIRONMENT` | `production` (also flips `cookie_secure` on) |
-| `COOKIE_SECURE` | `true` |
-| `EMAIL_FROM` | `var.email_from` |
-| `FRONTEND_URL` | `local.frontend_url` when known |
-| `CORS_ORIGINS` | comma-joined `local.cors_origins` when known |
-| `UPLOADS_BUCKET` | S3 bucket name — hook for FOOD-47 (the app still uses local `upload_dir`s until that lands) |
+| Env var | Value | Source |
+| --- | --- | --- |
+| `ENVIRONMENT` | `production` | fixed |
+| `COOKIE_SECURE` | `true` | fixed (see cookie note below) |
+| `FRONTEND_URL` | `https://main.<app-id>.amplifyapp.com`, or the Amplify custom domain, or `var.frontend_url` | Amplify module output → App Runner |
+| `CORS_ORIGINS` | comma-joined: Amplify default branch URL + custom domain (if any) + `frontend_url` override (if any) + `additional_cors_origins` | Amplify module output → App Runner |
+| `EMAIL_FROM` | `var.email_from` | variable |
+| `UPLOADS_BUCKET` | S3 bucket name — hook for FOOD-47 (the app still uses local `upload_dir`s until that lands) | storage module |
 
-Secrets injected from Secrets Manager: `DATABASE_URL`, `AUTH_SECRET`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `RESEND_API_KEY`.
-Extra vars: `backend_extra_environment`.
+Secrets injected by App Runner from Secrets Manager at start (`runtime_environment_secrets`, instance role has `GetSecretValue` on exactly these ARNs):
+
+| Env var | Secret |
+| --- | --- |
+| `DATABASE_URL` | `food/prod/database_url` (Terraform-managed) |
+| `AUTH_SECRET` | `food/prod/auth_secret` (generated once) |
+| `ANTHROPIC_API_KEY` | `food/prod/anthropic` (set out-of-band) |
+| `OPENAI_API_KEY` | `food/prod/openai` (set out-of-band) |
+| `RESEND_API_KEY` | `food/prod/resend` (set out-of-band) |
+
+Extra plain vars: `backend_extra_environment`. `terraform output backend_frontend_url backend_cors_origins backend_runtime_secret_env_vars` shows the resolved wiring.
 
 ## Request timeout and health check (FOOD-51)
 
@@ -165,7 +179,9 @@ FOOD-51 infra acceptance:
 
 ## Notes for FOOD-48 — Next.js `/api/*` → App Runner
 
-`next.config.ts` currently rewrites `/api/:path*` to `http://localhost:8000`. Terraform gives Amplify a **`BACKEND_URL`** environment variable (custom API domain if set, otherwise the App Runner URL; see output `backend_url`).
+`next.config.ts` currently rewrites `/api/:path*` to `http://localhost:8000`. Terraform gives the Amplify **production branch** a **`BACKEND_URL`** environment variable (custom API domain if set, otherwise the App Runner URL; see output `backend_url`). The build spec also copies `BACKEND_URL` and `NEXT_PUBLIC_*` into `.env.production` so they are available to SSR at runtime, not just at build.
+
+`BACKEND_URL` lives on the branch rather than the app deliberately: the App Runner service reads the Amplify *app's* default domain for `CORS_ORIGINS`/`FRONTEND_URL`, so the dependency chain is `aws_amplify_app → aws_apprunner_service → aws_amplify_branch`. Anything that would make the Amplify **app** depend on App Runner (app-level env vars, custom rules) would create a cycle — which is why the edge rewrite below requires a statically known `backend_custom_domain`.
 
 **Rule of thumb:** the Amplify rewrite is fine for short CRUD calls. **Long AI work must not rely on the Amplify SSR proxy** — it goes through async jobs (see FOOD-51 above), so every request that passes through Amplify is a quick enqueue or a status poll.
 
@@ -175,20 +191,34 @@ FOOD-51 infra acceptance:
   rewrites: async () => [{ source: "/api/:path*", destination: `${backend}/api/:path*` }]
   ```
   Same-origin from the browser's point of view, so cookies "just work". The rewrite runs in Amplify's SSR compute, which has a **~30 s hard limit** ([amplify-hosting #3508](https://github.com/aws-amplify/amplify-hosting/issues/3508)) — acceptable for CRUD, job submission and polling; never route a synchronous AI call through it.
-- **Option B — Amplify edge rewrite:** set `amplify_enable_api_rewrite = true` to add a `200` custom rule `/api/<*> → ${BACKEND_URL}/api/<*>`. This bypasses SSR compute but still goes through Amplify's CloudFront proxy, which has similar (~30 s) timeout behaviour and rewrites `Host`; test cookie behaviour before relying on it. Same short-request rule applies.
+- **Option B — Amplify edge rewrite:** set `amplify_enable_api_rewrite = true` (requires `backend_custom_domain`) to add a `200` custom rule `/api/<*> → https://<backend_custom_domain>/api/<*>`. This bypasses SSR compute but still goes through Amplify's CloudFront proxy, which has similar (~30 s) timeout behaviour and rewrites `Host`; test cookie behaviour before relying on it. Same short-request rule applies.
 - **Option C — direct calls to App Runner:** only needed if some request must use the full App Runner 120 s window (e.g. a large upload). Point that `fetch` at `NEXT_PUBLIC_API_URL` (add it via `amplify_environment_variables`) with `credentials: "include"`; requires the CORS/cookie work in FOOD-50. Putting the API on a sibling subdomain (`backend_custom_domain = "api.example.com"` next to `app.example.com`) keeps the session cookie same-site so no `SameSite=None` changes are needed.
 
 With the async-job design, Option A alone should cover the app; keep Option C in reserve.
 
-## Notes for FOOD-50 — CORS / FRONTEND_URL / cookies
+## FOOD-50 — production env: ENVIRONMENT, CORS, FRONTEND_URL, COOKIE_SECURE, secrets
 
-- `ENVIRONMENT=production` and `COOKIE_SECURE=true` are already set, so `session_cookie_secure` is true.
-- `FRONTEND_URL` and `CORS_ORIGINS` come from `local.frontend_url` / `local.cors_origins`:
-  - With `frontend_custom_domain` set they are known on the first apply.
-  - Otherwise run the extra apply in step 5 with `frontend_url=https://main.<app-id>.amplifyapp.com`, or set `cors_origins` explicitly (e.g. preview branches).
-- If the browser talks to App Runner cross-origin (Option C above) the FastAPI CORS middleware must have `allow_credentials=True`, and the session cookie needs `SameSite=None; Secure` unless the API shares a registrable domain with the frontend.
-- `EMAIL_FROM` must be a verified Resend sender in production.
+Infra side of [FOOD-50](https://linear.app/rjplayground/issue/FOOD-50/wire-production-env-environment-cors-frontend-url-cookie-secure). Everything below is wired by `main.tf` → `module.app_runner.environment_variables` / `runtime_secrets`.
+
+| FOOD-50 item | How it is satisfied |
+| --- | --- |
+| `ENVIRONMENT=production` | Fixed env var on the App Runner service |
+| `CORS_ORIGINS` includes the Amplify domain | Built from the Amplify module output: `https://<branch>.<app-id>.amplifyapp.com` always, plus the Amplify custom domain when `frontend_custom_domain` is set, plus `frontend_url`/`additional_cors_origins`. Single apply, no manual copy-paste. |
+| `FRONTEND_URL` set correctly | Amplify custom domain if configured, else the Amplify default branch URL; `var.frontend_url` overrides. Used by the app for password-reset links. |
+| `COOKIE_SECURE` / secure cookies in prod | See below |
+| Secrets from Secrets Manager | `DATABASE_URL`, `AUTH_SECRET`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `RESEND_API_KEY` injected via `runtime_environment_secrets`; instance role scoped to those five ARNs |
+
+**Cookie security.** `backend/app/config.py` computes `session_cookie_secure = cookie_secure or environment == "production"`. Setting `ENVIRONMENT=production` alone therefore makes session cookies `Secure`; Terraform *also* sets the explicit `COOKIE_SECURE=true` flag the app reads, so cookies stay secure even if `ENVIRONMENT` is ever changed (e.g. to `staging`). Both are plain env vars, not secrets.
+
+**Cross-origin calls.** With the Next.js rewrite (FOOD-48 option A) the browser only talks to the Amplify origin, so cookies are first-party and `CORS_ORIGINS` is a defence-in-depth setting. If the browser ever calls App Runner directly (option C), the FastAPI CORS middleware must run with `allow_credentials=True`, the request must use `credentials: "include"`, and the session cookie needs `SameSite=None; Secure` unless the API shares a registrable domain with the frontend (`backend_custom_domain = api.example.com` next to `app.example.com`).
+
+**Operational notes.**
+
+- Adding an origin (preview branch, second domain): `additional_cors_origins`, then `terraform apply` — App Runner redeploys on env-var changes.
 - Secrets are read once at App Runner start; after rotating `food/prod/*` values trigger a deployment (`aws apprunner start-deployment --service-arn ...`) or push a new image.
+- `EMAIL_FROM` must be a verified Resend sender in production.
+- Acceptance "app boots in prod with secrets from Secrets Manager": `curl $(terraform output -raw app_runner_service_url)/api/health` after step 4; the service will not reach `RUNNING` if any referenced secret is missing, and the three placeholder keys must hold real values for AI/email features to work.
+- Long receipt/AI requests are being moved to async jobs in FOOD-59 (app work); nothing in this env wiring changes for that.
 
 ## Cost / operational notes
 

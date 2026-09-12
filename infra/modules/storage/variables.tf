@@ -31,8 +31,14 @@ variable "force_destroy" {
   default     = false
 }
 
+variable "enable_cors" {
+  description = "Create the bucket CORS configuration. Must be known at plan time; cors_allowed_origins must be non-empty when true."
+  type        = bool
+  default     = false
+}
+
 variable "cors_allowed_origins" {
-  description = "Origins allowed to PUT/GET objects directly (presigned URLs). Empty disables CORS."
+  description = "Origins allowed to PUT/GET objects directly (presigned URLs). May contain apply-time values."
   type        = list(string)
   default     = []
 }

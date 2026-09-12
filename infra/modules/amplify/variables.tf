@@ -37,25 +37,25 @@ variable "build_spec" {
 }
 
 variable "backend_url" {
-  description = "App Runner base URL (no trailing slash). Exposed to the build as BACKEND_URL."
+  description = "API base URL (no trailing slash), exposed to the production branch as BACKEND_URL. May depend on App Runner."
   type        = string
   default     = null
 }
 
-variable "enable_api_rewrite" {
-  description = "Add an Amplify-edge 200 rewrite for /api/<*> -> backend_url. See README (FOOD-48) before enabling."
-  type        = bool
-  default     = false
+variable "api_rewrite_target" {
+  description = "Statically known API base URL for an Amplify-edge 200 rewrite of /api/<*>. Null disables the rule. Must NOT be derived from App Runner (cycle). See README (FOOD-48)."
+  type        = string
+  default     = null
 }
 
 variable "environment_variables" {
-  description = "App-level environment variables (available at build and to SSR)."
+  description = "App-level environment variables. Must not reference App Runner outputs (see main.tf)."
   type        = map(string)
   default     = {}
 }
 
 variable "branch_environment_variables" {
-  description = "Branch-level overrides."
+  description = "Production-branch environment variables (merged over BACKEND_URL)."
   type        = map(string)
   default     = {}
 }

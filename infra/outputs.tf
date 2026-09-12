@@ -69,6 +69,21 @@ output "app_runner_instance_role_arn" {
   value = module.app_runner.instance_role_arn
 }
 
+output "backend_frontend_url" {
+  description = "FRONTEND_URL given to App Runner (FOOD-50)."
+  value       = local.frontend_url
+}
+
+output "backend_cors_origins" {
+  description = "CORS_ORIGINS given to App Runner (FOOD-50)."
+  value       = local.cors_origins
+}
+
+output "backend_runtime_secret_env_vars" {
+  description = "Env vars App Runner populates from Secrets Manager (FOOD-50)."
+  value       = module.app_runner.runtime_secret_env_vars
+}
+
 # ---------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------

@@ -134,16 +134,16 @@ variable "email_from" {
   default     = "Food <onboarding@resend.dev>"
 }
 
-# FOOD-50: CORS / FRONTEND_URL wiring. The Amplify default domain is only known
-# after the first apply, so either set these explicitly or use a custom domain.
+# FOOD-50: CORS / FRONTEND_URL wiring. By default both are derived from the
+# Amplify module (custom domain if set, else the default amplifyapp.com domain).
 variable "frontend_url" {
-  description = "Public URL of the Next.js frontend (used for FRONTEND_URL and as the default CORS origin). Null = derive from the Amplify custom domain if set."
+  description = "Override for FRONTEND_URL. Null = Amplify custom domain if set, else the Amplify default branch URL."
   type        = string
   default     = null
 }
 
-variable "cors_origins" {
-  description = "Explicit CORS_ORIGINS list. Empty = [frontend_url] when known."
+variable "additional_cors_origins" {
+  description = "Extra origins appended to CORS_ORIGINS (the Amplify default domain, custom domain and frontend_url are always included)."
   type        = list(string)
   default     = []
 }
@@ -175,13 +175,24 @@ variable "amplify_branch" {
 }
 
 variable "amplify_enable_api_rewrite" {
-  description = "FOOD-48 option B: Amplify-edge 200 rewrite of /api/<*> to App Runner. Read the README caveats first."
+  description = "FOOD-48 option B: Amplify-edge 200 rewrite of /api/<*> to https://<backend_custom_domain>. Requires backend_custom_domain. Read the README caveats first."
   type        = bool
   default     = false
+
+  validation {
+    condition     = !var.amplify_enable_api_rewrite || var.backend_custom_domain != null
+    error_message = "amplify_enable_api_rewrite needs backend_custom_domain: the rewrite target must be known before apply (the App Runner URL would create an Amplify <-> App Runner cycle)."
+  }
 }
 
 variable "amplify_environment_variables" {
-  description = "Extra Amplify app env vars (build + SSR)."
+  description = "Extra Amplify app-level env vars (build + SSR)."
+  type        = map(string)
+  default     = {}
+}
+
+variable "amplify_branch_environment_variables" {
+  description = "Extra production-branch env vars (merged over BACKEND_URL)."
   type        = map(string)
   default     = {}
 }

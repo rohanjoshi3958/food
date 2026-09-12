@@ -29,16 +29,18 @@ create_amplify_app = true
 github_repository  = "https://github.com/rohanjoshi3958/food"
 amplify_branch     = "main"
 
-# Uncomment once a domain is ready; this also lets Terraform derive
-# FRONTEND_URL / CORS_ORIGINS on the first apply (FOOD-50).
+# FOOD-50: FRONTEND_URL and CORS_ORIGINS are derived automatically from the
+# Amplify app (default amplifyapp.com domain, plus the custom domain below when
+# set). Only override if you need to.
+# frontend_url            = "https://app.example.com"
+# additional_cors_origins = ["https://preview.example.com"]
+
+# Optional custom domains (you create the DNS records from the outputs).
 # frontend_custom_domain        = "example.com"
 # frontend_custom_domain_prefix = "app"
+# backend_custom_domain         = "api.example.com"
 
-# Without a custom domain, set these after the first apply from
-# `terraform output frontend_url` and apply again.
-# frontend_url = "https://main.d1234abcd.amplifyapp.com"
-# cors_origins = ["https://main.d1234abcd.amplifyapp.com"]
-
-# FOOD-48 option B (edge rewrite). Fine for short CRUD (~30 s Amplify proxy
-# limit); long AI work is async and must not go through this proxy - see README.
+# FOOD-48 option B (edge rewrite to https://<backend_custom_domain>). Fine for
+# short CRUD (~30 s Amplify proxy limit); long AI work is async and must not go
+# through this proxy - see README. Requires backend_custom_domain.
 amplify_enable_api_rewrite = false

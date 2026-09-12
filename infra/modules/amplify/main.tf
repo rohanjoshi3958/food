@@ -10,6 +10,9 @@ locals {
             - npm ci
         build:
           commands:
+            # Amplify exposes env vars at build time only; persist the ones SSR
+            # needs at runtime (BACKEND_URL, NEXT_PUBLIC_*) into .env.production.
+            - env | grep -e ^BACKEND_URL= -e ^NEXT_PUBLIC_ >> .env.production || true
             - npm run build
       artifacts:
         baseDirectory: .next
@@ -23,9 +26,14 @@ locals {
 
   # BACKEND_URL is the hook for FOOD-48: next.config.ts should read it as the
   # /api rewrite destination instead of the hard-coded localhost:8000.
-  environment_variables = merge(
+  #
+  # It is set on the *branch*, not the app, on purpose: the App Runner service
+  # reads this app's default domain for CORS_ORIGINS / FRONTEND_URL (FOOD-50),
+  # and the App Runner URL flows back here. Keeping aws_amplify_app free of any
+  # backend reference makes that app -> App Runner -> branch chain acyclic.
+  branch_environment_variables = merge(
     var.backend_url == null ? {} : { BACKEND_URL = var.backend_url },
-    var.environment_variables,
+    var.branch_environment_variables,
   )
 
   branch_url = "https://${var.branch_name}.${aws_amplify_app.this.default_domain}"
@@ -96,15 +104,16 @@ resource "aws_amplify_app" "this" {
   enable_branch_auto_deletion = false
   enable_auto_branch_creation = false
 
-  environment_variables = local.environment_variables
+  environment_variables = var.environment_variables
 
-  # Optional FOOD-48 path: proxy /api/* at the Amplify edge to App Runner.
-  # A "200" status makes Amplify reverse-proxy rather than redirect.
+  # Optional FOOD-48 path: proxy /api/* at the Amplify edge to the API.
+  # A "200" status makes Amplify reverse-proxy rather than redirect. The target
+  # must be known before apply (the API custom domain) - see the note above.
   dynamic "custom_rule" {
-    for_each = var.enable_api_rewrite && var.backend_url != null ? [1] : []
+    for_each = var.api_rewrite_target == null ? [] : [var.api_rewrite_target]
     content {
       source = "/api/<*>"
-      target = "${var.backend_url}/api/<*>"
+      target = "${custom_rule.value}/api/<*>"
       status = "200"
     }
   }
@@ -126,7 +135,7 @@ resource "aws_amplify_branch" "production" {
   stage             = "PRODUCTION"
   enable_auto_build = var.enable_auto_build
 
-  environment_variables = var.branch_environment_variables
+  environment_variables = local.branch_environment_variables
 
   tags = var.tags
 }

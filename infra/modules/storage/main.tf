@@ -51,9 +51,10 @@ resource "aws_s3_bucket_versioning" "uploads" {
 }
 
 # Browser-side uploads via presigned URLs (FOOD-47) need CORS from the
-# frontend origin. Created only when origins are supplied.
+# frontend origin. `enable_cors` must be plan-known (the origins themselves may
+# come from resources created in the same apply, e.g. the Amplify domain).
 resource "aws_s3_bucket_cors_configuration" "uploads" {
-  count = length(var.cors_allowed_origins) > 0 ? 1 : 0
+  count = var.enable_cors ? 1 : 0
 
   bucket = aws_s3_bucket.uploads.id
 

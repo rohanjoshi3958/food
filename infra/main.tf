@@ -9,13 +9,30 @@ locals {
     Repository  = var.github_repository
   }, var.tags)
 
-  # Known before apply only when explicitly set or a custom domain is used;
-  # otherwise the Amplify default domain requires a second apply (see README).
+  # ---- FOOD-50: frontend <-> backend URL wiring -------------------------
+  #
+  # The Amplify app's default domain (https://<branch>.<app-id>.amplifyapp.com)
+  # is read straight from the Amplify module and fed into App Runner's
+  # CORS_ORIGINS / FRONTEND_URL. The App Runner URL flows back to Amplify as a
+  # *branch* env var (BACKEND_URL), so the dependency chain is
+  # aws_amplify_app -> aws_apprunner_service -> aws_amplify_branch (no cycle).
   custom_frontend_url = var.frontend_custom_domain == null ? null : (
     var.frontend_custom_domain_prefix == "" ? "https://${var.frontend_custom_domain}" : "https://${var.frontend_custom_domain_prefix}.${var.frontend_custom_domain}"
   )
-  frontend_url = var.frontend_url != null ? var.frontend_url : local.custom_frontend_url
-  cors_origins = length(var.cors_origins) > 0 ? var.cors_origins : (local.frontend_url == null ? [] : [local.frontend_url])
+  amplify_branch_url = try(module.amplify[0].branch_url, null)
+
+  # FRONTEND_URL: explicit override > custom domain > Amplify default domain.
+  frontend_url = try(coalesce(var.frontend_url, local.custom_frontend_url, local.amplify_branch_url), null)
+
+  # CORS_ORIGINS: every origin the browser may load the app from - the Amplify
+  # default domain, the custom domain when set, the override, plus extras.
+  cors_origins = distinct(compact(concat(
+    [local.amplify_branch_url, local.custom_frontend_url, var.frontend_url],
+    var.additional_cors_origins,
+  )))
+
+  # Plan-known: is at least one CORS origin going to exist?
+  cors_enabled = var.create_amplify_app || var.frontend_custom_domain != null || var.frontend_url != null || length(var.additional_cors_origins) > 0
 
   # Prefer the API custom domain (known before apply); fall back to the
   # generated *.awsapprunner.com URL.
@@ -68,6 +85,7 @@ module "storage" {
   bucket_name          = var.uploads_bucket_name
   allowed_prefixes     = ["receipts", "meals", "cookbook"]
   force_destroy        = var.uploads_force_destroy
+  enable_cors          = local.cors_enabled
   cors_allowed_origins = local.cors_origins
   tags                 = local.tags
 }
@@ -132,9 +150,12 @@ module "app_runner" {
   private_subnet_ids = module.network.private_subnet_ids
   security_group_id  = module.network.app_runner_security_group_id
 
-  # Names follow backend/app/config.py (pydantic-settings, case-insensitive).
+  # FOOD-50 production env. Names follow backend/app/config.py
+  # (pydantic-settings, case-insensitive).
   environment_variables = merge(
     {
+      # Settings.session_cookie_secure is true when environment == "production";
+      # COOKIE_SECURE=true is the explicit belt-and-braces flag the app also reads.
       ENVIRONMENT    = "production"
       COOKIE_SECURE  = "true"
       EMAIL_FROM     = var.email_from
@@ -176,9 +197,10 @@ module "amplify" {
   branch_name         = var.amplify_branch
 
   backend_url        = local.backend_url
-  enable_api_rewrite = var.amplify_enable_api_rewrite
+  api_rewrite_target = var.amplify_enable_api_rewrite ? "https://${var.backend_custom_domain}" : null
 
-  environment_variables = var.amplify_environment_variables
+  environment_variables        = var.amplify_environment_variables
+  branch_environment_variables = var.amplify_branch_environment_variables
 
   custom_domain        = var.frontend_custom_domain
   custom_domain_prefix = var.frontend_custom_domain_prefix
