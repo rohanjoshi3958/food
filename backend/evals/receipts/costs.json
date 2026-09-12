@@ -1,0 +1,8 @@
+{
+  "_comment": "PLACEHOLDER per-call USD costs by extraction path, used for the $/successful parse metric. Metrics eng: replace with billed averages (image tokens for a ~1600px receipt + output tokens) before gating.",
+  "cache": 0.0,
+  "ocr": 0.0,
+  "haiku": 0.002,
+  "sonnet": 0.015,
+  "opus_baseline": 0.075
+}
