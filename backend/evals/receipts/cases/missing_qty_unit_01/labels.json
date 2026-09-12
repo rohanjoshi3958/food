@@ -1,0 +1,12 @@
+{
+  "case_id": "missing_qty_unit_01",
+  "store_name": "Green Acres Farm Stand",
+  "items": [
+    { "store_item_name": "TOMATOES", "ingredient_name": "Tomatoes", "quantity": null, "unit": null, "is_food": true },
+    { "store_item_name": "PEACHES", "ingredient_name": "Peaches", "quantity": null, "unit": null, "is_food": true },
+    { "store_item_name": "SWEET CORN", "ingredient_name": "Sweet Corn", "quantity": null, "unit": null, "is_food": true },
+    { "store_item_name": "CUCUMBERS", "ingredient_name": "Cucumbers", "quantity": null, "unit": null, "is_food": true }
+  ],
+  "totals": { "subtotal": null, "tax": null, "total": 15.50 },
+  "labeler_notes": "PLACEHOLDER. No quantities or units are printed; null is the correct label. The OCR gate should escalate so an LLM can guess sensible units."
+}

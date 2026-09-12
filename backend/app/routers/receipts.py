@@ -21,10 +21,9 @@ from app.services.ingredients import (
     create_ingredient,
 )
 from app.services.ingredient_merge import merge_draft_items
-from app.services.receipt_analyzer import (
-    ReceiptAnalysisError,
-    analyze_receipt_image,
-)
+from app.services.receipt_analyzer import ReceiptAnalysisError
+from app.services.receipt_pipeline import analyze_receipt
+from app.services.receipt_preprocess import content_hash
 from app.validation import validate_ingredient_input
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
@@ -257,17 +256,32 @@ async def upload_receipt(
         filename=str(destination),
         original_name=safe_name,
         analysis_status="processing",
+        content_hash=content_hash(contents),
     )
     db.add(receipt)
     db.commit()
     db.refresh(receipt)
 
     try:
-        parsed = analyze_receipt_image(destination)
+        outcome = analyze_receipt(
+            destination,
+            contents,
+            db=db,
+            user_id=current_user.id,
+            receipt_id=receipt.id,
+        )
+        parsed = outcome.parsed
+        # TODO(FOOD-54): metrics wire-up goes here once Metrics eng exports the
+        # stable helper. Everything it needs is on `outcome`: path
+        # (cache|ocr|haiku|sonnet|opus_baseline), confidence, ocr_confidence,
+        # latency_ms, tokens (populated when available), gate_reasons,
+        # escalations, content_hash. Do not add interim counters/logging.
 
         receipt.store_name = parsed.store_name
         receipt.analysis_status = "pending_review"
         receipt.analysis_error = None
+        receipt.analysis_path = outcome.path
+        receipt.analysis_result = parsed.model_dump()
         receipt.draft_items = merge_draft_items(
             pre_manual_items + _draft_from_parsed_items(parsed.items)
         )
@@ -288,6 +302,8 @@ async def upload_receipt(
         )
         return _receipt_response(receipt)
     except ReceiptAnalysisError as exc:
+        # TODO(FOOD-54): record the failed analysis (status=error, last rung
+        # attempted) via the metrics helper in this branch and the one below.
         _delete_receipt(db, receipt)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

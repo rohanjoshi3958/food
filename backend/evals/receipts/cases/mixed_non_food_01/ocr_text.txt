@@ -1,0 +1,15 @@
+TARGET
+Austin Central  512-555-0100
+GROCERY
+GOOD&GATHER EGGS 12CT     3.29 F
+2% MILK 1 GAL             3.19 F
+TORTILLA CHIPS 13OZ       3.49 F
+HOUSEHOLD
+PAPER TOWELS 6PK          9.99 T
+DISH SOAP 19OZ            2.99 T
+BAG FEE                   0.10
+COUPON GROCERY           -1.00
+SUBTOTAL                 22.05
+T = TX  8.2500%           1.07
+TOTAL                    23.12
+VISA CHARGE              23.12

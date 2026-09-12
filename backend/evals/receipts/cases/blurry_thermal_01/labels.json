@@ -1,0 +1,11 @@
+{
+  "case_id": "blurry_thermal_01",
+  "store_name": "Kroger",
+  "items": [
+    { "store_item_name": "ORG BNNAS", "ingredient_name": "Organic Bananas", "quantity": "1", "unit": null, "is_food": true },
+    { "store_item_name": "ALMOND BUTTER", "ingredient_name": "Almond Butter", "quantity": "1", "unit": "each", "is_food": true },
+    { "store_item_name": "GRK YOGURT 32OZ", "ingredient_name": "Greek Yogurt", "quantity": "32", "unit": "oz", "is_food": true }
+  ],
+  "totals": { "subtotal": 16.96, "tax": null, "total": 16.96 },
+  "labeler_notes": "PLACEHOLDER. ocr_text.txt simulates faded thermal output (0/O, l/1, S/5 confusions). Expected to escalate; labels describe what the image actually says."
+}

@@ -1,0 +1,15 @@
+{
+  "case_id": "mixed_non_food_01",
+  "store_name": "Target",
+  "items": [
+    { "store_item_name": "GOOD&GATHER EGGS 12CT", "ingredient_name": "Eggs", "quantity": "12", "unit": "each", "is_food": true },
+    { "store_item_name": "2% MILK 1 GAL", "ingredient_name": "2% Milk", "quantity": "1", "unit": "gallon", "is_food": true },
+    { "store_item_name": "TORTILLA CHIPS 13OZ", "ingredient_name": "Tortilla Chips", "quantity": "13", "unit": "oz", "is_food": true },
+    { "store_item_name": "PAPER TOWELS 6PK", "ingredient_name": "Paper Towels", "quantity": "6", "unit": "pack", "is_food": false },
+    { "store_item_name": "DISH SOAP 19OZ", "ingredient_name": "Dish Soap", "quantity": "19", "unit": "oz", "is_food": false },
+    { "store_item_name": "BAG FEE", "ingredient_name": "Bag Fee", "quantity": "1", "unit": "each", "is_food": false },
+    { "store_item_name": "COUPON GROCERY", "ingredient_name": "Coupon", "quantity": "1", "unit": "each", "is_food": false }
+  ],
+  "totals": { "subtotal": 22.05, "tax": 1.07, "total": 23.12 },
+  "labeler_notes": "PLACEHOLDER labels derived from ocr_text.txt. Section headers (GROCERY, HOUSEHOLD) are not items."
+}
