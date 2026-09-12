@@ -98,10 +98,17 @@ Fixtures in `conftest.py`: `test_db`, `client`, `test_user`, `auth_headers`, `mo
 
 ## CI Integration
 
+GitHub Actions runs this suite on every pull request and push to `main`
+(see `.github/workflows/ci.yml`). Anthropic/OpenAI keys are cleared in CI, and
+tests mock provider clients so no real AI calls are made.
+
 ```yaml
 - name: Run backend tests
+  working-directory: backend
+  env:
+    ANTHROPIC_API_KEY: ""
+    OPENAI_API_KEY: ""
   run: |
-    cd backend
     pip install -r requirements.txt
-    pytest --cov=app --cov-report=xml
+    pytest
 ```

@@ -25,6 +25,14 @@ _test_engine = None
 _TestingSessionLocal = None
 
 
+@pytest.fixture(autouse=True)
+def clear_ai_provider_keys(monkeypatch):
+    """Block accidental real Anthropic/OpenAI calls during tests (including CI)."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
+
+
+
 def get_test_engine():
     """Get or create the test database engine."""
     global _test_engine, _TestingSessionLocal

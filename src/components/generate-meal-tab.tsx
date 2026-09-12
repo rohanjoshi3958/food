@@ -314,7 +314,6 @@ export function GenerateMealTab({
 
   useEffect(() => {
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
 
   async function handleSuggestMeal() {
