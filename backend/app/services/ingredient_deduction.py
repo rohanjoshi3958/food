@@ -57,6 +57,14 @@ UNIT_ALIASES: dict[str, str] = {
     "bottles": "bottle",
     "pack": "pack",
     "packs": "pack",
+    "jar": "jar",
+    "jars": "jar",
+    "tub": "tub",
+    "tubs": "tub",
+    "dozen": "dozen",
+    "dozens": "dozen",
+    "dz": "dozen",
+    "doz": "dozen",
     "slice": "slice",
     "slices": "slice",
     "head": "head",
@@ -197,33 +205,48 @@ def meal_ingredients_data(meal: Meal) -> list[dict]:
 
 
 def _normalize_name(name: str) -> str:
-    return re.sub(r"\s+", " ", name.strip().lower())
+    """Normalize ingredient name for cheap local matching."""
+    from app.services.ingredient_normalization import normalize_ingredient_name
+
+    result = normalize_ingredient_name(name)
+    return result.canonical
 
 
 def _find_matching_ingredient(
     ingredients: list[Ingredient],
     used_name: str,
 ) -> Ingredient | None:
+    """Find matching ingredient using cheap local normalization.
+
+    Only returns EXACT/HIGH local matches. Abbreviation, plural, and
+    qualifier equivalence is handled when items are added (LLM), so meal
+    deduction typically sees already-aligned names.
+    """
+    from app.services.ingredient_normalization import (
+        MatchConfidence,
+        find_matching_ingredient_with_confidence,
+    )
+
     target = _normalize_name(used_name)
     if not target:
         return None
 
-    exact_matches = [
-        ingredient
-        for ingredient in ingredients
-        if _normalize_name(ingredient.name) == target
-    ]
-    if exact_matches:
-        return exact_matches[0]
+    candidates = [(ingredient.id, ingredient.name) for ingredient in ingredients]
 
-    partial_matches = [
-        ingredient
-        for ingredient in ingredients
-        if target in _normalize_name(ingredient.name)
-        or _normalize_name(ingredient.name) in target
-    ]
-    if len(partial_matches) == 1:
-        return partial_matches[0]
+    matched_id, match_result = find_matching_ingredient_with_confidence(
+        used_name, candidates, require_high_confidence=True
+    )
+
+    if matched_id is None:
+        return None
+
+    if match_result and match_result.confidence in (
+        MatchConfidence.EXACT,
+        MatchConfidence.HIGH,
+    ):
+        for ingredient in ingredients:
+            if ingredient.id == matched_id:
+                return ingredient
 
     return None
 
@@ -421,6 +444,9 @@ PACKAGE_UNITS = {
     "can",
     "bottle",
     "pack",
+    "jar",
+    "tub",
+    "dozen",
     "bunch",
     "head",
 }

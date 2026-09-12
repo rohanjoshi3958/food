@@ -1,14 +1,40 @@
+from __future__ import annotations
+
 from sqlalchemy.orm import Session
 
 from app.models import Ingredient, User
 from app.schemas import DraftIngredientItem, IngredientResponse
+from app.services.ingredient_deduction import normalize_unit, servings_per_pantry_unit
 from app.services.ingredient_merge import _merge_key, _sum_quantities
-from app.services.ingredient_deduction import servings_per_pantry_unit
+from app.services.ingredient_normalization import clean_display_name
 from app.services.receipt_analyzer import (
     ReceiptAnalysisError,
     check_ingredient_unit,
     estimate_ingredient_nutrition,
+    match_ingredient_to_pantry,
 )
+
+
+class AmbiguousPantryMatchError(Exception):
+    """Raised when an ingredient matches multiple pantry rows and needs review."""
+
+    def __init__(
+        self,
+        *,
+        ingredient_name: str,
+        unit: str | None,
+        canonical_name: str | None,
+        draft_item: DraftIngredientItem,
+    ) -> None:
+        self.ingredient_name = ingredient_name
+        self.unit = unit
+        self.canonical_name = canonical_name
+        self.draft_item = draft_item
+        display = canonical_name or ingredient_name
+        super().__init__(
+            f'"{display}" matches more than one pantry item. '
+            "Review the match before saving."
+        )
 
 
 def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
@@ -70,15 +96,57 @@ def _find_matching_pantry_item(
     user: User,
     name: str,
     unit: str | None,
-) -> Ingredient | None:
+    *,
+    allow_llm_merge: bool = True,
+) -> tuple[Ingredient | None, bool, str | None]:
+    """Find a matching pantry item.
+
+    Returns (matched_ingredient, is_ambiguous, canonical_name).
+    - Cheap canonical key match first (no LLM).
+    - Then ask the LLM for a canonical name and optional pantry match.
+    - When ``allow_llm_merge`` is False, LLM match IDs are ignored (manual path).
+    - Ambiguous matches are never auto-merged.
+    """
     target_key = _merge_key(name, unit)
     pantry = db.query(Ingredient).filter(Ingredient.user_id == user.id).all()
 
     for ingredient in pantry:
         if _merge_key(ingredient.name, ingredient.unit) == target_key:
-            return ingredient
+            return (ingredient, False, None)
 
-    return None
+    # Only send unit-compatible pantry rows to the LLM so incompatible
+    # units cannot win a name match. An empty list still requests a
+    # canonical display name for the incoming ingredient.
+    target_unit = normalize_unit(unit) or ""
+    unit_compatible = [
+        ingredient
+        for ingredient in pantry
+        if (normalize_unit(ingredient.unit) or "") == target_unit
+    ]
+
+    pantry_payload = [
+        {
+            "id": ingredient.id,
+            "name": ingredient.name,
+            "unit": ingredient.unit or "",
+        }
+        for ingredient in unit_compatible
+    ]
+
+    try:
+        llm_match = match_ingredient_to_pantry(name, unit, pantry_payload)
+    except ReceiptAnalysisError:
+        return (None, False, None)
+
+    if llm_match.ambiguous:
+        return (None, True, llm_match.canonical_name)
+
+    if allow_llm_merge and llm_match.match_id:
+        for ingredient in unit_compatible:
+            if ingredient.id == llm_match.match_id:
+                return (ingredient, False, llm_match.canonical_name)
+
+    return (None, False, llm_match.canonical_name)
 
 
 def create_ingredient(
@@ -86,10 +154,40 @@ def create_ingredient(
     user: User,
     item: DraftIngredientItem,
     receipt_id: str | None = None,
+    *,
+    allow_llm_merge: bool | None = None,
 ) -> IngredientResponse:
+    """Create or merge an ingredient into the user's inventory.
+
+    Exact local-key matches always merge. LLM pantry-ID merges are used for
+    receipt intake (confirmation is the user boundary). Manual adds skip LLM
+    auto-merge and only use the LLM for a canonical display name.
+
+    Ambiguous pantry matches raise AmbiguousPantryMatchError instead of
+    inserting a near-duplicate row.
+    """
     resolved = resolve_item_nutrition(item)
     name = resolved.ingredient_name.strip()
-    existing = _find_matching_pantry_item(db, user, name, resolved.unit)
+    if allow_llm_merge is None:
+        allow_llm_merge = not bool(resolved.is_manual)
+
+    existing, is_ambiguous, canonical_name = _find_matching_pantry_item(
+        db,
+        user,
+        name,
+        resolved.unit,
+        allow_llm_merge=allow_llm_merge,
+    )
+
+    if is_ambiguous:
+        raise AmbiguousPantryMatchError(
+            ingredient_name=name,
+            unit=resolved.unit,
+            canonical_name=canonical_name,
+            draft_item=resolved.model_copy(
+                update={"ingredient_name": (canonical_name or name)}
+            ),
+        )
 
     if existing is not None:
         existing.original_quantity = _sum_quantities(
@@ -122,10 +220,12 @@ def create_ingredient(
         db.refresh(existing)
         return IngredientResponse.model_validate(existing)
 
+    display_name = (canonical_name or "").strip() or clean_display_name(name)
+
     ingredient = Ingredient(
         user_id=user.id,
         receipt_id=receipt_id,
-        name=name,
+        name=display_name,
         store_item_name=resolved.store_item_name or resolved.ingredient_name,
         quantity=resolved.quantity,
         original_quantity=resolved.quantity,
@@ -144,3 +244,52 @@ def create_ingredient(
     db.commit()
     db.refresh(ingredient)
     return IngredientResponse.model_validate(ingredient)
+
+
+def canonicalize_draft_items(
+    db: Session,
+    user: User,
+    items: list[dict],
+) -> list[dict]:
+    """Apply LLM canonical names to draft rows before merge_draft_items.
+
+    This lets singular/plural and abbreviation variants collapse during draft
+    merging without reintroducing local dictionaries.
+    """
+    pantry = db.query(Ingredient).filter(Ingredient.user_id == user.id).all()
+    canonicalized: list[dict] = []
+
+    for raw in items:
+        if raw.get("is_food") is False:
+            continue
+
+        name = (raw.get("ingredient_name") or "").strip()
+        if not name:
+            continue
+
+        unit = raw.get("unit")
+        target_unit = normalize_unit(unit) or ""
+        pantry_payload = [
+            {
+                "id": ingredient.id,
+                "name": ingredient.name,
+                "unit": ingredient.unit or "",
+            }
+            for ingredient in pantry
+            if (normalize_unit(ingredient.unit) or "") == target_unit
+        ]
+
+        canonical_name = None
+        try:
+            llm_match = match_ingredient_to_pantry(name, unit, pantry_payload)
+            canonical_name = (llm_match.canonical_name or "").strip() or None
+        except ReceiptAnalysisError:
+            canonical_name = None
+
+        updated = {
+            **raw,
+            "ingredient_name": canonical_name or name,
+        }
+        canonicalized.append(updated)
+
+    return canonicalized

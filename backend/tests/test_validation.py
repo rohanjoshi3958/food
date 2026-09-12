@@ -120,6 +120,9 @@ class TestPackageQuantityValidation:
         "can",
         "bottle",
         "pack",
+        "jar",
+        "tub",
+        "dozen",
         "bunch",
         "head",
     )

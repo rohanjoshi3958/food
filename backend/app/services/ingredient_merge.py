@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from app.services.ingredient_deduction import (
     _format_quantity,
-    _normalize_name,
     normalize_unit,
     parse_number,
 )
+from app.services.ingredient_normalization import compute_canonical_key
 
 
 def _merge_key(name: str | None, unit: str | None) -> tuple[str, str]:
-    return (_normalize_name(name or ""), normalize_unit(unit) or "")
+    """Compute a canonical key for merging ingredients.
+
+    Uses robust normalization that handles abbreviations (CHKN → chicken),
+    plurals (breasts → breast), and common qualifiers (organic, fresh).
+    """
+    return compute_canonical_key(name, unit)
 
 
 def _sum_quantities(left: str | None, right: str | None) -> str | None:

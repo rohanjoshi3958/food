@@ -5,7 +5,7 @@ A kitchen app that turns grocery receipts into a tracked pantry, then uses AI to
 ## What it does
 
 1. **Sign up / sign in** with email and password.
-2. **Upload a receipt** (image or PDF). Claude reads the receipt, extracts food items and nutrition, and lets you review/edit before saving.
+2. **Upload a receipt** (image or PDF). Claude reads the receipt, extracts food items and nutrition, and lets you review/edit before saving. **Receipt parsing currently supports U.S. grocery receipts only** (English product names and U.S.-style quantity/unit formatting).
 3. **Add ingredients manually** if you prefer not to use a receipt.
 4. **View ingredients** — see your pantry with quantities, units, and nutrition. Remove items you no longer have.
 5. **Generate a meal** — Claude suggests one meal from your pantry (using only amounts you actually have), with ingredients, step-by-step instructions, and estimated macros.
@@ -91,6 +91,7 @@ Open [http://localhost:3000](http://localhost:3000), create an account, and star
 
 ## Notes
 
+- Receipt upload is **U.S.-only** for now. Non-U.S. receipts (for example EU metric pack sizes embedded in product names) may parse incorrectly.
 - Receipt analysis can take up to a minute; wait for Claude to finish before expecting the review screen.
 - Meal generation only uses food already in **View ingredients**, and never asks for more than you have on hand.
 - Adding a meal to the cookbook updates pantry quantities. Upload your own photo, or skip and let OpenAI generate one.
