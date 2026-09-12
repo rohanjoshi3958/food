@@ -8,6 +8,7 @@ This directory contains automated backend tests for:
 - **Receipt → inventory E2E flow** (`test_receipt_to_inventory_e2e.py`)
 - **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
 - **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
+- **Claude usage instrumentation** — cost math and vision tokens (`test_llm_pricing.py`), recording hooks and workflow attribution with a mocked Anthropic client (`test_llm_usage.py`), and the metrics API: persistence through product flows, 7-day aggregates, access control, Admin API reconciliation (`test_llm_metrics_api.py`)
 
 ## Running Tests
 

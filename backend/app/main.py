@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import Base, engine
 from app.db_migrate import run_migrations
-from app.routers import auth, cookbook, ingredients, meals, receipts
+from app.routers import auth, cookbook, ingredients, meals, metrics, receipts
 
 
 @asynccontextmanager
@@ -41,3 +41,4 @@ app.include_router(receipts.router, prefix="/api")
 app.include_router(ingredients.router, prefix="/api")
 app.include_router(meals.router, prefix="/api")
 app.include_router(cookbook.router, prefix="/api")
+app.include_router(metrics.router, prefix="/api")
