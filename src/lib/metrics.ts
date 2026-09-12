@@ -49,6 +49,7 @@ export type WorkflowSummary = Bucket & {
   escalation_rate_pct: number | null;
   steps: (Bucket & { step: string })[];
   models: (Bucket & { model: string })[];
+  routes: (Bucket & { route: string; share_of_calls_pct: number | null })[];
 };
 
 export type ModelSummary = Bucket & {
@@ -81,6 +82,9 @@ export type UsageEvent = {
   run_id: string | null;
   attempt: number;
   model: string;
+  provider: string;
+  route: string | null;
+  confidence: number | null;
   service_tier: string | null;
   status: "ok" | "error";
   error_type: string | null;

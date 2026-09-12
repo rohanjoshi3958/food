@@ -13,6 +13,8 @@ import json
 import logging
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -23,13 +25,33 @@ from app.llm_usage.context import (
     WorkflowRun,
     current_run,
 )
-from app.llm_usage.pricing import PRICING_VERSION, TokenUsage, estimate_cost
+from app.llm_usage.pricing import PRICING_VERSION, TokenUsage, estimate_cost, model_family
 from app.llm_usage.vision import summarize_visual_input
 
 logger = logging.getLogger("food.llm_usage")
 _internal_logger = logging.getLogger(__name__)
 
 PROVIDER_ANTHROPIC = "anthropic"
+PROVIDER_LOCAL = "local"
+
+# Pipeline routes. Claude calls infer theirs from the model family; the
+# OCR-first receipt pipeline (FOOD-55) passes ``route`` explicitly.
+ROUTE_CACHE = "cache"
+ROUTE_OCR = "ocr"
+ROUTE_HAIKU = "haiku"
+ROUTE_SONNET = "sonnet"
+ROUTE_OPUS = "opus"
+KNOWN_ROUTES = (ROUTE_CACHE, ROUTE_OCR, ROUTE_HAIKU, ROUTE_SONNET, ROUTE_OPUS)
+
+
+def route_for_model(model: str | None) -> str | None:
+    if not model:
+        return None
+    family = model_family(model)
+    for route in (ROUTE_OPUS, ROUTE_SONNET, ROUTE_HAIKU):
+        if f"-{route}-" in f"-{family}-":
+            return route
+    return None
 
 
 @dataclass
@@ -43,6 +65,8 @@ class UsageEvent:
     run_id: str | None = None
     attempt: int = 1
     provider: str = PROVIDER_ANTHROPIC
+    route: str | None = None
+    confidence: float | None = None
     service_tier: str | None = None
     error_type: str | None = None
     stop_reason: str | None = None
@@ -354,6 +378,7 @@ def build_event(
     error: BaseException | None = None,
     run: WorkflowRun | None = None,
     attempt: int = 1,
+    route: str | None = None,
 ) -> UsageEvent:
     model = _as_str(request_kwargs.get("model")) or _as_str(_field(message, "model")) or "unknown"
     usage = (
@@ -377,6 +402,7 @@ def build_event(
         latency_ms=latency_ms,
         run_id=run.run_id if run else None,
         attempt=attempt,
+        route=route or route_for_model(model),
         service_tier=_as_str(_field(usage_obj, "service_tier")),
         error_type=type(error).__name__ if error is not None else None,
         stop_reason=_as_str(_field(message, "stop_reason")) if error is None else None,
@@ -405,7 +431,14 @@ def build_event(
     )
 
 
-def create_message(client: Any, *, step: str, attempt: int = 1, **kwargs: Any) -> Any:
+def create_message(
+    client: Any,
+    *,
+    step: str,
+    attempt: int = 1,
+    route: str | None = None,
+    **kwargs: Any,
+) -> Any:
     """``client.messages.create(**kwargs)`` plus usage/cost recording.
 
     Behaves exactly like the underlying call from the caller's perspective:
@@ -415,6 +448,9 @@ def create_message(client: Any, *, step: str, attempt: int = 1, **kwargs: Any) -
     ``attempt`` is 1 for a first try and 2+ when the caller is retrying the
     same step (e.g. the meal-generation loop). It drives the retry rate on
     the dashboard, so independent per-item calls should leave it at 1.
+
+    ``route`` defaults to the model family (``opus`` / ``sonnet`` / ``haiku``);
+    pass it explicitly when a call is part of a tiered pipeline.
     """
     run = current_run()
     if run is not None:
@@ -432,6 +468,7 @@ def create_message(client: Any, *, step: str, attempt: int = 1, **kwargs: Any) -
             error=exc,
             run=run,
             attempt=attempt,
+            route=route,
         )
         raise
 
@@ -444,8 +481,124 @@ def create_message(client: Any, *, step: str, attempt: int = 1, **kwargs: Any) -
         error=None,
         run=run,
         attempt=attempt,
+        route=route,
     )
     return message
+
+
+def record_pipeline_step(
+    *,
+    step: str,
+    route: str | None,
+    latency_ms: int,
+    status: str = "ok",
+    error: BaseException | None = None,
+    confidence: float | None = None,
+    model: str | None = None,
+    provider: str = PROVIDER_LOCAL,
+    usage: TokenUsage | None = None,
+    attempt: int = 1,
+) -> UsageEvent | None:
+    """Record a non-Claude pipeline step (OCR pass, cache hit, rules) as an event.
+
+    Stable entry point for the OCR-first receipt pipeline (FOOD-55) so it can
+    report ``route`` / ``confidence`` / latency into the same table and
+    dashboard instead of keeping parallel counters. Attribution (workflow,
+    run, user/receipt ids) comes from the enclosing :func:`workflow_scope`.
+    Tokens and cost are zero unless ``model`` and ``usage`` are supplied.
+    Never raises.
+    """
+    run = current_run()
+    try:
+        token_usage = usage or TokenUsage()
+        cost = estimate_cost(model, token_usage) if model else None
+        event = UsageEvent(
+            workflow=run.workflow if run else WORKFLOW_UNATTRIBUTED,
+            step=step,
+            model=model or (route or "none"),
+            status="error" if error is not None else status,
+            latency_ms=max(int(latency_ms), 0),
+            run_id=run.run_id if run else None,
+            attempt=attempt,
+            provider=provider,
+            route=route,
+            confidence=confidence,
+            error_type=type(error).__name__ if error is not None else None,
+            uncached_input_tokens=token_usage.uncached_input_tokens,
+            cache_write_5m_tokens=token_usage.cache_write_5m_tokens,
+            cache_write_1h_tokens=token_usage.cache_write_1h_tokens,
+            cache_read_tokens=token_usage.cache_read_tokens,
+            output_tokens=token_usage.output_tokens,
+            estimated_cost_usd=cost.total_usd if cost else 0.0,
+            input_cost_usd=cost.input_usd if cost else 0.0,
+            cache_write_cost_usd=cost.cache_write_usd if cost else 0.0,
+            cache_read_cost_usd=cost.cache_read_usd if cost else 0.0,
+            output_cost_usd=cost.output_usd if cost else 0.0,
+            pricing_known=cost.pricing_known if cost else True,
+            pricing_version=PRICING_VERSION if cost else None,
+            user_id=run.user_id if run else None,
+            receipt_id=run.receipt_id if run else None,
+            meal_id=run.meal_id if run else None,
+        )
+        if run is not None:
+            run.call_count += 1
+        record_event(event)
+        return event
+    except Exception:  # noqa: BLE001 - never let instrumentation break the product path
+        _internal_logger.warning("Failed to record pipeline step %s", step, exc_info=True)
+        return None
+
+
+@dataclass
+class PipelineStep:
+    """Mutable handle yielded by :func:`pipeline_step` so callers can report results."""
+
+    step: str
+    route: str | None = None
+    confidence: float | None = None
+    model: str | None = None
+    provider: str = PROVIDER_LOCAL
+    usage: TokenUsage | None = None
+    attempt: int = 1
+
+
+@contextmanager
+def pipeline_step(step: str, *, route: str | None = None, attempt: int = 1) -> Iterator[PipelineStep]:
+    """Time a non-Claude step and record it on exit (including on error).
+
+    Example (FOOD-55)::
+
+        with pipeline_step("receipt_ocr", route=ROUTE_OCR) as ocr:
+            text, score = run_ocr(image)
+            ocr.confidence = score
+    """
+    handle = PipelineStep(step=step, route=route, attempt=attempt)
+    started = time.perf_counter()
+    try:
+        yield handle
+    except BaseException as exc:
+        record_pipeline_step(
+            step=handle.step,
+            route=handle.route,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            error=exc,
+            confidence=handle.confidence,
+            model=handle.model,
+            provider=handle.provider,
+            usage=handle.usage,
+            attempt=handle.attempt,
+        )
+        raise
+    record_pipeline_step(
+        step=handle.step,
+        route=handle.route,
+        latency_ms=int((time.perf_counter() - started) * 1000),
+        confidence=handle.confidence,
+        model=handle.model,
+        provider=handle.provider,
+        usage=handle.usage,
+        attempt=handle.attempt,
+    )
 
 
 def _safe_record(**kwargs: Any) -> None:

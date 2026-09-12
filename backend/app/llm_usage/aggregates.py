@@ -200,6 +200,7 @@ def summarize(db: Session, *, days: int = 7) -> dict:
     by_workflow: dict[str, Bucket] = defaultdict(Bucket)
     by_workflow_step: dict[str, dict[str, Bucket]] = defaultdict(lambda: defaultdict(Bucket))
     by_workflow_model: dict[str, dict[str, Bucket]] = defaultdict(lambda: defaultdict(Bucket))
+    by_workflow_route: dict[str, dict[str, Bucket]] = defaultdict(lambda: defaultdict(Bucket))
     by_model: dict[str, Bucket] = defaultdict(Bucket)
     by_day: dict[str, Bucket] = defaultdict(Bucket)
     by_day_workflow: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -217,6 +218,7 @@ def summarize(db: Session, *, days: int = 7) -> dict:
         by_workflow[event.workflow].add(event)
         by_workflow_step[event.workflow][event.step].add(event)
         by_workflow_model[event.workflow][event.model].add(event)
+        by_workflow_route[event.workflow][event.route or "unknown"].add(event)
         by_model[event.model].add(event)
         day = _as_utc(event.created_at).date().isoformat()
         by_day[day].add(event)
@@ -285,6 +287,19 @@ def summarize(db: Session, *, days: int = 7) -> dict:
                     for model, model_bucket in sorted(
                         by_workflow_model.get(workflow, {}).items(),
                         key=lambda item: -item[1].cost_usd,
+                    )
+                ],
+                # Route share (cache / ocr / haiku / sonnet / opus) so the
+                # OCR-first pipeline's LLM-fallback rate is visible (FOOD-55).
+                "routes": [
+                    {
+                        "route": route,
+                        "share_of_calls_pct": _pct(route_bucket.calls, bucket.calls),
+                        **route_bucket.as_dict(),
+                    }
+                    for route, route_bucket in sorted(
+                        by_workflow_route.get(workflow, {}).items(),
+                        key=lambda item: -item[1].calls,
                     )
                 ],
             }
@@ -364,6 +379,9 @@ def event_to_dict(event: LlmUsageEvent) -> dict:
         "run_id": event.run_id,
         "attempt": event.attempt,
         "model": event.model,
+        "provider": event.provider,
+        "route": event.route,
+        "confidence": event.confidence,
         "service_tier": event.service_tier,
         "status": event.status,
         "error_type": event.error_type,

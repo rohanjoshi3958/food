@@ -13,6 +13,11 @@ from app.config import settings
 from app.services.anthropic_cache import create_cached_message, message_text_blocks
 from app.services.model_router import RouteDecision, escalation_for, route_model
 
+# Non-Claude receipt steps (OCR pass, cache hit, rule-based parse — FOOD-55)
+# should report through app.llm_usage.pipeline_step(step, route=ROUTE_OCR|
+# ROUTE_CACHE) inside the same receipt_parse workflow scope so they land in
+# the same table and dashboard rather than in parallel counters.
+
 
 def _anthropic_error_message(exc: Exception, model: str) -> str:
     response = getattr(exc, "response", None)
