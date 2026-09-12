@@ -208,6 +208,11 @@ class LlmUsageEvent(Base):
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     provider: Mapped[str] = mapped_column(String, nullable=False, default="anthropic")
     model: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    # Pipeline route that produced this step: cache | ocr | haiku | sonnet | opus.
+    # Claude calls infer it from the model; OCR-first paths (FOOD-55) set it.
+    route: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Optional 0..1 confidence reported by the step (OCR / matcher), if any.
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     service_tier: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="ok")
     error_type: Mapped[str | None] = mapped_column(String, nullable=True)

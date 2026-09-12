@@ -123,6 +123,8 @@ See `backend/tests/README.md` for more on the test suite.
 
 Every Claude call is instrumented (see `backend/app/llm_usage/`). Each call records the workflow (`receipt_parse`, `ingredient_normalize`, `meal_gen`), step, model, uncached / cache-write (5m and 1h) / cache-read / output tokens, image count and approximate visual tokens, stop reason, latency, and an estimated USD cost from Anthropic list prices. Events are stored in Postgres (`llm_usage_events`, plus one `llm_workflow_runs` row per workflow run) and also emitted as JSON lines on the API's stdout. Instrumentation is observe-only: it never changes prompts, validation, or responses, and a failure to record is logged and ignored.
 
+Each event also carries an optional `route` (`cache` | `ocr` | `haiku` | `sonnet` | `opus`; inferred from the model for Claude calls) and `confidence`. Non-Claude steps such as an OCR pass or cache hit report through `app.llm_usage.pipeline_step(step, route=...)` inside the same workflow scope, so tiered pipelines share one table and dashboard.
+
 Open the ops dashboard at [http://localhost:3000/admin/llm-usage](http://localhost:3000/admin/llm-usage) (it is not linked from the consumer UI). It shows $ and tokens per successful receipt parse / ingredient normalize / meal plan, cache read %, vision vs text share, model mix, retry and escalation rates, daily spend, the raw per-call log, and Anthropic billing reconciliation. The same data is available from `GET /api/metrics/llm/summary?days=7`, `/events`, `/anthropic`, and `/pricing`.
 
 Optional settings in `.env`:

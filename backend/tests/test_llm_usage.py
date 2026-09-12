@@ -9,12 +9,19 @@ from unittest.mock import Mock, patch
 import pytest
 
 from app.llm_usage import (
+    ROUTE_CACHE,
+    ROUTE_HAIKU,
+    ROUTE_OCR,
     WORKFLOW_INGREDIENT_NORMALIZE,
     WORKFLOW_MEAL_GEN,
     WORKFLOW_RECEIPT_PARSE,
     WORKFLOW_UNATTRIBUTED,
+    TokenUsage,
     create_message,
     current_run,
+    pipeline_step,
+    record_pipeline_step,
+    route_for_model,
     set_sinks,
     workflow_scope,
 )
@@ -125,6 +132,8 @@ class TestCreateMessage:
         assert event.user_id == "u1"
         assert event.receipt_id == "r1"
         assert event.anthropic_request_id == "req_123"
+        assert event.route == "opus"
+        assert event.confidence is None
         assert event.pricing_known is True
         expected = (1200 * 5 + 300 * 6.25 + 500 * 0.50 + 80 * 25) / 1e6
         assert event.estimated_cost_usd == pytest.approx(expected)
@@ -224,6 +233,89 @@ class TestCreateMessage:
             create_message(client, step="meal_generate", attempt=1, model="claude-sonnet-5", max_tokens=1, messages=[])
             create_message(client, step="meal_generate", attempt=2, model="claude-sonnet-5", max_tokens=1, messages=[])
         assert [event.attempt for event in sink.events] == [1, 2]
+
+
+class TestRoutesAndPipelineSteps:
+    """Forward-compat surface for the OCR-first receipt pipeline (FOOD-55)."""
+
+    @pytest.mark.parametrize(
+        ("model", "route"),
+        [
+            ("claude-opus-5", "opus"),
+            ("claude-sonnet-5-20260415", "sonnet"),
+            ("claude-haiku-4-5", "haiku"),
+            ("gpt-image-1", None),
+            (None, None),
+        ],
+    )
+    def test_route_inferred_from_model(self, model, route):
+        assert route_for_model(model) == route
+
+    def test_explicit_route_overrides_model_inference(self, sink):
+        client = fake_client(fake_response(model="claude-haiku-4-5"))
+        with workflow_scope(WORKFLOW_RECEIPT_PARSE):
+            create_message(client, step="receipt_scan", route=ROUTE_HAIKU, model="claude-haiku-4-5", max_tokens=1, messages=[])
+        assert sink.events[0].route == ROUTE_HAIKU
+
+    def test_pipeline_step_records_route_confidence_latency_under_scope(self, sink):
+        with workflow_scope(WORKFLOW_RECEIPT_PARSE, user_id="u1", receipt_id="r1") as run:
+            with pipeline_step("receipt_ocr", route=ROUTE_OCR) as ocr:
+                ocr.confidence = 0.92
+
+        [event] = sink.events
+        assert event.workflow == WORKFLOW_RECEIPT_PARSE
+        assert event.run_id == run.run_id
+        assert event.step == "receipt_ocr"
+        assert event.route == ROUTE_OCR
+        assert event.confidence == 0.92
+        assert event.provider == "local"
+        assert event.status == "ok"
+        assert event.latency_ms >= 0
+        assert event.estimated_cost_usd == 0.0
+        assert event.uncached_input_tokens == 0
+        assert event.user_id == "u1"
+        assert event.receipt_id == "r1"
+        assert run.call_count == 1
+
+    def test_pipeline_step_records_error_and_reraises(self, sink):
+        with pytest.raises(RuntimeError):
+            with workflow_scope(WORKFLOW_RECEIPT_PARSE):
+                with pipeline_step("receipt_ocr", route=ROUTE_OCR):
+                    raise RuntimeError("tesseract missing")
+        [event] = sink.events
+        assert event.status == "error"
+        assert event.error_type == "RuntimeError"
+        assert event.route == ROUTE_OCR
+
+    def test_cache_hit_step_with_zero_cost(self, sink):
+        with workflow_scope(WORKFLOW_RECEIPT_PARSE):
+            event = record_pipeline_step(step="receipt_cache_lookup", route=ROUTE_CACHE, latency_ms=3, confidence=1.0)
+        assert event is not None
+        assert event.route == ROUTE_CACHE
+        assert event.estimated_cost_usd == 0.0
+        assert event.model == "cache"
+
+    def test_pipeline_step_can_carry_model_usage_for_cost(self, sink):
+        with workflow_scope(WORKFLOW_RECEIPT_PARSE):
+            event = record_pipeline_step(
+                step="receipt_extract",
+                route=ROUTE_HAIKU,
+                latency_ms=800,
+                model="claude-haiku-4-5",
+                provider="anthropic",
+                usage=TokenUsage(uncached_input_tokens=1_000_000),
+            )
+        assert event.estimated_cost_usd == pytest.approx(1.0)
+        assert event.pricing_known is True
+
+    def test_pipeline_step_never_raises_when_sink_fails(self):
+        set_sinks([ExplodingSink()])
+        try:
+            with workflow_scope(WORKFLOW_RECEIPT_PARSE):
+                with pipeline_step("receipt_ocr", route=ROUTE_OCR) as ocr:
+                    ocr.confidence = 0.5
+        finally:
+            set_sinks(None)
 
 
 class TestWorkflowScope:

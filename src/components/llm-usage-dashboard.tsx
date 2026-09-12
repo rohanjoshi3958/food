@@ -354,7 +354,15 @@ function EventsTable({ events }: { events: UsageEvent[] }) {
                   </span>
                 ) : null}
               </td>
-              <td className={td}>{event.model}</td>
+              <td className={td}>
+                {event.model}
+                {event.route ? (
+                  <span className="ml-1 rounded bg-stone-100 px-1.5 py-0.5 text-[10px] font-medium text-stone-600">
+                    {event.route}
+                    {event.confidence !== null ? ` · ${Math.round(event.confidence * 100)}%` : ""}
+                  </span>
+                ) : null}
+              </td>
               <td className={tdNum}>{formatCount(event.uncached_input_tokens)}</td>
               <td className={tdNum}>
                 {formatCount(event.cache_write_5m_tokens + event.cache_write_1h_tokens)} /{" "}

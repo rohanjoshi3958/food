@@ -13,6 +13,10 @@ from app.config import RECEIPT_ANTHROPIC_MODEL, settings
 from app.llm_usage import create_message
 
 # Step names recorded on llm_usage_events for this module's Claude calls.
+# Non-Claude receipt steps (OCR pass, cache hit, rule-based parse — FOOD-55)
+# should report through app.llm_usage.pipeline_step(step, route=ROUTE_OCR|
+# ROUTE_CACHE) inside the same receipt_parse workflow scope so they land in
+# the same table and dashboard rather than in parallel counters.
 STEP_RECEIPT_SCAN = "receipt_scan"
 STEP_NUTRITION_ESTIMATE = "nutrition_estimate"
 STEP_UNIT_CHECK = "unit_check"

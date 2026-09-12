@@ -281,6 +281,32 @@ class TestSevenDayAggregates:
         assert today_row["calls"] == 5
         assert today_row["by_workflow"]["receipt_parse"] == pytest.approx(0.02)
 
+    def test_route_share_and_confidence_are_exposed(self, client, test_db, auth_headers):
+        """FOOD-55 schema: ocr/cache steps sit next to Claude calls in the same run."""
+        _seed_run(test_db, "r-ocr", "receipt_parse", "succeeded")
+        _seed_event(test_db, workflow="receipt_parse", step="receipt_ocr", run_id="r-ocr", route="ocr",
+                    provider="local", model="ocr", confidence=0.91, uncached_input_tokens=0, output_tokens=0,
+                    estimated_cost_usd=0.0)
+        _seed_event(test_db, workflow="receipt_parse", step="receipt_scan", run_id="r-ocr", route="haiku",
+                    model="claude-haiku-4-5", estimated_cost_usd=0.002)
+        _seed_event(test_db, workflow="receipt_parse", step="receipt_scan", run_id="r-ocr", route="opus",
+                    model="claude-opus-5", estimated_cost_usd=0.02)
+
+        summary = client.get("/api/metrics/llm/summary", headers=auth_headers).json()
+        receipt = next(row for row in summary["workflows"] if row["workflow"] == "receipt_parse")
+        routes = {row["route"]: row for row in receipt["routes"]}
+        assert set(routes) == {"ocr", "haiku", "opus"}
+        assert routes["ocr"]["share_of_calls_pct"] == pytest.approx(33.33, abs=0.01)
+        assert routes["opus"]["estimated_cost_usd"] == pytest.approx(0.02)
+        assert receipt["escalation_rate_pct"] == 100.0  # haiku -> opus within one run
+        assert receipt["cost_per_successful_run_usd"] == pytest.approx(0.022)
+
+        events = client.get("/api/metrics/llm/events?workflow=receipt_parse", headers=auth_headers).json()["events"]
+        ocr_event = next(event for event in events if event["step"] == "receipt_ocr")
+        assert ocr_event["route"] == "ocr"
+        assert ocr_event["confidence"] == 0.91
+        assert ocr_event["provider"] == "local"
+
     def test_escalation_rate_counts_runs_with_multiple_models(self, client, test_db, auth_headers):
         _seed_run(test_db, "r1", "meal_gen", "succeeded")
         _seed_event(test_db, run_id="r1", model="claude-haiku-4-5")
