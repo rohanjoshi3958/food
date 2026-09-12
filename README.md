@@ -64,6 +64,28 @@ FRONTEND_URL="http://localhost:3000"
 
 Receipt analysis uses Claude Opus; meal generation uses Claude Sonnet 5; meal images use OpenAI `gpt-image-1`.
 
+### Receipt pipeline flags (FOOD-55, default off)
+
+By default every receipt upload goes to vision Claude Opus exactly as before. Two opt-in flags change that:
+
+| Env var | Default | Effect |
+| --- | --- | --- |
+| `RECEIPT_ANALYSIS_CACHE` | `0` | Re-uploading byte-identical receipt bytes (same user) reuses the prior parse, skipping OCR/LLM calls. Telemetry path `cache`. |
+| `RECEIPT_OCR_FIRST` | `0` | Run in-process Tesseract + a deterministic parser first; only escalate to an LLM when a confidence gate fails. Telemetry paths `ocr` → (`haiku` → `sonnet`, if configured) → `opus_baseline`. |
+
+`RECEIPT_OCR_FIRST=1` needs the Tesseract binary on the API host:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
+# macOS
+brew install tesseract
+```
+
+If the binary is missing the OCR rung reports `ocr_unavailable` and the upload falls through to the existing Opus path, so nothing breaks — it just isn't cheaper. Optional tuning (all `RECEIPT_OCR_*` settings in `backend/app/config.py`): `RECEIPT_OCR_MIN_CONFIDENCE` (default 60), `RECEIPT_OCR_MAX_MISSING_QTY_UNIT_RATIO` (0.5), `RECEIPT_OCR_TOTALS_TOLERANCE` (0.02), `RECEIPT_OCR_TEXT_FALLBACK_MODEL` / `RECEIPT_OCR_VISION_FALLBACK_MODEL` (empty = skip that rung; the vision rung then uses the Opus baseline model), `RECEIPT_OCR_TESSERACT_CMD` (binary path override).
+
+Each upload logs one structured `receipt_analysis` JSON record (`path`, `confidence`, `latency_ms`, `gate_reasons`, …) on the `app.receipts.telemetry` logger. The labeled eval set that gates flipping the default lives in `backend/evals/receipts/`.
+
 ## Run locally
 
 From the project root:
