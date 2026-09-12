@@ -1,0 +1,37 @@
+{
+  "id": "corner_store_missing_quantities",
+  "description": "Thermal-paper corner store receipt with no printed quantities or units. The model guesses (allowed by the prompt); labelled quantities are null so guesses are not scored. One vague line ('MISC GROCERY') is correctly parsed but cannot be recognized for nutrition. Response is fenced with a trailing newline.",
+  "file_suffix": ".jpeg",
+  "model_response": {
+    "wrapper": "fenced",
+    "payload": {
+      "store_name": "Sunrise Market",
+      "items": [
+        {"store_item_name": "WHT BREAD", "ingredient_name": "White Bread", "is_food": true, "quantity": "1", "unit": "each"},
+        {"store_item_name": "LG EGGS", "ingredient_name": "Large Eggs", "is_food": true, "quantity": "12", "unit": "each"},
+        {"store_item_name": "BUTTER SALTED", "ingredient_name": "Salted Butter", "is_food": true, "quantity": "1", "unit": "each"},
+        {"store_item_name": "MISC GROCERY", "ingredient_name": "Misc Grocery", "is_food": true, "quantity": "1", "unit": "each"},
+        {"store_item_name": "ORANGE JUICE", "ingredient_name": "Orange Juice", "is_food": true, "quantity": "1", "unit": "each"},
+        {"store_item_name": "LOTTERY", "ingredient_name": "Lottery Ticket", "is_food": false, "quantity": null, "unit": null}
+      ]
+    }
+  },
+  "nutrition_responses": {
+    "White Bread": {"recognized": true, "serving_size": "1 slice (28g)", "servings_per_container": 20, "calories": 75, "protein_g": 2.5, "carbs_g": 14, "fat_g": 1, "fiber_g": 0.7, "sodium_mg": 140, "nutrition_notes": "Label"},
+    "Large Eggs": {"recognized": true, "serving_size": "1 egg (50g)", "servings_per_container": 1, "calories": 70, "protein_g": 6, "carbs_g": 0, "fat_g": 5, "fiber_g": 0, "sodium_mg": 70, "nutrition_notes": "USDA"},
+    "Salted Butter": {"recognized": true, "serving_size": "1 tbsp (14g)", "servings_per_container": 32, "calories": 100, "protein_g": 0, "carbs_g": 0, "fat_g": 11, "fiber_g": 0, "sodium_mg": 90, "nutrition_notes": "Label"},
+    "Misc Grocery": {"recognized": false, "serving_size": null, "servings_per_container": null, "calories": null, "protein_g": null, "carbs_g": null, "fat_g": null, "fiber_g": null, "sodium_mg": null, "nutrition_notes": "Too vague to identify"},
+    "Orange Juice": {"recognized": true, "serving_size": "8 fl oz (240ml)", "servings_per_container": 8, "calories": 110, "protein_g": 2, "carbs_g": 26, "fat_g": 0, "fiber_g": 0.5, "sodium_mg": 0, "nutrition_notes": "Label"}
+  },
+  "expected": {
+    "store_name": "Sunrise Market",
+    "items": [
+      {"store_item_name": "WHT BREAD", "ingredient_name": "White Bread", "is_food": true, "quantity": null, "unit": null},
+      {"store_item_name": "LG EGGS", "ingredient_name": "Large Eggs", "is_food": true, "quantity": null, "unit": null},
+      {"store_item_name": "BUTTER SALTED", "ingredient_name": "Salted Butter", "is_food": true, "quantity": null, "unit": null},
+      {"store_item_name": "MISC GROCERY", "ingredient_name": "Misc Grocery", "is_food": true, "quantity": null, "unit": null, "expect_recognized": false},
+      {"store_item_name": "ORANGE JUICE", "ingredient_name": "Orange Juice", "is_food": true, "quantity": null, "unit": null},
+      {"store_item_name": "LOTTERY", "ingredient_name": "Lottery Ticket", "is_food": false}
+    ]
+  }
+}

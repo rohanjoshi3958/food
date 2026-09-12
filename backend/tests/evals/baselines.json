@@ -1,0 +1,43 @@
+{
+  "_comment": [
+    "Documented quality baselines for the mocked eval corpus (FOOD-58).",
+    "`baseline` is what the current fixtures score on the current pipeline with the",
+    "current model tiers (Opus 5 for receipt.*, Sonnet 5 for meal.*). `min`/`max` is",
+    "the CI gate: the suite fails when a metric crosses it. Thresholds sit one",
+    "fixture-level miss below the baseline on purpose, so a single regression in a",
+    "pipeline guard or a re-recorded lower-tier response is enough to fail.",
+    "Re-baseline in the same PR as the change that moves a number, and say why."
+  ],
+  "receipt_parse": {
+    "line_item_recall": {"baseline": 1.0, "min": 0.98},
+    "line_item_precision": {"baseline": 1.0, "min": 0.98},
+    "ingredient_name_accuracy": {"baseline": 0.972, "min": 0.95},
+    "is_food_accuracy": {"baseline": 0.972, "min": 0.95},
+    "quantity_accuracy": {"baseline": 0.957, "min": 0.95},
+    "unit_accuracy": {"baseline": 0.957, "min": 0.95},
+    "store_name_accuracy": {"baseline": 0.8, "min": 0.8},
+    "nutrition_coverage": {"baseline": 0.963, "min": 0.95}
+  },
+  "ingredient_match": {
+    "match_decision_accuracy": {"baseline": 1.0, "min": 0.95},
+    "canonical_name_accuracy": {"baseline": 0.875, "min": 0.85},
+    "invalid_id_rejection": {"baseline": 1.0, "min": 1.0},
+    "ambiguous_never_merged": {"baseline": 1.0, "min": 1.0},
+    "duplicate_rows_created": {"baseline": 0, "max": 0},
+    "draft_collapse_rate": {"baseline": 1.0, "min": 1.0},
+    "mean_pantry_match_calls": {"baseline": 0.929, "max": 1.0}
+  },
+  "meal_plan": {
+    "schema_valid_rate": {"baseline": 1.0, "min": 1.0},
+    "acceptability_rate": {"baseline": 0.875, "min": 0.85},
+    "calorie_in_band_rate": {"baseline": 1.0, "min": 0.95},
+    "pantry_only_rate": {"baseline": 0.875, "min": 0.85},
+    "instructions_present_rate": {"baseline": 1.0, "min": 1.0},
+    "mean_calls_per_meal": {"baseline": 1.375, "max": 2.0},
+    "outcome_matches_label_rate": {"baseline": 1.0, "min": 1.0}
+  },
+  "prompt_layout": {
+    "_comment": "Live-only (FOOD-56 residual): cached system+tail vs legacy single-turn prompt must reach the same pantry-match decision.",
+    "layout_ab_agreement": {"baseline": null, "min": 0.9}
+  }
+}
