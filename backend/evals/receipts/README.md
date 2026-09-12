@@ -50,11 +50,16 @@ Labeling rules:
 | clean_grocery | `clean_grocery_01` | happy path; name line + weight line | `ocr` |
 | sku_abbrevs | `sku_abbrevs_01` | dense abbreviations, UPCs, tax flags | `ocr` |
 | mixed_non_food | `mixed_non_food_01` | `is_food` precision, bag fee, coupon | `ocr` |
-| blurry_thermal | `blurry_thermal_01` | low OCR confidence → gate → escalate | `opus_baseline` |
+| blurry_thermal | `blurry_thermal_01` | low OCR confidence → gate → Haiku cleanup | `haiku` |
 | multi_column | `multi_column_01` | price column split onto its own lines | `ocr` |
-| missing_qty_unit | `missing_qty_unit_01` | produce with no qty/unit → gate → escalate | `opus_baseline` |
+| missing_qty_unit | `missing_qty_unit_01` | produce with no qty/unit → gate → Haiku cleanup | `haiku` |
 | reupload_hash | `reupload_hash_01` | byte-identical re-upload served from cache | `cache` |
-| pdf | `pdf_01` | non-image input skips OCR, still parses | `opus_baseline` |
+| pdf | `pdf_01` | non-image input skips OCR and Haiku → Sonnet vision | `sonnet` |
+
+Path names map to model constants in `app/config.py`: `haiku` =
+`RECEIPT_OCR_CLEANUP_MODEL`, `sonnet` = `RECEIPT_OCR_VISION_FALLBACK_MODEL`,
+`opus_baseline` = `RECEIPT_ANTHROPIC_MODEL` (flag-off behaviour and the
+comparison baseline).
 
 `smoke: true` cases are the zero-regression set. Add more cases by copying a
 folder, appending a manifest entry, and running `validate`.
@@ -97,10 +102,15 @@ python evals/receipts/run_eval.py validate
 python evals/receipts/run_eval.py run --mode ocr-text --out /tmp/cand.json
 python evals/receipts/run_eval.py score --predictions /tmp/cand.json
 
-# 3. once images exist: real Tesseract, and the vision-Opus baseline (needs ANTHROPIC_API_KEY)
-python evals/receipts/run_eval.py run --mode ocr      --out /tmp/cand.json
+# 3. once images exist: the full OCR-first ladder (Tesseract -> Haiku -> Sonnet; needs
+#    ANTHROPIC_API_KEY for the LLM rungs) vs the vision-Opus baseline. This is the flip gate.
+python evals/receipts/run_eval.py run --mode ladder   --out /tmp/cand.json
 python evals/receipts/run_eval.py run --mode baseline --out /tmp/base.json
 python evals/receipts/run_eval.py score --predictions /tmp/cand.json --baseline /tmp/base.json --strict
+
+# OCR rung only (no LLM calls): escalations are recorded as `escalated` and scored
+# with the --baseline result when present
+python evals/receipts/run_eval.py run --mode ocr --out /tmp/ocr_only.json
 
 # refresh ocr_text.txt fixtures from the real images
 python evals/receipts/run_eval.py dump-ocr
@@ -110,14 +120,14 @@ Notes on the runner:
 
 - `run` simulates the per-user content-hash cache: a byte-identical input seen earlier in the run is recorded as `path: cache` (disable with `--no-simulate-cache`).
 - In `ocr-text` mode Tesseract confidence is unknown; the manifest's per-case `ocr_confidence` (else `--assume-confidence`, default 90) feeds the gate. `blurry_thermal_01` sets 38 so the low-confidence gate fires as it would on the real image.
-- Cases the candidate escalates (`path: escalated`) are scored with the `--baseline` prediction for that case, charged at the baseline's cost — the same thing production does.
-- `run` never touches the database; it calls the parser/gates and the extraction functions directly and skips nutrition enrichment (out of scope for FOOD-55).
+- In `ocr-text` / `ocr` modes there are no LLM rungs, so gate failures are recorded as `path: escalated` and scored with the `--baseline` prediction for that case (charged at the baseline's cost). Those cases will then miss a `haiku`/`sonnet` `expect_path`; use `--mode ladder` for the real gate.
+- `run` never touches the database; it calls `extract_ocr_first` / `extract_receipt_vision` directly and skips nutrition enrichment (out of scope for FOOD-55).
 
 ## Honest caveat about today's numbers
 
 The current `ocr_text.txt` fixtures were hand-written against the same rules
 the parser implements, so `item F1 = 1.0` on them proves the plumbing works,
-not that the parser is accurate. The number that matters is `--mode ocr` on
+not that the parser is accurate. The number that matters is `--mode ladder` on
 real images against a `--mode baseline` run. Re-label from the real image
 when you add one; the placeholder labels are only there so the schema and
 manifest can be exercised.

@@ -185,13 +185,21 @@ VISA                     17.06
 def build_anthropic_router(
     receipt_response: dict | None,
     nutrition_by_name: dict[str, dict],
+    *,
+    text_response: dict | None = None,
 ):
     """Content-aware ``messages.create`` side effect.
 
     Unlike the ordered list in ``build_receipt_flow_side_effect`` this looks at
     the prompt, so it is safe with the thread pool used for nutrition
     enrichment and with cache hits that skip calls entirely.
+
+    ``receipt_response`` answers vision/document extraction calls;
+    ``text_response`` answers the OCR-text cleanup rung (defaults to
+    ``receipt_response``). ``None`` makes that kind of call fail the test.
     """
+    if text_response is None:
+        text_response = receipt_response
 
     def _text_of(content) -> str:
         if isinstance(content, str):
@@ -208,9 +216,9 @@ def build_anthropic_router(
                 raise AssertionError("Vision call made but no receipt_response configured")
             return create_mock_anthropic_response(json.dumps(receipt_response))
         if "OCR TEXT START" in text:
-            if receipt_response is None:
-                raise AssertionError("Text extraction call made but no receipt_response configured")
-            return create_mock_anthropic_response(json.dumps(receipt_response))
+            if text_response is None:
+                raise AssertionError("OCR-text cleanup call made but no text_response configured")
+            return create_mock_anthropic_response(json.dumps(text_response))
         if "Estimate nutritional facts" in text:
             for name, estimate in nutrition_by_name.items():
                 if f"Item: {name}" in text:

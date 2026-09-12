@@ -53,9 +53,9 @@
       "labels": "cases/blurry_thermal_01/labels.json",
       "status": "placeholder",
       "smoke": false,
-      "expect_path": "opus_baseline",
+      "expect_path": "haiku",
       "ocr_confidence": 38.0,
-      "notes": "Faded thermal paper, slight motion blur. Expected to fail the OCR confidence gate and escalate."
+      "notes": "Faded thermal paper, slight motion blur. Expected to fail the OCR confidence gate and escalate to the Haiku OCR-text cleanup rung."
     },
     {
       "id": "multi_column_01",
@@ -76,8 +76,8 @@
       "labels": "cases/missing_qty_unit_01/labels.json",
       "status": "placeholder",
       "smoke": false,
-      "expect_path": "opus_baseline",
-      "notes": "Farm-stand style receipt: produce by name and price only. Should trip the missing qty/unit gate."
+      "expect_path": "haiku",
+      "notes": "Farm-stand style receipt: produce by name and price only. Should trip the missing qty/unit gate and escalate to the Haiku cleanup rung, which guesses units."
     },
     {
       "id": "reupload_hash_01",
@@ -97,8 +97,8 @@
       "labels": "cases/pdf_01/labels.json",
       "status": "placeholder",
       "smoke": true,
-      "expect_path": "opus_baseline",
-      "notes": "Emailed PDF receipt. OCR rung skips non-images, so this must still parse via the vision baseline."
+      "expect_path": "sonnet",
+      "notes": "Emailed PDF receipt. OCR rung skips non-images and there is no OCR text for Haiku, so this must parse via Sonnet vision (document block)."
     }
   ]
 }

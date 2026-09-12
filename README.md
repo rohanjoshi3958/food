@@ -71,7 +71,7 @@ By default every receipt upload goes to vision Claude Opus exactly as before. Tw
 | Env var | Default | Effect |
 | --- | --- | --- |
 | `RECEIPT_ANALYSIS_CACHE` | `0` | Re-uploading byte-identical receipt bytes (same user) reuses the prior parse, skipping OCR/LLM calls. Path `cache`. |
-| `RECEIPT_OCR_FIRST` | `0` | Run in-process Tesseract + a deterministic parser first; only escalate to an LLM when a confidence gate fails. Paths `ocr` → (`haiku` → `sonnet`, if configured) → `opus_baseline`. |
+| `RECEIPT_OCR_FIRST` | `0` | Run in-process Tesseract + a deterministic parser first; only escalate to an LLM when a confidence gate fails. Paths `ocr` → `haiku` (`RECEIPT_OCR_CLEANUP_MODEL` on the OCR text) → `sonnet` (`RECEIPT_OCR_VISION_FALLBACK_MODEL` on a downsampled image). With the flag off the path is `opus_baseline` (`RECEIPT_ANTHROPIC_MODEL`). |
 
 `RECEIPT_OCR_FIRST=1` needs the Tesseract binary on the API host:
 
@@ -82,7 +82,7 @@ sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
 brew install tesseract
 ```
 
-If the binary is missing the OCR rung reports `ocr_unavailable` and the upload falls through to the existing Opus path, so nothing breaks — it just isn't cheaper. Optional tuning (all `RECEIPT_OCR_*` settings in `backend/app/config.py`): `RECEIPT_OCR_MIN_CONFIDENCE` (default 60), `RECEIPT_OCR_MAX_MISSING_QTY_UNIT_RATIO` (0.5), `RECEIPT_OCR_TOTALS_TOLERANCE` (0.02), `RECEIPT_OCR_TEXT_FALLBACK_MODEL` / `RECEIPT_OCR_VISION_FALLBACK_MODEL` (empty = skip that rung; the vision rung then uses the Opus baseline model), `RECEIPT_OCR_TESSERACT_CMD` (binary path override).
+If the binary is missing the OCR rung reports `ocr_unavailable` and the upload falls through to the Sonnet vision rung, so nothing breaks — it just isn't cheaper. Model IDs are fixed constants in `backend/app/config.py`, not env vars. Optional gate tuning (`RECEIPT_OCR_*` settings): `RECEIPT_OCR_MIN_CONFIDENCE` (default 60), `RECEIPT_OCR_MAX_MISSING_QTY_UNIT_RATIO` (0.5), `RECEIPT_OCR_TOTALS_TOLERANCE` (0.02), `RECEIPT_OCR_TESSERACT_CMD` (binary path override), `RECEIPT_VISION_LONG_EDGE` (1600). Nutrition, pantry-match and unit-check calls stay on `RECEIPT_ANTHROPIC_MODEL` regardless of the flag (FOOD-58 will add routing).
 
 The path that produced each receipt is stored in `receipts.analysis_path`. Per-upload metrics (path, tokens, confidence, latency) are not emitted yet; FOOD-54 will wire its helper at the marked call site in `backend/app/routers/receipts.py`. The labeled eval set that gates flipping the default lives in `backend/evals/receipts/`.
 

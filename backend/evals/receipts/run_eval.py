@@ -3,8 +3,9 @@
 
     python evals/receipts/run_eval.py validate
     python evals/receipts/run_eval.py run --mode ocr-text --out /tmp/cand.json
-    python evals/receipts/run_eval.py run --mode ocr      --out /tmp/cand.json   # needs images + Tesseract
-    python evals/receipts/run_eval.py run --mode baseline --out /tmp/base.json   # needs images + ANTHROPIC_API_KEY
+    python evals/receipts/run_eval.py run --mode ocr      --out /tmp/ocr.json    # needs images + Tesseract; no LLM
+    python evals/receipts/run_eval.py run --mode ladder   --out /tmp/cand.json   # ocr -> haiku -> sonnet; needs ANTHROPIC_API_KEY
+    python evals/receipts/run_eval.py run --mode baseline --out /tmp/base.json   # vision Opus; needs ANTHROPIC_API_KEY
     python evals/receipts/run_eval.py score --predictions /tmp/cand.json [--baseline /tmp/base.json]
     python evals/receipts/run_eval.py dump-ocr                                    # write Tesseract text next to images
 
@@ -130,12 +131,27 @@ def _run_ocr_image(image_bytes: bytes) -> Prediction:
     return prediction
 
 
+def _run_ladder(image_path: Path, image_bytes: bytes) -> Prediction:
+    """The production OCR-first ladder (ocr -> haiku -> sonnet) minus nutrition enrichment."""
+    from app.services.receipt_pipeline import extract_ocr_first
+
+    outcome = extract_ocr_first(image_path, image_bytes)
+    return _prediction_from_parsed(
+        outcome.parsed,
+        outcome.path,
+        gate_passed=outcome.path == "ocr",
+        gate_reasons=outcome.gate_reasons,
+        latency_ms=outcome.latency_ms,
+    )
+
+
 def _run_baseline(image_path: Path, image_bytes: bytes) -> Prediction:
+    from app.config import RECEIPT_ANTHROPIC_MODEL
     from app.services.receipt_analyzer import _media_type_for_path, extract_receipt_vision
 
     started = time.perf_counter()
     media_type, _ = _media_type_for_path(image_path)
-    parsed = extract_receipt_vision(image_bytes, media_type)
+    parsed = extract_receipt_vision(image_bytes, media_type, model=RECEIPT_ANTHROPIC_MODEL)
     return _prediction_from_parsed(parsed, "opus_baseline", latency_ms=(time.perf_counter() - started) * 1000)
 
 
@@ -172,6 +188,8 @@ def cmd_run(args) -> int:
                 prediction = _run_ocr_text(payload.decode("utf-8"), confidence)
             elif args.mode == "ocr":
                 prediction = _run_ocr_image(payload)
+            elif args.mode == "ladder":
+                prediction = _run_ladder(image, payload)
             else:
                 prediction = _run_baseline(image, payload)
             seen_hashes.setdefault(digest, prediction)
@@ -260,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("validate").set_defaults(func=cmd_validate)
 
     run = sub.add_parser("run")
-    run.add_argument("--mode", choices=["ocr-text", "ocr", "baseline"], default="ocr-text")
+    run.add_argument("--mode", choices=["ocr-text", "ocr", "ladder", "baseline"], default="ocr-text")
     run.add_argument("--out", required=True)
     run.add_argument(
         "--assume-confidence",

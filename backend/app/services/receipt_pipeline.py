@@ -2,11 +2,13 @@
 
 Order of rungs when ``RECEIPT_OCR_FIRST`` is on:
 
-    cache -> ocr (Tesseract + rules + gates) -> haiku (text, optional)
-          -> sonnet (vision on downsampled image, optional) -> opus_baseline
+    cache -> ocr (Tesseract + rules + gates)
+          -> haiku (RECEIPT_OCR_CLEANUP_MODEL on the OCR text)
+          -> sonnet (RECEIPT_OCR_VISION_FALLBACK_MODEL on a downsampled image)
 
 With the flag off this is exactly the pre-FOOD-55 behaviour
-(``analyze_receipt_image``), optionally short-circuited by the hash cache.
+(``analyze_receipt_image`` on RECEIPT_ANTHROPIC_MODEL, path ``opus_baseline``),
+optionally short-circuited by the hash cache. Model IDs live in app.config.
 """
 
 from __future__ import annotations
@@ -18,7 +20,11 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.config import RECEIPT_ANTHROPIC_MODEL, settings
+from app.config import (
+    RECEIPT_OCR_CLEANUP_MODEL,
+    RECEIPT_OCR_VISION_FALLBACK_MODEL,
+    settings,
+)
 from app.models import Receipt
 from app.services.receipt_analyzer import (
     ParsedReceipt,
@@ -148,7 +154,20 @@ def _llm_rung_ok(parsed: ParsedReceipt) -> list[str]:
     return reasons
 
 
-def _analyze_ocr_first(file_path: Path, contents: bytes, digest: str, started: float) -> ReceiptAnalysisOutcome:
+def extract_ocr_first(
+    file_path: Path,
+    contents: bytes,
+    *,
+    started: float | None = None,
+) -> ReceiptAnalysisOutcome:
+    """OCR-first extraction ladder without nutrition enrichment.
+
+    ocr (Tesseract + rules + gates) -> haiku (RECEIPT_OCR_CLEANUP_MODEL on the
+    OCR text) -> sonnet (RECEIPT_OCR_VISION_FALLBACK_MODEL on a downsampled
+    image). Used by ``analyze_receipt`` and by the eval runner.
+    """
+    started = time.perf_counter() if started is None else started
+    digest = content_hash(contents)
     escalations: list[str] = []
     gate_reasons: list[str] = []
 
@@ -156,7 +175,7 @@ def _analyze_ocr_first(file_path: Path, contents: bytes, digest: str, started: f
     ocr_confidence = ocr.confidence if ocr else None
     if parsed is not None and decision.passed:
         return ReceiptAnalysisOutcome(
-            parsed=enrich_receipt_nutrition(parsed),
+            parsed=parsed,
             path=PATH_OCR,
             content_hash=digest,
             latency_ms=(time.perf_counter() - started) * 1000,
@@ -166,19 +185,19 @@ def _analyze_ocr_first(file_path: Path, contents: bytes, digest: str, started: f
     escalations.append(PATH_OCR)
     gate_reasons.extend(decision.reasons)
 
-    # Soft fallback: cheap text model over the OCR output.
-    text_model = settings.receipt_ocr_text_fallback_model
-    if text_model and ocr is not None and ocr.text.strip():
-        rung = path_for_model(text_model)
+    # Soft fail: cheap text model cleans up the OCR output (skipped when OCR
+    # produced nothing to clean, e.g. PDFs or a missing binary).
+    if ocr is not None and ocr.text.strip():
+        rung = path_for_model(RECEIPT_OCR_CLEANUP_MODEL)
         try:
-            candidate = extract_receipt_text(ocr.text, model=text_model)
+            candidate = extract_receipt_text(ocr.text, model=RECEIPT_OCR_CLEANUP_MODEL)
             reasons = _llm_rung_ok(candidate)
         except ReceiptAnalysisError as exc:
             candidate, reasons = None, [f"{rung}_error"]
-            logger.info("Text fallback failed, escalating: %s", exc)
+            logger.info("OCR cleanup model failed, escalating: %s", exc)
         if candidate is not None and not reasons:
             return ReceiptAnalysisOutcome(
-                parsed=enrich_receipt_nutrition(candidate),
+                parsed=candidate,
                 path=rung,
                 content_hash=digest,
                 latency_ms=(time.perf_counter() - started) * 1000,
@@ -189,25 +208,33 @@ def _analyze_ocr_first(file_path: Path, contents: bytes, digest: str, started: f
         escalations.append(rung)
         gate_reasons.extend(reasons)
 
-    # Hard fallback: vision on a downsampled image. Defaults to the Opus
-    # baseline model when no Sonnet override is configured.
-    vision_model = settings.receipt_ocr_vision_fallback_model or RECEIPT_ANTHROPIC_MODEL
+    # Hard fail: Sonnet vision on a downsampled image (PDFs go through as-is).
     media_type, _content_type = _media_type_for_path(file_path)
     normalized = normalize_for_vision(contents, settings.receipt_vision_long_edge)
     if normalized is not None:
         data, media_type = normalized.data, normalized.media_type
     else:
         data = contents
-    parsed = require_food_items(extract_receipt_vision(data, media_type, model=vision_model))
+    parsed = require_food_items(
+        extract_receipt_vision(data, media_type, model=RECEIPT_OCR_VISION_FALLBACK_MODEL)
+    )
     return ReceiptAnalysisOutcome(
-        parsed=enrich_receipt_nutrition(parsed),
-        path=path_for_model(vision_model),
+        parsed=parsed,
+        path=path_for_model(RECEIPT_OCR_VISION_FALLBACK_MODEL),
         content_hash=digest,
         latency_ms=(time.perf_counter() - started) * 1000,
         ocr_confidence=ocr_confidence,
         gate_reasons=gate_reasons,
         escalations=escalations,
     )
+
+
+def _analyze_ocr_first(file_path: Path, contents: bytes, started: float) -> ReceiptAnalysisOutcome:
+    outcome = extract_ocr_first(file_path, contents, started=started)
+    # Nutrition enrichment stays on RECEIPT_ANTHROPIC_MODEL (FOOD-58 owns routing).
+    outcome.parsed = enrich_receipt_nutrition(outcome.parsed)
+    outcome.latency_ms = (time.perf_counter() - started) * 1000
+    return outcome
 
 
 def analyze_receipt(
@@ -239,7 +266,7 @@ def analyze_receipt(
         )
 
     if settings.receipt_ocr_first:
-        return _analyze_ocr_first(file_path, contents, digest, started)
+        return _analyze_ocr_first(file_path, contents, started)
 
     parsed = analyze_receipt_image(file_path)
     return ReceiptAnalysisOutcome(

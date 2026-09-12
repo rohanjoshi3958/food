@@ -6,9 +6,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 # Fixed model choices — not user-configurable.
+# Receipt vision baseline (flag off) and, until FOOD-58 adds routing, every
+# nutrition / pantry-match / unit-check call.
 RECEIPT_ANTHROPIC_MODEL = "claude-opus-5"
 MEAL_ANTHROPIC_MODEL = "claude-sonnet-5"
 OPENAI_IMAGE_MODEL = "gpt-image-1"
+# FOOD-55 OCR-first escalation ladder (only used when RECEIPT_OCR_FIRST is on).
+# Soft fail: cheap text model cleans up the Tesseract output.
+RECEIPT_OCR_CLEANUP_MODEL = "claude-haiku-5"
+# Hard fail: Sonnet vision on the downsampled image instead of the Opus extract.
+RECEIPT_OCR_VISION_FALLBACK_MODEL = "claude-sonnet-5"
 
 
 class Settings(BaseSettings):
@@ -38,10 +45,6 @@ class Settings(BaseSettings):
     receipt_ocr_totals_tolerance: float = 0.02  # relative; absolute floor is $0.05
     receipt_ocr_tesseract_config: str = "--psm 4"
     receipt_ocr_tesseract_cmd: str = ""  # optional path override for the binary
-    # Escalation ladder. Empty = skip that rung. The vision rung falls back to
-    # RECEIPT_ANTHROPIC_MODEL (Opus baseline) when unset.
-    receipt_ocr_text_fallback_model: str = ""  # e.g. a Haiku model on OCR text
-    receipt_ocr_vision_fallback_model: str = ""  # e.g. "claude-sonnet-5" on a downsampled image
     receipt_vision_long_edge: int = 1600
 
     model_config = SettingsConfigDict(

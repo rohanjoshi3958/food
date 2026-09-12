@@ -4,7 +4,12 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from app.config import RECEIPT_ANTHROPIC_MODEL, settings
+from app.config import (
+    RECEIPT_ANTHROPIC_MODEL,
+    RECEIPT_OCR_CLEANUP_MODEL,
+    RECEIPT_OCR_VISION_FALLBACK_MODEL,
+    settings,
+)
 from app.models import Receipt, User
 from app.services.receipt_analyzer import ParsedReceipt, ParsedReceiptItem, ReceiptAnalysisError
 from app.services.receipt_ocr import OcrResult, OcrUnavailableError
@@ -66,8 +71,6 @@ def flags():
     """Reset every FOOD-55 flag for a test, then restore."""
     with patch.object(settings, "receipt_analysis_cache", False), \
          patch.object(settings, "receipt_ocr_first", False), \
-         patch.object(settings, "receipt_ocr_text_fallback_model", ""), \
-         patch.object(settings, "receipt_ocr_vision_fallback_model", ""), \
          patch.object(settings, "anthropic_api_key", "test-api-key"):
         yield
 
@@ -172,79 +175,83 @@ class TestOcrFirstLadder:
         names = {item.ingredient_name for item in outcome.parsed.items if item.is_food}
         assert names == {"Organic Bananas", "Almond Butter", "Greek Yogurt"}
 
-    def test_low_confidence_escalates_to_opus_on_downsampled_image(self, test_db, test_user, real_receipt_image, ocr_receipt_text):
+    def test_soft_fail_uses_haiku_cleanup_on_ocr_text(self, test_db, test_user, real_receipt_image, ocr_receipt_text):
         contents = real_receipt_image.read_bytes()
         weak = OcrResult(text=ocr_receipt_text, confidence=30.0)
         with patch(f"{PIPELINE}.run_tesseract", return_value=weak), \
-             patch(f"{PIPELINE}.extract_receipt_vision", return_value=_parsed("EGGS")) as vision:
-            outcome = analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id)
-
-        assert outcome.path == PATH_OPUS_BASELINE
-        assert outcome.escalations == [PATH_OCR]
-        assert outcome.gate_reasons == ["low_ocr_confidence"]
-        data, media_type = vision.call_args.args
-        assert vision.call_args.kwargs["model"] == RECEIPT_ANTHROPIC_MODEL
-        assert media_type == "image/jpeg"
-        assert data != contents  # re-encoded / downsampled, not the raw PNG
-
-    def test_ocr_unavailable_escalates(self, test_db, test_user, real_receipt_image):
-        contents = real_receipt_image.read_bytes()
-        with patch(f"{PIPELINE}.run_tesseract", side_effect=OcrUnavailableError("no binary")), \
-             patch(f"{PIPELINE}.extract_receipt_vision", return_value=_parsed("EGGS")):
-            outcome = analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id)
-        assert outcome.path == PATH_OPUS_BASELINE
-        assert outcome.gate_reasons == ["ocr_unavailable"]
-        assert outcome.ocr_confidence is None
-
-    def test_pdf_skips_ocr_and_sends_original_bytes(self, test_db, test_user, tmp_path):
-        pdf = tmp_path / "receipt.pdf"
-        pdf.write_bytes(b"%PDF-1.4 fake")
-        with patch(f"{PIPELINE}.run_tesseract") as ocr, \
-             patch(f"{PIPELINE}.extract_receipt_vision", return_value=_parsed("EGGS")) as vision:
-            outcome = analyze_receipt(pdf, pdf.read_bytes(), db=test_db, user_id=test_user.id)
-        ocr.assert_not_called()
-        assert vision.call_args.args == (b"%PDF-1.4 fake", "application/pdf")
-        assert outcome.path == PATH_OPUS_BASELINE
-
-    def test_zero_food_lines_gate(self, test_db, test_user, real_receipt_image):
-        contents = real_receipt_image.read_bytes()
-        bags_only = OcrResult(text="MARKET\nPAPER BAG 0.10\nTOTAL 0.10\n", confidence=95.0)
-        with patch(f"{PIPELINE}.run_tesseract", return_value=bags_only), \
-             patch(f"{PIPELINE}.extract_receipt_vision", return_value=_parsed("EGGS")):
-            outcome = analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id)
-        assert outcome.path == PATH_OPUS_BASELINE
-        assert "zero_food_lines" in outcome.gate_reasons
-
-    def test_text_fallback_rung_when_configured(self, test_db, test_user, real_receipt_image, ocr_receipt_text):
-        contents = real_receipt_image.read_bytes()
-        weak = OcrResult(text=ocr_receipt_text, confidence=30.0)
-        with patch.object(settings, "receipt_ocr_text_fallback_model", "claude-haiku-test"), \
-             patch(f"{PIPELINE}.run_tesseract", return_value=weak), \
              patch(f"{PIPELINE}.extract_receipt_text", return_value=_parsed("EGGS")) as text_model, \
              patch(f"{PIPELINE}.extract_receipt_vision") as vision:
             outcome = analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id)
 
         vision.assert_not_called()
         assert text_model.call_args.args == (ocr_receipt_text,)
-        assert text_model.call_args.kwargs == {"model": "claude-haiku-test"}
+        assert text_model.call_args.kwargs == {"model": RECEIPT_OCR_CLEANUP_MODEL}
         assert outcome.path == PATH_HAIKU
         assert outcome.escalations == [PATH_OCR]
+        assert outcome.gate_reasons == ["low_ocr_confidence"]
+        assert outcome.ocr_confidence == 30.0
 
-    def test_text_fallback_failure_continues_to_vision(self, test_db, test_user, real_receipt_image, ocr_receipt_text):
+    def test_hard_fail_uses_sonnet_vision_on_downsampled_image(self, test_db, test_user, real_receipt_image, ocr_receipt_text):
         contents = real_receipt_image.read_bytes()
         weak = OcrResult(text=ocr_receipt_text, confidence=30.0)
         no_food = ParsedReceipt(items=[ParsedReceiptItem(store_item_name="BAG", ingredient_name="Bag", is_food=False)])
-        with patch.object(settings, "receipt_ocr_text_fallback_model", "claude-haiku-test"), \
-             patch.object(settings, "receipt_ocr_vision_fallback_model", "claude-sonnet-5"), \
-             patch(f"{PIPELINE}.run_tesseract", return_value=weak), \
+        with patch(f"{PIPELINE}.run_tesseract", return_value=weak), \
              patch(f"{PIPELINE}.extract_receipt_text", return_value=no_food), \
              patch(f"{PIPELINE}.extract_receipt_vision", return_value=_parsed("EGGS")) as vision:
             outcome = analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id)
 
-        assert vision.call_args.kwargs["model"] == "claude-sonnet-5"
+        data, media_type = vision.call_args.args
+        assert vision.call_args.kwargs["model"] == RECEIPT_OCR_VISION_FALLBACK_MODEL
+        assert vision.call_args.kwargs["model"] != RECEIPT_ANTHROPIC_MODEL  # Sonnet replaces Opus here
+        assert media_type == "image/jpeg"
+        assert data != contents  # re-encoded / downsampled, not the raw PNG
         assert outcome.path == PATH_SONNET
         assert outcome.escalations == [PATH_OCR, PATH_HAIKU]
         assert outcome.gate_reasons == ["low_ocr_confidence", "zero_food_lines"]
+
+    def test_haiku_api_error_continues_to_sonnet(self, test_db, test_user, real_receipt_image, ocr_receipt_text):
+        contents = real_receipt_image.read_bytes()
+        weak = OcrResult(text=ocr_receipt_text, confidence=30.0)
+        with patch(f"{PIPELINE}.run_tesseract", return_value=weak), \
+             patch(f"{PIPELINE}.extract_receipt_text", side_effect=ReceiptAnalysisError("haiku down")), \
+             patch(f"{PIPELINE}.extract_receipt_vision", return_value=_parsed("EGGS")):
+            outcome = analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id)
+        assert outcome.path == PATH_SONNET
+        assert outcome.gate_reasons == ["low_ocr_confidence", "haiku_error"]
+
+    def test_ocr_unavailable_skips_haiku_and_goes_to_sonnet(self, test_db, test_user, real_receipt_image):
+        contents = real_receipt_image.read_bytes()
+        with patch(f"{PIPELINE}.run_tesseract", side_effect=OcrUnavailableError("no binary")), \
+             patch(f"{PIPELINE}.extract_receipt_text") as text_model, \
+             patch(f"{PIPELINE}.extract_receipt_vision", return_value=_parsed("EGGS")):
+            outcome = analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id)
+        text_model.assert_not_called()  # nothing for Haiku to clean up
+        assert outcome.path == PATH_SONNET
+        assert outcome.escalations == [PATH_OCR]
+        assert outcome.gate_reasons == ["ocr_unavailable"]
+        assert outcome.ocr_confidence is None
+
+    def test_pdf_skips_ocr_and_sends_original_bytes_to_sonnet(self, test_db, test_user, tmp_path):
+        pdf = tmp_path / "receipt.pdf"
+        pdf.write_bytes(b"%PDF-1.4 fake")
+        with patch(f"{PIPELINE}.run_tesseract") as ocr, \
+             patch(f"{PIPELINE}.extract_receipt_text") as text_model, \
+             patch(f"{PIPELINE}.extract_receipt_vision", return_value=_parsed("EGGS")) as vision:
+            outcome = analyze_receipt(pdf, pdf.read_bytes(), db=test_db, user_id=test_user.id)
+        ocr.assert_not_called()
+        text_model.assert_not_called()
+        assert vision.call_args.args == (b"%PDF-1.4 fake", "application/pdf")
+        assert vision.call_args.kwargs["model"] == RECEIPT_OCR_VISION_FALLBACK_MODEL
+        assert outcome.path == PATH_SONNET
+
+    def test_zero_food_lines_gate_escalates(self, test_db, test_user, real_receipt_image):
+        contents = real_receipt_image.read_bytes()
+        bags_only = OcrResult(text="MARKET\nPAPER BAG 0.10\nTOTAL 0.10\n", confidence=95.0)
+        with patch(f"{PIPELINE}.run_tesseract", return_value=bags_only), \
+             patch(f"{PIPELINE}.extract_receipt_text", return_value=_parsed("EGGS")):
+            outcome = analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id)
+        assert outcome.path == PATH_HAIKU
+        assert "zero_food_lines" in outcome.gate_reasons
 
     def test_final_rung_errors_propagate(self, test_db, test_user, real_receipt_image):
         contents = real_receipt_image.read_bytes()
@@ -252,6 +259,26 @@ class TestOcrFirstLadder:
              patch(f"{PIPELINE}.extract_receipt_vision", side_effect=ReceiptAnalysisError("boom")):
             with pytest.raises(ReceiptAnalysisError, match="boom"):
                 analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id)
+
+    def test_extract_ocr_first_skips_enrichment(self, real_receipt_image, ocr_ok):
+        """The eval runner uses this entry point; it must not call Opus for nutrition."""
+        from app.services.receipt_pipeline import extract_ocr_first
+
+        with patch(f"{PIPELINE}.run_tesseract", return_value=ocr_ok), \
+             patch("app.services.receipt_analyzer.anthropic.Anthropic") as anthropic_class:
+            outcome = extract_ocr_first(real_receipt_image, real_receipt_image.read_bytes())
+        anthropic_class.assert_not_called()
+        assert outcome.path == PATH_OCR
+        assert all(item.calories is None for item in outcome.parsed.items)
+
+
+class TestModelConstants:
+    def test_ladder_models_are_named_constants_not_settings(self):
+        assert RECEIPT_OCR_CLEANUP_MODEL and "haiku" in RECEIPT_OCR_CLEANUP_MODEL
+        assert RECEIPT_OCR_VISION_FALLBACK_MODEL and "sonnet" in RECEIPT_OCR_VISION_FALLBACK_MODEL
+        assert RECEIPT_ANTHROPIC_MODEL and "opus" in RECEIPT_ANTHROPIC_MODEL
+        for removed in ("receipt_ocr_text_fallback_model", "receipt_ocr_vision_fallback_model"):
+            assert not hasattr(settings, removed)
 
 
 class TestExtractors:

@@ -4,15 +4,21 @@ End-to-end tests for the FOOD-55 OCR-first receipt path (flag ON).
     receipt image → Tesseract (mocked text fixture) → rules parser → gates
       → nutrition enrichment (Anthropic mocked) → review → confirm → inventory
 
-Plus the content-hash cache and the gate-failure escalation to the mocked
-Opus vision baseline. No live OCR or Anthropic calls.
+Plus the content-hash cache and the gate-failure escalations to the mocked
+Haiku (OCR-text cleanup) and Sonnet (vision) rungs. No live OCR or Anthropic
+calls.
 """
 from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import (
+    RECEIPT_ANTHROPIC_MODEL,
+    RECEIPT_OCR_CLEANUP_MODEL,
+    RECEIPT_OCR_VISION_FALLBACK_MODEL,
+    settings,
+)
 from app.models import Ingredient, Receipt, User
 from app.services.receipt_ocr import OcrResult
 from app.services.receipt_preprocess import content_hash
@@ -27,9 +33,7 @@ def ocr_first_env(tmp_path):
     with patch.object(settings, "upload_dir", str(tmp_path / "uploads")), \
          patch.object(settings, "anthropic_api_key", "test-api-key"), \
          patch.object(settings, "receipt_ocr_first", True), \
-         patch.object(settings, "receipt_analysis_cache", False), \
-         patch.object(settings, "receipt_ocr_text_fallback_model", ""), \
-         patch.object(settings, "receipt_ocr_vision_fallback_model", ""):
+         patch.object(settings, "receipt_analysis_cache", False):
         yield
 
 
@@ -142,7 +146,7 @@ class TestOcrFirstReceiptFlow:
         assert paths == {"first.png": "ocr", "second.png": "cache"}
 
     @patch("app.services.receipt_analyzer.anthropic.Anthropic")
-    def test_gate_failure_escalates_to_opus_baseline(
+    def test_soft_gate_failure_escalates_to_haiku_cleanup(
         self,
         mock_anthropic_class,
         ocr_first_env,
@@ -155,8 +159,45 @@ class TestOcrFirstReceiptFlow:
     ):
         mock_client = Mock()
         mock_anthropic_class.return_value = mock_client
+        # Vision must not be called: receipt_response=None makes it fail loudly.
         mock_client.messages.create.side_effect = build_anthropic_router(
-            sample_receipt_response, sample_nutrition_estimates
+            None, sample_nutrition_estimates, text_response=sample_receipt_response
+        )
+
+        garbage = OcrResult(text="~~~ !! ##\n1lI|\nMLK 3.49\n", confidence=21.0)
+        with patch(f"{PIPELINE}.run_tesseract", return_value=garbage):
+            response = _upload(client, real_receipt_image)
+
+        assert response.status_code == 201, response.text
+        data = response.json()
+        assert data["store_name"] == "Whole Foods Market"
+        assert len(data["draft_items"]) == 3
+
+        text_calls = [c for c in mock_client.messages.create.call_args_list if c.kwargs["model"] == RECEIPT_OCR_CLEANUP_MODEL]
+        assert len(text_calls) == 1
+        prompt = text_calls[0].kwargs["messages"][0]["content"][0]["text"]
+        assert "MLK 3.49" in prompt  # the raw OCR text went to Haiku
+
+        receipt = test_db.query(Receipt).filter(Receipt.id == data["id"]).one()
+        assert receipt.analysis_path == "haiku"
+
+    @patch("app.services.receipt_analyzer.anthropic.Anthropic")
+    def test_hard_gate_failure_escalates_to_sonnet_vision(
+        self,
+        mock_anthropic_class,
+        ocr_first_env,
+        client,
+        test_db: Session,
+        auth_headers,
+        real_receipt_image,
+        sample_receipt_response,
+        sample_nutrition_estimates,
+    ):
+        mock_client = Mock()
+        mock_anthropic_class.return_value = mock_client
+        haiku_finds_nothing = {"store_name": None, "items": []}
+        mock_client.messages.create.side_effect = build_anthropic_router(
+            sample_receipt_response, sample_nutrition_estimates, text_response=haiku_finds_nothing
         )
 
         garbage = OcrResult(text="~~~ !! ##\n1lI|\n", confidence=21.0)
@@ -172,14 +213,25 @@ class TestOcrFirstReceiptFlow:
             call
             for call in mock_client.messages.create.call_args_list
             if isinstance(call.kwargs["messages"][0]["content"], list)
+            and call.kwargs["messages"][0]["content"][0]["type"] == "image"
         ]
         assert len(vision_calls) == 1
-        assert vision_calls[0].kwargs["model"] == "claude-opus-5"
+        assert vision_calls[0].kwargs["model"] == RECEIPT_OCR_VISION_FALLBACK_MODEL
+        assert vision_calls[0].kwargs["model"] != RECEIPT_ANTHROPIC_MODEL
         image_block = vision_calls[0].kwargs["messages"][0]["content"][0]
         assert image_block["source"]["media_type"] == "image/jpeg"  # downsampled re-encode
 
+        # Nutrition enrichment still went to the Opus constant (FOOD-58 owns routing).
+        nutrition_models = {
+            c.kwargs["model"]
+            for c in mock_client.messages.create.call_args_list
+            if isinstance(c.kwargs["messages"][0]["content"], str)
+            and "Estimate nutritional facts" in c.kwargs["messages"][0]["content"]
+        }
+        assert nutrition_models == {RECEIPT_ANTHROPIC_MODEL}
+
         receipt = test_db.query(Receipt).filter(Receipt.id == data["id"]).one()
-        assert receipt.analysis_path == "opus_baseline"
+        assert receipt.analysis_path == "sonnet"
 
     @patch("app.services.receipt_analyzer.anthropic.Anthropic")
     def test_flag_off_keeps_baseline_even_with_tesseract_present(
