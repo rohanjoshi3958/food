@@ -1,8 +1,17 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# uvicorn only configures its own loggers; without a root handler the INFO
+# lines from app.* (e.g. prompt-cache usage in app.services.anthropic_cache)
+# are dropped. basicConfig is a no-op if the host already configured root.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 from app.config import settings
 from app.database import Base, engine
