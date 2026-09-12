@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.models import Ingredient
 from app.services.anthropic_cache import create_cached_message
-from app.services.model_router import route_model
 from app.services.ingredient_deduction import (
     clamp_meal_ingredients_to_pantry,
     remaining_servings,
@@ -15,6 +14,7 @@ from app.services.ingredient_deduction import (
     serialize_meal_ingredients,
 )
 from app.services.meal_nutrition import calculate_meal_macros
+from app.services.model_router import route_model
 
 MEAL_CALORIE_MIN = 500
 MEAL_CALORIE_MAX = 800
