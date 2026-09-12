@@ -210,10 +210,14 @@ function DailySpend({ summary }: { summary: UsageSummary }) {
       <p className="text-sm text-stone-500">No Claude spend in this window.</p>
     );
   }
+  const barAreaPx = 144;
   return (
     <div className="flex h-40 items-end gap-1">
       {summary.daily.map((day) => {
-        const height = Math.max(2, Math.round((day.estimated_cost_usd / max) * 100));
+        const heightPx = Math.max(
+          2,
+          Math.round((day.estimated_cost_usd / max) * barAreaPx),
+        );
         const breakdown = Object.entries(day.by_workflow)
           .map(([workflow, cost]) => `${workflowLabel(workflow)}: ${formatUsd(cost)}`)
           .join("\n");
@@ -223,10 +227,12 @@ function DailySpend({ summary }: { summary: UsageSummary }) {
             className="group flex flex-1 flex-col items-center justify-end"
             title={`${day.date}\n${formatUsd(day.estimated_cost_usd)} · ${day.calls} calls${breakdown ? `\n${breakdown}` : ""}`}
           >
-            <div
-              className="w-full rounded-t bg-orange-400 transition group-hover:bg-orange-500"
-              style={{ height: `${height}%` }}
-            />
+            <div className="flex w-full items-end" style={{ height: barAreaPx }}>
+              <div
+                className="w-full rounded-t bg-orange-400 transition group-hover:bg-orange-500"
+                style={{ height: heightPx }}
+              />
+            </div>
             <span className="mt-1 text-[10px] text-stone-400">
               {day.date.slice(5)}
             </span>
