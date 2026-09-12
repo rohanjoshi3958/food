@@ -21,10 +21,10 @@ from app.services.ingredients import (
     create_ingredient,
 )
 from app.services.ingredient_merge import merge_draft_items
-from app.services.receipt_analyzer import (
-    ReceiptAnalysisError,
-    analyze_receipt_image,
-)
+from app.services.receipt_analyzer import ReceiptAnalysisError
+from app.services.receipt_pipeline import analyze_receipt
+from app.services.receipt_preprocess import content_hash
+from app.services.receipt_telemetry import emit_receipt_path
 from app.validation import validate_ingredient_input
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
@@ -257,17 +257,29 @@ async def upload_receipt(
         filename=str(destination),
         original_name=safe_name,
         analysis_status="processing",
+        content_hash=content_hash(contents),
     )
     db.add(receipt)
     db.commit()
     db.refresh(receipt)
 
+    telemetry = {"receipt_id": receipt.id, "user_id": current_user.id}
     try:
-        parsed = analyze_receipt_image(destination)
+        outcome = analyze_receipt(
+            destination,
+            contents,
+            db=db,
+            user_id=current_user.id,
+            receipt_id=receipt.id,
+        )
+        parsed = outcome.parsed
+        telemetry.update(outcome.telemetry())
 
         receipt.store_name = parsed.store_name
         receipt.analysis_status = "pending_review"
         receipt.analysis_error = None
+        receipt.analysis_path = outcome.path
+        receipt.analysis_result = parsed.model_dump()
         receipt.draft_items = merge_draft_items(
             pre_manual_items + _draft_from_parsed_items(parsed.items)
         )
@@ -286,14 +298,19 @@ async def upload_receipt(
             .filter(Receipt.id == receipt.id)
             .one()
         )
+        emit_receipt_path({**telemetry, "status": "ok"})
         return _receipt_response(receipt)
     except ReceiptAnalysisError as exc:
+        emit_receipt_path({**telemetry, "status": "error", "error": str(exc)})
         _delete_receipt(db, receipt)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
     except Exception as exc:
+        emit_receipt_path(
+            {**telemetry, "status": "error", "error": type(exc).__name__}
+        )
         _delete_receipt(db, receipt)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

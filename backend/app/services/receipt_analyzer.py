@@ -495,36 +495,20 @@ def _enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
     return ParsedReceipt(store_name=parsed.store_name, items=enriched_items)
 
 
-def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
-    if not settings.anthropic_api_key:
-        raise ReceiptAnalysisError(
-            "Anthropic API key is not configured. Add ANTHROPIC_API_KEY to your .env file."
-        )
-
-    media_type, content_type = _media_type_for_path(file_path)
-    encoded = base64.standard_b64encode(file_path.read_bytes()).decode("utf-8")
-
+def _run_receipt_extraction(content: list[dict], model: str) -> ParsedReceipt:
+    """Send one extraction prompt to Anthropic and validate the ParsedReceipt JSON."""
     client = _get_client()
 
-    content_block = {
-        "type": content_type,
-        "source": {
-            "type": "base64",
-            "media_type": media_type,
-            "data": encoded,
-        },
-    }
-
-    # The receipt image/PDF is unique per request, so it must stay in the
-    # user turn after the cached instruction prefix.
+    # The receipt image/PDF or OCR text is unique per request, so it stays in
+    # the user turn after the cached instruction prefix.
     try:
         message = create_cached_message(
             client,
             call_site="receipt.analyze_image",
-            model=RECEIPT_ANTHROPIC_MODEL,
+            model=model,
             max_tokens=4096,
             system_prefix=RECEIPT_ANALYSIS_PROMPT,
-            messages=[{"role": "user", "content": [content_block]}],
+            messages=[{"role": "user", "content": content}],
         )
     except anthropic.APIError as exc:
         raise ReceiptAnalysisError(_anthropic_error_message(exc)) from exc
@@ -535,16 +519,62 @@ def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
 
     try:
         payload = _extract_json(text_blocks[-1])
-        parsed = ParsedReceipt.model_validate(payload)
+        return ParsedReceipt.model_validate(payload)
     except (json.JSONDecodeError, ValueError) as exc:
         raise ReceiptAnalysisError(
             "Could not parse ingredient data from the receipt analysis."
         ) from exc
 
-    food_items = [item for item in parsed.items if item.is_food]
-    if not food_items:
+
+def extract_receipt_vision(
+    data: bytes,
+    media_type: str,
+    *,
+    model: str = RECEIPT_ANTHROPIC_MODEL,
+) -> ParsedReceipt:
+    """Vision extraction only (no nutrition enrichment, no food-count check)."""
+    content_type = "document" if media_type == "application/pdf" else "image"
+    encoded = base64.standard_b64encode(data).decode("utf-8")
+    content_block = {
+        "type": content_type,
+        "source": {"type": "base64", "media_type": media_type, "data": encoded},
+    }
+    return _run_receipt_extraction([content_block], model)
+
+
+RECEIPT_TEXT_ANALYSIS_PROMPT = (
+    "The following is OCR text from a grocery store receipt. Treat it exactly like "
+    "the receipt image described below; OCR may have garbled some characters.\n\n"
+    "--- OCR TEXT START ---\n{ocr_text}\n--- OCR TEXT END ---\n\n" + RECEIPT_ANALYSIS_PROMPT
+)
+
+
+def extract_receipt_text(ocr_text: str, *, model: str) -> ParsedReceipt:
+    """Text-only extraction from OCR output (soft fallback rung, e.g. Haiku)."""
+    prompt = RECEIPT_TEXT_ANALYSIS_PROMPT.format(ocr_text=ocr_text.strip())
+    return _run_receipt_extraction([{"type": "text", "text": prompt}], model)
+
+
+def require_food_items(parsed: ParsedReceipt) -> ParsedReceipt:
+    if not any(item.is_food for item in parsed.items):
         raise ReceiptAnalysisError(
             "No food items were found on this receipt. Try a clearer photo."
         )
+    return parsed
 
+
+def enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
+    """Public wrapper so the OCR-first pipeline reuses the same enrichment step."""
     return _enrich_receipt_nutrition(parsed)
+
+
+def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
+    """Baseline path: vision Opus on the original upload, then nutrition enrichment."""
+    if not settings.anthropic_api_key:
+        raise ReceiptAnalysisError(
+            "Anthropic API key is not configured. Add ANTHROPIC_API_KEY to your .env file."
+        )
+
+    media_type, _content_type = _media_type_for_path(file_path)
+    parsed = extract_receipt_vision(file_path.read_bytes(), media_type)
+    return _enrich_receipt_nutrition(require_food_items(parsed))

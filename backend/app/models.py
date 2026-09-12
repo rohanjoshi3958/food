@@ -80,6 +80,12 @@ class Receipt(Base):
     analysis_status: Mapped[str] = mapped_column(String, default="pending", nullable=False)
     analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     draft_items: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # SHA-256 of the uploaded bytes; lets identical re-uploads reuse a prior parse.
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Which extraction path produced the analysis (cache|ocr|haiku|sonnet|opus_baseline).
+    analysis_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Enriched ParsedReceipt dump, kept after confirm so cache hits survive review.
+    analysis_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

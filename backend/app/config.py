@@ -28,6 +28,22 @@ class Settings(BaseSettings):
     email_from: str = "Food <onboarding@resend.dev>"
     frontend_url: str = "http://localhost:3000"
 
+    # FOOD-55 receipt pipeline flags. Both default OFF so production keeps the
+    # vision-Opus baseline until we deliberately flip them.
+    receipt_analysis_cache: bool = False
+    receipt_ocr_first: bool = False
+    # OCR-first tuning (only used when receipt_ocr_first is on).
+    receipt_ocr_min_confidence: float = 60.0  # Tesseract mean word confidence, 0-100
+    receipt_ocr_max_missing_qty_unit_ratio: float = 0.5
+    receipt_ocr_totals_tolerance: float = 0.02  # relative; absolute floor is $0.05
+    receipt_ocr_tesseract_config: str = "--psm 4"
+    receipt_ocr_tesseract_cmd: str = ""  # optional path override for the binary
+    # Escalation ladder. Empty = skip that rung. The vision rung falls back to
+    # RECEIPT_ANTHROPIC_MODEL (Opus baseline) when unset.
+    receipt_ocr_text_fallback_model: str = ""  # e.g. a Haiku model on OCR text
+    receipt_ocr_vision_fallback_model: str = ""  # e.g. "claude-sonnet-5" on a downsampled image
+    receipt_vision_long_edge: int = 1600
+
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),
         env_file_encoding="utf-8",
