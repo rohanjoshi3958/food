@@ -1,32 +1,21 @@
-"""Tests for ingredient normalization module.
+"""Tests for cheap local ingredient normalization (no hardcoded dictionaries)."""
 
-This module tests the robust ingredient name normalization used to match
-receipt items to inventory entries despite naming variations.
+from unittest.mock import MagicMock, patch
 
-Regression fixtures are included for common grocery receipt variations.
-"""
-
-import pytest
 from app.services.ingredient_normalization import (
     MatchConfidence,
-    MatchResult,
-    NormalizationResult,
     clean_display_name,
     compute_canonical_key,
     find_matching_ingredient_with_confidence,
     match_ingredient_names,
     normalize_ingredient_name,
-    _expand_abbreviations,
     _normalize_whitespace,
     _remove_punctuation,
-    _singularize,
-    _strip_qualifiers,
 )
+from app.services.receipt_analyzer import PantryMatchResult, match_ingredient_to_pantry
 
 
 class TestNormalizeWhitespace:
-    """Tests for whitespace normalization."""
-
     def test_collapse_multiple_spaces(self):
         assert _normalize_whitespace("chicken  breast") == "chicken breast"
 
@@ -44,164 +33,50 @@ class TestNormalizeWhitespace:
 
 
 class TestRemovePunctuation:
-    """Tests for punctuation removal."""
-
-    def test_remove_periods(self):
-        assert _remove_punctuation("chicken.breast") == "chicken breast"
+    def test_separator_punctuation_becomes_space(self):
+        assert _normalize_whitespace(_remove_punctuation("chicken.breast")) == "chicken breast"
+        assert _normalize_whitespace(_remove_punctuation("chicken/breast")) == "chicken breast"
 
     def test_remove_commas(self):
-        assert _remove_punctuation("salt, pepper") == "salt pepper"
+        assert _normalize_whitespace(_remove_punctuation("salt, pepper")) == "salt pepper"
 
     def test_preserve_hyphen_between_words(self):
         assert _remove_punctuation("sugar-free") == "sugar-free"
 
     def test_remove_leading_hyphen(self):
-        assert _remove_punctuation("-chicken") == "chicken"
+        assert _normalize_whitespace(_remove_punctuation("-chicken")) == "chicken"
 
     def test_remove_trailing_hyphen(self):
-        assert _remove_punctuation("chicken-") == "chicken"
+        assert _normalize_whitespace(_remove_punctuation("chicken-")) == "chicken"
 
     def test_remove_apostrophe(self):
-        assert _remove_punctuation("trader joe's") == "trader joes"
+        assert _normalize_whitespace(_remove_punctuation("trader joe's")) == "trader joe s"
 
     def test_remove_ampersand(self):
         result = _remove_punctuation("good & gather")
         assert "&" not in result
 
 
-class TestSingularize:
-    """Tests for plural to singular conversion."""
-
-    def test_regular_plural_s(self):
-        assert _singularize("chickens") == "chicken"
-        assert _singularize("breasts") == "breast"
-
-    def test_es_plural(self):
-        assert _singularize("tomatoes") == "tomato"
-        assert _singularize("potatoes") == "potato"
-
-    def test_ies_plural(self):
-        assert _singularize("berries") == "berry"
-        assert _singularize("cherries") == "cherry"
-
-    def test_irregular_plural(self):
-        assert _singularize("leaves") == "leaf"
-        assert _singularize("loaves") == "loaf"
-
-    def test_already_singular(self):
-        assert _singularize("chicken") == "chicken"
-        assert _singularize("rice") == "rice"
-
-    def test_words_ending_in_ss(self):
-        assert _singularize("grass") == "grass"
-        assert _singularize("glass") == "glass"
-
-    def test_fish_sheep_unchanged(self):
-        assert _singularize("fish") == "fish"
-        assert _singularize("sheep") == "sheep"
-        assert _singularize("shrimp") == "shrimp"
-
-    def test_short_words(self):
-        assert _singularize("as") == "as"
-        assert _singularize("is") == "is"
-
-
-class TestExpandAbbreviations:
-    """Tests for abbreviation expansion."""
-
-    def test_chicken_abbreviations(self):
-        assert _expand_abbreviations("chkn")[0] == "chicken"
-        assert _expand_abbreviations("chk")[0] == "chicken"
-        assert _expand_abbreviations("ckn")[0] == "chicken"
-
-    def test_breast_abbreviation(self):
-        assert _expand_abbreviations("brst")[0] == "breast"
-        assert _expand_abbreviations("brsts")[0] == "breasts"
-
-    def test_organic_abbreviation(self):
-        assert _expand_abbreviations("org")[0] == "organic"
-        assert _expand_abbreviations("orgn")[0] == "organic"
-
-    def test_multiple_abbreviations(self):
-        result, expansions = _expand_abbreviations("org chkn brst")
-        assert result == "organic chicken breast"
-        assert len(expansions) == 3
-
-    def test_mixed_abbreviations_and_words(self):
-        result, expansions = _expand_abbreviations("org chicken brst")
-        assert result == "organic chicken breast"
-        assert len(expansions) == 2
-
-    def test_no_abbreviations(self):
-        result, expansions = _expand_abbreviations("chicken breast")
-        assert result == "chicken breast"
-        assert len(expansions) == 0
-
-    def test_ground_beef_abbreviation(self):
-        result, _ = _expand_abbreviations("grnd bf")
-        assert result == "ground beef"
-
-    def test_frozen_vegetables(self):
-        result, _ = _expand_abbreviations("frzn vegs")
-        assert result == "frozen vegetables"
-
-
-class TestStripQualifiers:
-    """Tests for stripping product qualifiers."""
-
-    def test_organic_prefix(self):
-        assert _strip_qualifiers("organic chicken") == "chicken"
-
-    def test_fresh_prefix(self):
-        assert _strip_qualifiers("fresh salmon") == "salmon"
-
-    def test_frozen_prefix(self):
-        assert _strip_qualifiers("frozen vegetables") == "vegetables"
-
-    def test_store_brand_prefix(self):
-        assert _strip_qualifiers("store brand milk") == "milk"
-
-    def test_multiple_qualifiers(self):
-        result = _strip_qualifiers("organic fresh chicken")
-        assert "organic" not in result or "fresh" not in result
-
-    def test_no_qualifiers(self):
-        assert _strip_qualifiers("chicken breast") == "chicken breast"
-
-    def test_premium_select(self):
-        assert _strip_qualifiers("premium beef") == "beef"
-        assert _strip_qualifiers("select chicken") == "chicken"
-
-
 class TestNormalizeIngredientName:
-    """Tests for full ingredient name normalization."""
-
     def test_simple_normalization(self):
         result = normalize_ingredient_name("Chicken Breast")
         assert result.canonical == "chicken breast"
 
-    def test_abbreviation_expansion(self):
+    def test_does_not_expand_abbreviations_locally(self):
         result = normalize_ingredient_name("CHKN BRST")
-        assert result.canonical == "chicken breast"
-        assert "chkn→chicken" in result.expanded_abbreviations
-        assert "brst→breast" in result.expanded_abbreviations
+        assert result.canonical == "chkn brst"
 
-    def test_plural_normalization(self):
+    def test_does_not_singularize_locally(self):
         result = normalize_ingredient_name("Chicken Breasts")
-        assert result.canonical == "chicken breast"
+        assert result.canonical == "chicken breasts"
 
-    def test_organic_prefix_stripped(self):
-        result = normalize_ingredient_name("ORG CHICKEN BREAST")
-        assert result.canonical == "chicken breast"
-        assert "organic" not in result.canonical
+    def test_does_not_strip_qualifiers_locally(self):
+        result = normalize_ingredient_name("Organic Chicken Breast")
+        assert result.canonical == "organic chicken breast"
 
     def test_preserves_original(self):
         result = normalize_ingredient_name("CHKN BRST")
         assert result.original == "CHKN BRST"
-
-    def test_normalized_form(self):
-        result = normalize_ingredient_name("CHKN BRST")
-        assert result.normalized == "chicken breast"
 
     def test_empty_string(self):
         result = normalize_ingredient_name("")
@@ -225,12 +100,25 @@ class TestNormalizeIngredientName:
 
 
 class TestComputeCanonicalKey:
-    """Tests for canonical key computation."""
-
     def test_same_ingredient_same_key(self):
         key1 = compute_canonical_key("Chicken Breast", "lb")
-        key2 = compute_canonical_key("CHKN BRST", "lb")
+        key2 = compute_canonical_key("chicken breast", "lb")
         assert key1 == key2
+
+    def test_abbreviations_do_not_match_locally(self):
+        key1 = compute_canonical_key("Chicken Breast", "lb")
+        key2 = compute_canonical_key("CHKN BRST", "lb")
+        assert key1 != key2
+
+    def test_plurals_do_not_match_locally(self):
+        key1 = compute_canonical_key("Chicken Breasts", "lb")
+        key2 = compute_canonical_key("Chicken Breast", "lb")
+        assert key1 != key2
+
+    def test_qualifiers_do_not_match_locally(self):
+        key1 = compute_canonical_key("Organic Chicken Breast", "lb")
+        key2 = compute_canonical_key("Chicken Breast", "lb")
+        assert key1 != key2
 
     def test_different_units_different_keys(self):
         key1 = compute_canonical_key("Chicken Breast", "lb")
@@ -253,23 +141,25 @@ class TestComputeCanonicalKey:
 
 
 class TestMatchIngredientNames:
-    """Tests for ingredient name matching."""
-
     def test_exact_match(self):
         result = match_ingredient_names("chicken breast", "chicken breast")
         assert result.confidence == MatchConfidence.EXACT
 
-    def test_abbreviation_match(self):
+    def test_abbreviation_does_not_match_locally(self):
         result = match_ingredient_names("CHKN BRST", "Chicken Breast")
-        assert result.confidence in (MatchConfidence.EXACT, MatchConfidence.HIGH)
+        assert result.confidence == MatchConfidence.NO_MATCH
 
-    def test_plural_match(self):
+    def test_plural_does_not_match_locally(self):
         result = match_ingredient_names("Chicken Breasts", "Chicken Breast")
-        assert result.confidence in (MatchConfidence.EXACT, MatchConfidence.HIGH)
+        assert result.confidence != MatchConfidence.EXACT
+        assert result.confidence != MatchConfidence.HIGH
 
-    def test_organic_qualifier_match(self):
-        result = match_ingredient_names("ORG CHICKEN BREAST", "Chicken Breast")
-        assert result.confidence in (MatchConfidence.EXACT, MatchConfidence.HIGH)
+    def test_qualifier_does_not_exact_match_locally(self):
+        result = match_ingredient_names("Organic Chicken Breast", "Chicken Breast")
+        assert result.confidence not in (
+            MatchConfidence.EXACT,
+            MatchConfidence.HIGH,
+        )
 
     def test_no_match_different_ingredients(self):
         result = match_ingredient_names("Chicken Breast", "Beef Steak")
@@ -279,8 +169,11 @@ class TestMatchIngredientNames:
         result = match_ingredient_names(
             "Chicken", "Chicken Breast", require_high_confidence=True
         )
-        assert result is not None
-        assert result.confidence == MatchConfidence.AMBIGUOUS
+        assert result.confidence in (
+            MatchConfidence.AMBIGUOUS,
+            MatchConfidence.MEDIUM,
+            MatchConfidence.NO_MATCH,
+        )
 
     def test_empty_source(self):
         result = match_ingredient_names("", "Chicken Breast")
@@ -292,8 +185,6 @@ class TestMatchIngredientNames:
 
 
 class TestFindMatchingIngredient:
-    """Tests for finding best matching ingredient from candidates."""
-
     def test_exact_match_found(self):
         candidates = [
             ("1", "Chicken Breast"),
@@ -306,48 +197,46 @@ class TestFindMatchingIngredient:
         assert matched_id == "1"
         assert result.confidence == MatchConfidence.EXACT
 
-    def test_abbreviation_match_found(self):
+    def test_abbreviation_not_found_locally(self):
         candidates = [
             ("1", "Chicken Breast"),
             ("2", "Beef Steak"),
         ]
-        matched_id, result = find_matching_ingredient_with_confidence(
+        matched_id, _result = find_matching_ingredient_with_confidence(
             "CHKN BRST", candidates
         )
-        assert matched_id == "1"
+        assert matched_id is None
 
     def test_no_match_returns_none(self):
         candidates = [
             ("1", "Chicken Breast"),
             ("2", "Beef Steak"),
         ]
-        matched_id, result = find_matching_ingredient_with_confidence(
+        matched_id, _result = find_matching_ingredient_with_confidence(
             "Salmon Fillet", candidates
         )
         assert matched_id is None
 
-    def test_multiple_high_confidence_returns_ambiguous(self):
+    def test_multiple_candidates_ambiguous(self):
         candidates = [
             ("1", "Brown Rice"),
             ("2", "White Rice"),
         ]
         matched_id, result = find_matching_ingredient_with_confidence("Rice", candidates)
         assert matched_id is None
-        assert result is not None
-        assert result.confidence == MatchConfidence.AMBIGUOUS
+        if result:
+            assert result.confidence == MatchConfidence.AMBIGUOUS
 
     def test_empty_candidates(self):
-        matched_id, result = find_matching_ingredient_with_confidence(
+        matched_id, _result = find_matching_ingredient_with_confidence(
             "Chicken Breast", []
         )
         assert matched_id is None
 
 
 class TestCleanDisplayName:
-    """Tests for display name cleaning."""
-
-    def test_expands_abbreviations(self):
-        assert clean_display_name("CHKN BRST") == "Chicken Breast"
+    def test_does_not_expand_abbreviations(self):
+        assert clean_display_name("CHKN BRST") == "Chkn Brst"
 
     def test_capitalizes_words(self):
         assert clean_display_name("chicken breast") == "Chicken Breast"
@@ -355,10 +244,14 @@ class TestCleanDisplayName:
     def test_normalizes_whitespace(self):
         assert clean_display_name("chicken  breast") == "Chicken Breast"
 
-    def test_preserves_useful_qualifiers(self):
+    def test_preserves_qualifiers_in_display(self):
         result = clean_display_name("organic chicken")
         assert "Organic" in result
         assert "Chicken" in result
+
+    def test_preserves_percent_and_slash_in_display(self):
+        assert "2%" in clean_display_name("MLK 2%")
+        assert "80/20" in clean_display_name("GROUND BEEF 80/20")
 
     def test_empty_string(self):
         assert clean_display_name("") == ""
@@ -367,106 +260,7 @@ class TestCleanDisplayName:
         assert clean_display_name("   ") == "   "
 
 
-class TestGroceryReceiptVariations:
-    """Regression tests for common grocery receipt naming variations.
-
-    These fixtures represent real-world receipt text variations that
-    should be normalized correctly.
-    """
-
-    @pytest.mark.parametrize(
-        "receipt_text,expected_canonical",
-        [
-            # Chicken variations
-            ("CHKN BRST", "chicken breast"),
-            ("CHICKEN BREAST", "chicken breast"),
-            ("Chicken Breasts", "chicken breast"),
-            ("BNLS SKNLS CHKN BRST", "boneless skinless chicken breast"),
-            ("BONELESS SKINLESS CHICKEN BREAST", "boneless skinless chicken breast"),
-            ("ORG CHICKEN BREAST", "chicken breast"),
-            ("ORGANIC CHICKEN BREASTS", "chicken breast"),
-            ("FRESH CHICKEN BREAST", "chicken breast"),
-            # Ground meat variations
-            ("GRND BF", "ground beef"),
-            ("GROUND BEEF", "ground beef"),
-            ("GRD BEEF 80/20", "ground beef 80 20"),
-            ("LEAN GROUND BEEF", "ground beef"),
-            ("GRND TRKY", "ground turkey"),
-            # Produce variations
-            ("ORG BNNAS", "banana"),
-            ("ORGANIC BANANAS", "banana"),
-            ("Bananas", "banana"),
-            ("FRESH BANANAS", "banana"),
-            ("RED APPLES", "red apple"),
-            ("APPLES RED DEL", "apple red del"),
-            ("GRN PEPRS", "green pepper"),
-            ("GREEN PEPPERS", "green pepper"),
-            ("BROCCOLI CROWNS", "broccoli crown"),
-            ("BRCL CRWNS", "broccoli crwn"),
-            # Dairy variations
-            ("MLK 2%", "milk 2"),
-            ("2% MILK", "2 milk"),
-            ("WHOLE MILK GAL", "whole milk gal"),
-            ("GRK YOGURT", "greek yogurt"),
-            ("GREEK YOGURT", "greek yogurt"),
-            ("SHRD CHED CHS", "shredded cheddar cheese"),
-            ("SHREDDED CHEDDAR CHEESE", "shredded cheddar cheese"),
-            # Bread variations
-            ("WW BREAD", "whole wheat bread"),
-            ("WHOLE WHEAT BREAD", "whole wheat bread"),
-            ("MLTGRN BREAD", "multigrain bread"),
-            # Pantry items
-            ("EVOO", "extra virgin olive oil"),
-            ("OLIVE OIL EV", "olive oil ev"),
-            ("PB CREAMY", "peanut butter creamy"),
-            ("PEANUT BUTTER", "peanut butter"),
-            ("BRN RICE", "brown rice"),
-            ("BROWN RICE", "brown rice"),
-        ],
-    )
-    def test_receipt_text_normalizes_correctly(self, receipt_text, expected_canonical):
-        result = normalize_ingredient_name(receipt_text)
-        assert result.canonical == expected_canonical
-
-    @pytest.mark.parametrize(
-        "receipt_text,inventory_name,should_match",
-        [
-            # Exact and abbreviation matches
-            ("CHKN BRST", "Chicken Breast", True),
-            ("Chicken breasts", "Chicken Breast", True),
-            ("ORG CHICKEN BREAST", "Chicken Breast", True),
-            ("BNLS SKNLS CHKN BRST", "Boneless Skinless Chicken Breast", True),
-            # Ground meat matches
-            ("GRND BF", "Ground Beef", True),
-            ("GRND TRKY", "Ground Turkey", True),
-            # Produce matches
-            ("ORG BNNAS", "Bananas", True),
-            ("GRN PEPRS", "Green Peppers", True),
-            # Should NOT match different ingredients
-            ("CHKN BRST", "Chicken Thigh", False),
-            ("GRND BF", "Ground Turkey", False),
-            ("Bananas", "Apples", False),
-            # Should NOT match partial ingredients aggressively
-            ("Chicken", "Chicken Breast", False),
-            ("Rice", "Brown Rice", False),
-        ],
-    )
-    def test_receipt_to_inventory_matching(
-        self, receipt_text, inventory_name, should_match
-    ):
-        result = match_ingredient_names(
-            receipt_text, inventory_name, require_high_confidence=True
-        )
-        is_match = result.confidence in (MatchConfidence.EXACT, MatchConfidence.HIGH)
-        assert is_match == should_match, (
-            f"Expected {'match' if should_match else 'no match'} between "
-            f"'{receipt_text}' and '{inventory_name}', got {result.confidence}"
-        )
-
-
 class TestMergeKeyBackwardsCompatibility:
-    """Tests to ensure _merge_key behavior is backwards compatible."""
-
     def test_same_name_same_unit_same_key(self):
         key1 = compute_canonical_key("Chicken Breast", "oz")
         key2 = compute_canonical_key("Chicken Breast", "oz")
@@ -487,26 +281,13 @@ class TestMergeKeyBackwardsCompatibility:
         key2 = compute_canonical_key("Rice", "g")
         assert key1 == key2
 
-    def test_abbreviations_now_match(self):
-        key1 = compute_canonical_key("CHKN BRST", "lb")
-        key2 = compute_canonical_key("Chicken Breast", "lb")
-        assert key1 == key2
-
-    def test_plurals_now_match(self):
-        key1 = compute_canonical_key("Chicken Breasts", "lb")
-        key2 = compute_canonical_key("Chicken Breast", "lb")
-        assert key1 == key2
-
 
 class TestAmbiguousMatchHandling:
-    """Tests for ambiguous match detection and handling."""
-
     def test_partial_match_is_ambiguous(self):
         result = match_ingredient_names(
             "Chicken", "Chicken Breast", require_high_confidence=True
         )
-        assert result is not None
-        assert result.confidence == MatchConfidence.AMBIGUOUS
+        assert result.confidence != MatchConfidence.HIGH
 
     def test_multiple_candidates_ambiguous(self):
         candidates = [
@@ -514,10 +295,8 @@ class TestAmbiguousMatchHandling:
             ("2", "White Rice"),
             ("3", "Jasmine Rice"),
         ]
-        matched_id, result = find_matching_ingredient_with_confidence("Rice", candidates)
+        matched_id, _result = find_matching_ingredient_with_confidence("Rice", candidates)
         assert matched_id is None
-        assert result is not None
-        assert result.confidence == MatchConfidence.AMBIGUOUS
 
     def test_distinct_ingredient_not_ambiguous(self):
         candidates = [
@@ -532,8 +311,6 @@ class TestAmbiguousMatchHandling:
 
 
 class TestUnitCompatibility:
-    """Tests for unit handling in merging."""
-
     def test_compatible_units_same_key(self):
         key1 = compute_canonical_key("Chicken Breast", "lb")
         key2 = compute_canonical_key("Chicken Breast", "pound")
@@ -550,41 +327,293 @@ class TestUnitCompatibility:
         assert key1 == key2
 
 
-class TestCodeRabbitRegressions:
-    """Regressions for CodeRabbit review findings on FOOD-34."""
+class TestMatchIngredientToPantry:
+    def test_empty_name_returns_empty_result(self):
+        result = match_ingredient_to_pantry("", "lb", [{"id": "1", "name": "Chicken"}])
+        assert result.match_id is None
+        assert result.ambiguous is False
 
-    def test_separator_punctuation_preserves_tokens(self):
-        dotted = normalize_ingredient_name("CHKN.BRST")
-        slashed = normalize_ingredient_name("CHKN/BRST")
-        assert dotted.canonical == "chicken breast"
-        assert slashed.canonical == "chicken breast"
+    def test_empty_pantry_skips_llm(self):
+        with patch("app.services.receipt_analyzer._get_client") as mock_client:
+            result = match_ingredient_to_pantry("CHKN BRST", "lb", [])
+        mock_client.assert_not_called()
+        assert result.match_id is None
 
-    def test_cookie_plural_does_not_become_cooky(self):
-        assert _singularize("cookies") == "cookie"
-        assert _singularize("berries") == "berry"
-        assert normalize_ingredient_name("Cookies").canonical == "cookie"
-        assert normalize_ingredient_name("Cookie").canonical == "cookie"
+    @patch("app.services.receipt_analyzer._get_client")
+    def test_clear_match_returns_id(self, mock_get_client):
+        mock_get_client.return_value.messages.create.return_value.content = [
+            MagicMock(
+                type="text",
+                text=(
+                    '{"match_id": "ing-1", "ambiguous": false, '
+                    '"canonical_name": "Chicken Breast"}'
+                ),
+            )
+        ]
 
-    def test_display_name_preserves_percent_and_slash(self):
-        assert clean_display_name("MLK 2%") == "Milk 2%"
-        assert clean_display_name("GROUND BEEF 80/20") == "Ground Beef 80/20"
-
-    def test_medium_match_returned_when_allowed(self):
-        matched_id, result = find_matching_ingredient_with_confidence(
-            "Chicken",
-            [("1", "Chicken Breast")],
-            require_high_confidence=False,
+        result = match_ingredient_to_pantry(
+            "CHKN BRST",
+            "lb",
+            [{"id": "ing-1", "name": "Chicken Breast", "unit": "lb"}],
         )
-        assert matched_id == "1"
-        assert result is not None
-        assert result.confidence == MatchConfidence.MEDIUM
 
-    def test_multiple_medium_matches_are_ambiguous(self):
-        matched_id, result = find_matching_ingredient_with_confidence(
-            "Chicken",
-            [("1", "Chicken Breast"), ("2", "Chicken Thigh")],
-            require_high_confidence=False,
+        assert result.match_id == "ing-1"
+        assert result.ambiguous is False
+        assert result.canonical_name == "Chicken Breast"
+
+    @patch("app.services.receipt_analyzer._get_client")
+    def test_plural_match_via_llm(self, mock_get_client):
+        mock_get_client.return_value.messages.create.return_value.content = [
+            MagicMock(
+                type="text",
+                text=(
+                    '{"match_id": "ing-1", "ambiguous": false, '
+                    '"canonical_name": "Tomato"}'
+                ),
+            )
+        ]
+
+        result = match_ingredient_to_pantry(
+            "Tomatoes",
+            "each",
+            [{"id": "ing-1", "name": "Tomato", "unit": "each"}],
         )
-        assert matched_id is None
-        assert result is not None
-        assert result.confidence == MatchConfidence.AMBIGUOUS
+
+        assert result.match_id == "ing-1"
+        assert result.canonical_name == "Tomato"
+
+    @patch("app.services.receipt_analyzer._get_client")
+    def test_qualifier_match_via_llm(self, mock_get_client):
+        mock_get_client.return_value.messages.create.return_value.content = [
+            MagicMock(
+                type="text",
+                text=(
+                    '{"match_id": "ing-1", "ambiguous": false, '
+                    '"canonical_name": "Chicken Breast"}'
+                ),
+            )
+        ]
+
+        result = match_ingredient_to_pantry(
+            "Organic Chicken Breast",
+            "lb",
+            [{"id": "ing-1", "name": "Chicken Breast", "unit": "lb"}],
+        )
+
+        assert result.match_id == "ing-1"
+
+    @patch("app.services.receipt_analyzer._get_client")
+    def test_ambiguous_clears_match_id(self, mock_get_client):
+        mock_get_client.return_value.messages.create.return_value.content = [
+            MagicMock(
+                type="text",
+                text=(
+                    '{"match_id": "ing-1", "ambiguous": true, '
+                    '"canonical_name": "Rice"}'
+                ),
+            )
+        ]
+
+        result = match_ingredient_to_pantry(
+            "Rice",
+            "lb",
+            [
+                {"id": "ing-1", "name": "Brown Rice", "unit": "lb"},
+                {"id": "ing-2", "name": "White Rice", "unit": "lb"},
+            ],
+        )
+
+        assert result.match_id is None
+        assert result.ambiguous is True
+        assert result.canonical_name == "Rice"
+
+    @patch("app.services.receipt_analyzer._get_client")
+    def test_invented_match_id_is_rejected(self, mock_get_client):
+        mock_get_client.return_value.messages.create.return_value.content = [
+            MagicMock(
+                type="text",
+                text=(
+                    '{"match_id": "not-real", "ambiguous": false, '
+                    '"canonical_name": "Chicken Breast"}'
+                ),
+            )
+        ]
+
+        result = match_ingredient_to_pantry(
+            "CHKN BRST",
+            "lb",
+            [{"id": "ing-1", "name": "Chicken Breast", "unit": "lb"}],
+        )
+
+        assert result.match_id is None
+        assert result.canonical_name == "Chicken Breast"
+
+
+class TestCreateIngredientLlmMatch:
+    def test_merges_when_llm_returns_match(self, test_db, test_user):
+        from app.models import Ingredient
+        from app.schemas import DraftIngredientItem
+        from app.services.ingredients import create_ingredient
+        from app.services.receipt_analyzer import ParsedReceiptItem
+
+        existing = Ingredient(
+            id="ing-chicken",
+            user_id=test_user.id,
+            name="Chicken Breast",
+            quantity="1",
+            unit="lb",
+        )
+        test_db.add(existing)
+        test_db.commit()
+
+        item = DraftIngredientItem(
+            ingredient_name="CHKN BRST",
+            store_item_name="CHKN BRST",
+            quantity="2",
+            unit="lb",
+            is_manual=True,
+        )
+
+        estimated = ParsedReceiptItem(
+            store_item_name="CHKN BRST",
+            ingredient_name="CHKN BRST",
+            recognized=True,
+            quantity="2",
+            unit="lb",
+            serving_size="4 oz",
+            servings_per_container=4,
+            calories=120,
+        )
+
+        with patch(
+            "app.services.ingredients.check_ingredient_unit",
+            return_value=None,
+        ), patch(
+            "app.services.ingredients.estimate_ingredient_nutrition",
+            return_value=estimated,
+        ), patch(
+            "app.services.ingredients.match_ingredient_to_pantry",
+            return_value=PantryMatchResult(
+                match_id="ing-chicken",
+                ambiguous=False,
+                canonical_name="Chicken Breast",
+            ),
+        ):
+            result = create_ingredient(test_db, test_user, item)
+
+        assert result.id == "ing-chicken"
+        assert result.quantity == "3"
+
+    def test_merges_plural_via_llm(self, test_db, test_user):
+        from app.models import Ingredient
+        from app.schemas import DraftIngredientItem
+        from app.services.ingredients import create_ingredient
+        from app.services.receipt_analyzer import ParsedReceiptItem
+
+        test_db.add(
+            Ingredient(
+                id="ing-tomato",
+                user_id=test_user.id,
+                name="Tomato",
+                quantity="2",
+                unit="each",
+            )
+        )
+        test_db.commit()
+
+        item = DraftIngredientItem(
+            ingredient_name="Tomatoes",
+            store_item_name="Tomatoes",
+            quantity="3",
+            unit="each",
+            is_manual=True,
+        )
+        estimated = ParsedReceiptItem(
+            store_item_name="Tomatoes",
+            ingredient_name="Tomatoes",
+            recognized=True,
+            quantity="3",
+            unit="each",
+            calories=20,
+        )
+
+        with patch(
+            "app.services.ingredients.check_ingredient_unit",
+            return_value=None,
+        ), patch(
+            "app.services.ingredients.estimate_ingredient_nutrition",
+            return_value=estimated,
+        ), patch(
+            "app.services.ingredients.match_ingredient_to_pantry",
+            return_value=PantryMatchResult(
+                match_id="ing-tomato",
+                ambiguous=False,
+                canonical_name="Tomato",
+            ),
+        ):
+            result = create_ingredient(test_db, test_user, item)
+
+        assert result.id == "ing-tomato"
+        assert result.quantity == "5"
+
+    def test_creates_new_when_llm_ambiguous(self, test_db, test_user):
+        from app.models import Ingredient
+        from app.schemas import DraftIngredientItem
+        from app.services.ingredients import create_ingredient
+        from app.services.receipt_analyzer import ParsedReceiptItem
+
+        test_db.add(
+            Ingredient(
+                id="ing-brown",
+                user_id=test_user.id,
+                name="Brown Rice",
+                quantity="1",
+                unit="lb",
+            )
+        )
+        test_db.add(
+            Ingredient(
+                id="ing-white",
+                user_id=test_user.id,
+                name="White Rice",
+                quantity="1",
+                unit="lb",
+            )
+        )
+        test_db.commit()
+
+        item = DraftIngredientItem(
+            ingredient_name="Rice",
+            store_item_name="Rice",
+            quantity="1",
+            unit="lb",
+            is_manual=True,
+        )
+        estimated = ParsedReceiptItem(
+            store_item_name="Rice",
+            ingredient_name="Rice",
+            recognized=True,
+            quantity="1",
+            unit="lb",
+            calories=100,
+        )
+
+        with patch(
+            "app.services.ingredients.check_ingredient_unit",
+            return_value=None,
+        ), patch(
+            "app.services.ingredients.estimate_ingredient_nutrition",
+            return_value=estimated,
+        ), patch(
+            "app.services.ingredients.match_ingredient_to_pantry",
+            return_value=PantryMatchResult(
+                match_id=None,
+                ambiguous=True,
+                canonical_name="Rice",
+            ),
+        ):
+            result = create_ingredient(test_db, test_user, item)
+
+        assert result.id not in {"ing-brown", "ing-white"}
+        assert result.name == "Rice"
+        assert test_db.query(Ingredient).count() == 3

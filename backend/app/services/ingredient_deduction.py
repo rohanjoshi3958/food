@@ -57,6 +57,14 @@ UNIT_ALIASES: dict[str, str] = {
     "bottles": "bottle",
     "pack": "pack",
     "packs": "pack",
+    "jar": "jar",
+    "jars": "jar",
+    "tub": "tub",
+    "tubs": "tub",
+    "dozen": "dozen",
+    "dozens": "dozen",
+    "dz": "dozen",
+    "doz": "dozen",
     "slice": "slice",
     "slices": "slice",
     "head": "head",
@@ -197,11 +205,7 @@ def meal_ingredients_data(meal: Meal) -> list[dict]:
 
 
 def _normalize_name(name: str) -> str:
-    """Normalize ingredient name for matching.
-
-    Uses the new ingredient_normalization module for robust matching
-    that handles abbreviations, plurals, and qualifiers.
-    """
+    """Normalize ingredient name for cheap local matching."""
     from app.services.ingredient_normalization import normalize_ingredient_name
 
     result = normalize_ingredient_name(name)
@@ -212,13 +216,11 @@ def _find_matching_ingredient(
     ingredients: list[Ingredient],
     used_name: str,
 ) -> Ingredient | None:
-    """Find matching ingredient using robust normalization.
+    """Find matching ingredient using cheap local normalization.
 
-    Uses the new ingredient_normalization module for matching that handles
-    abbreviations (CHKN → chicken), plurals, and qualifiers.
-
-    Only returns matches with EXACT or HIGH confidence. Ambiguous matches
-    return None to avoid incorrect deductions.
+    Only returns EXACT/HIGH local matches. Abbreviation, plural, and
+    qualifier equivalence is handled when items are added (LLM), so meal
+    deduction typically sees already-aligned names.
     """
     from app.services.ingredient_normalization import (
         MatchConfidence,
@@ -442,6 +444,9 @@ PACKAGE_UNITS = {
     "can",
     "bottle",
     "pack",
+    "jar",
+    "tub",
+    "dozen",
     "bunch",
     "head",
 }

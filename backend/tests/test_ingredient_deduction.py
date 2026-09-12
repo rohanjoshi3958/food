@@ -120,6 +120,14 @@ class TestNormalizeUnit:
             ("bottles", "bottle"),
             ("pack", "pack"),
             ("packs", "pack"),
+            ("jar", "jar"),
+            ("jars", "jar"),
+            ("tub", "tub"),
+            ("tubs", "tub"),
+            ("dozen", "dozen"),
+            ("dozens", "dozen"),
+            ("dz", "dozen"),
+            ("doz", "dozen"),
             ("slice", "slice"),
             ("slices", "slice"),
             ("head", "head"),
@@ -378,9 +386,14 @@ class TestFindMatchingIngredient:
         assert result is not None
 
     def test_partial_match_substring(self):
+        """Qualifier differences are left to the LLM at intake, not deduction.
+
+        Meal deduction uses cheap local matching only, so "Chicken Breast"
+        does not auto-match "Organic Chicken Breast" here.
+        """
         ingredients = [MockIngredient(id="1", name="Organic Chicken Breast")]
         result = _find_matching_ingredient(ingredients, "Chicken Breast")
-        assert result is not None
+        assert result is None
 
     def test_partial_match_single_result(self):
         """Partial matches are now considered ambiguous and return None.
@@ -699,6 +712,14 @@ class TestUnitAliases:
         assert "box" in UNIT_ALIASES
         assert "can" in UNIT_ALIASES
         assert "bottle" in UNIT_ALIASES
+        assert "jar" in UNIT_ALIASES
+        assert "tub" in UNIT_ALIASES
+        assert "dozen" in UNIT_ALIASES
+        assert "jars" in UNIT_ALIASES
+        assert "tubs" in UNIT_ALIASES
+        assert "dozens" in UNIT_ALIASES
+        assert "dz" in UNIT_ALIASES
+        assert "doz" in UNIT_ALIASES
 
 
 class TestConversionFactors:

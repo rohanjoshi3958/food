@@ -48,7 +48,12 @@ Focus ONLY on reading what is printed on the receipt. Do NOT estimate nutrition,
 
 Extract every line item visible on the receipt. For each item return:
 - store_item_name: the exact text printed on the receipt
-- ingredient_name: a clear normalized name (e.g. "Organic Bananas")
+- ingredient_name: a clear plain-English grocery name. Expand receipt abbreviations
+  (e.g. "CHKN BRST" → "Chicken Breast", "ORG BNNAS" → "Organic Bananas",
+  "GRND BF" → "Ground Beef"). Prefer singular common food names when natural
+  ("Bananas" → "Banana" is fine as "Bananas" or "Banana"; be consistent and readable).
+  Keep useful qualifiers like Organic/Fresh/Frozen when they are part of the product.
+  Do not leave shorthand in ingredient_name.
 - is_food: true for groceries/food, false for non-food (tax, bags, coupons, fees, etc.)
 - quantity: quantity from the receipt when shown; if missing, make an educated guess (often "1")
 - unit: unit from the receipt when shown (e.g. lb, oz, each). If missing, make an educated guess based on the item (packaged goods usually "each"; produce often "lb" or "each"; liquids often "fl oz" or "each" for bottles). Never leave unit null for food items.
@@ -126,6 +131,41 @@ Respond with ONLY valid JSON:
 {{
   "unit_plausible": true,
   "unit_warning": null
+}}"""
+
+PANTRY_MATCH_PROMPT = """Match an incoming grocery item to the user's existing pantry.
+
+Incoming item:
+- name: {ingredient_name}
+- unit: {unit}
+
+Existing pantry items (JSON):
+{pantry_json}
+
+Rules:
+- Expand receipt abbreviations when interpreting the incoming name
+  (e.g. CHKN BRST → Chicken Breast, ORG BNNAS → Organic Bananas).
+- Treat singular/plural forms as the same food (Chicken Breasts ≈ Chicken Breast,
+  Tomatoes ≈ Tomato) when deciding matches.
+- Treat common product qualifiers (organic, fresh, frozen, brand/store prefixes)
+  as the same core food when clearly equivalent
+  (Organic Chicken Breast ≈ Chicken Breast), unless the qualifier changes the
+  product identity (Brown Rice ≠ White Rice, Skim Milk ≠ Whole Milk).
+- Set match_id to an existing pantry item id ONLY when it is clearly the same food
+  AND the unit is compatible for merging (same measurement family / same package unit).
+- Set ambiguous to true when more than one pantry item could reasonably match
+  (e.g. "Rice" vs both "Brown Rice" and "White Rice"), or when the match is only partial.
+  When ambiguous, match_id must be null.
+- Set match_id to null when nothing clearly matches.
+- Never invent pantry ids; only use ids from the list above.
+- canonical_name should be a clear plain-English display name for the incoming item
+  (expanded abbreviations, sensible singular/plural, title-friendly).
+
+Respond with ONLY valid JSON:
+{{
+  "match_id": null,
+  "ambiguous": false,
+  "canonical_name": "Chicken Breast"
 }}"""
 
 
@@ -244,6 +284,76 @@ def check_ingredient_unit(
         return None
 
     return _unit_warning_from_payload(payload)
+
+
+class PantryMatchResult(BaseModel):
+    match_id: str | None = None
+    ambiguous: bool = False
+    canonical_name: str | None = None
+
+
+def match_ingredient_to_pantry(
+    ingredient_name: str,
+    unit: str | None,
+    pantry_items: list[dict],
+) -> PantryMatchResult:
+    """Use the LLM to match an incoming ingredient against existing pantry rows."""
+    name = ingredient_name.strip()
+    if not name:
+        return PantryMatchResult()
+
+    unit_label = (unit or "").strip() or "each"
+    valid_ids = {
+        str(item.get("id"))
+        for item in pantry_items
+        if item.get("id") is not None
+    }
+
+    if not pantry_items:
+        return PantryMatchResult(canonical_name=None)
+
+    client = _get_client()
+    message = client.messages.create(
+        model=RECEIPT_ANTHROPIC_MODEL,
+        max_tokens=256,
+        messages=[
+            {
+                "role": "user",
+                "content": PANTRY_MATCH_PROMPT.format(
+                    ingredient_name=name,
+                    unit=unit_label,
+                    pantry_json=json.dumps(pantry_items, ensure_ascii=True),
+                ),
+            }
+        ],
+    )
+
+    text_blocks = [block.text for block in message.content if block.type == "text"]
+    if not text_blocks:
+        return PantryMatchResult()
+
+    try:
+        payload = _extract_json(text_blocks[-1])
+    except (json.JSONDecodeError, ValueError):
+        return PantryMatchResult()
+
+    if not isinstance(payload, dict):
+        return PantryMatchResult()
+
+    match_id = _as_optional_str(payload.get("match_id"))
+    if match_id is not None and match_id not in valid_ids:
+        match_id = None
+
+    ambiguous = payload.get("ambiguous") is True
+    if ambiguous:
+        match_id = None
+
+    canonical_name = _as_optional_str(payload.get("canonical_name"))
+    return PantryMatchResult(
+        match_id=match_id,
+        ambiguous=ambiguous,
+        canonical_name=canonical_name,
+    )
 
 
 def estimate_ingredient_nutrition(

@@ -3,16 +3,13 @@ from sqlalchemy.orm import Session
 from app.models import Ingredient, User
 from app.schemas import DraftIngredientItem, IngredientResponse
 from app.services.ingredient_merge import _merge_key, _sum_quantities
-from app.services.ingredient_deduction import servings_per_pantry_unit
-from app.services.ingredient_normalization import (
-    MatchConfidence,
-    find_matching_ingredient_with_confidence,
-    clean_display_name,
-)
+from app.services.ingredient_deduction import normalize_unit, servings_per_pantry_unit
+from app.services.ingredient_normalization import clean_display_name
 from app.services.receipt_analyzer import (
     ReceiptAnalysisError,
     check_ingredient_unit,
     estimate_ingredient_nutrition,
+    match_ingredient_to_pantry,
 )
 
 
@@ -75,53 +72,59 @@ def _find_matching_pantry_item(
     user: User,
     name: str,
     unit: str | None,
-) -> tuple[Ingredient | None, bool]:
-    """Find a matching pantry item using robust normalization.
+) -> tuple[Ingredient | None, bool, str | None]:
+    """Find a matching pantry item.
 
-    Returns a tuple of (matched_ingredient, is_ambiguous).
-    - If is_ambiguous is True, the match was uncertain and should be
-      reviewed by the user rather than auto-merged.
-    - Uses canonical key matching first (fastest), then falls back to
-      confidence-based name matching for potential merges.
-
-    The normalization handles:
-    - Abbreviations: CHKN BRST → chicken breast
-    - Plurals: Chicken breasts → Chicken breast
-    - Qualifiers: ORG CHICKEN BREAST matches Chicken Breast
+    Returns (matched_ingredient, is_ambiguous, canonical_name).
+    - Cheap canonical key match first (no LLM).
+    - If that fails and the pantry is non-empty, ask the LLM whether the
+      incoming name matches an existing row (handles abbreviations).
+    - Ambiguous matches are not auto-merged.
     """
-    from app.services.ingredient_deduction import normalize_unit
-
     target_key = _merge_key(name, unit)
     pantry = db.query(Ingredient).filter(Ingredient.user_id == user.id).all()
 
     for ingredient in pantry:
         if _merge_key(ingredient.name, ingredient.unit) == target_key:
-            return (ingredient, False)
+            return (ingredient, False, None)
 
-    # Only consider unit-compatible pantry rows for name matching so an
-    # exact name with an incompatible unit cannot beat a high-confidence
-    # name match that shares the target unit.
+    if not pantry:
+        return (None, False, None)
+
+    # Only send unit-compatible pantry rows to the LLM so incompatible
+    # units cannot win a name match.
     target_unit = normalize_unit(unit) or ""
     unit_compatible = [
         ingredient
         for ingredient in pantry
         if (normalize_unit(ingredient.unit) or "") == target_unit
     ]
-    candidates = [(ingredient.id, ingredient.name) for ingredient in unit_compatible]
-    matched_id, match_result = find_matching_ingredient_with_confidence(
-        name, candidates, require_high_confidence=True
-    )
+    if not unit_compatible:
+        return (None, False, None)
 
-    if match_result and match_result.confidence == MatchConfidence.AMBIGUOUS:
-        return (None, True)
+    pantry_payload = [
+        {
+            "id": ingredient.id,
+            "name": ingredient.name,
+            "unit": ingredient.unit or "",
+        }
+        for ingredient in unit_compatible
+    ]
 
-    if matched_id and match_result:
-        if match_result.confidence in (MatchConfidence.EXACT, MatchConfidence.HIGH):
-            for ingredient in unit_compatible:
-                if ingredient.id == matched_id:
-                    return (ingredient, False)
+    try:
+        llm_match = match_ingredient_to_pantry(name, unit, pantry_payload)
+    except ReceiptAnalysisError:
+        return (None, False, None)
 
-    return (None, False)
+    if llm_match.ambiguous:
+        return (None, True, llm_match.canonical_name)
+
+    if llm_match.match_id:
+        for ingredient in unit_compatible:
+            if ingredient.id == llm_match.match_id:
+                return (ingredient, False, llm_match.canonical_name)
+
+    return (None, False, llm_match.canonical_name)
 
 
 def create_ingredient(
@@ -132,17 +135,14 @@ def create_ingredient(
 ) -> IngredientResponse:
     """Create or merge an ingredient into the user's inventory.
 
-    Uses robust normalization to match ingredients:
-    - Abbreviations: CHKN BRST → chicken breast
-    - Plurals: Chicken breasts → Chicken breast
-    - Qualifiers: ORG CHICKEN matches Chicken
-
-    Ambiguous matches are NOT auto-merged; they create new entries
-    for user review.
+    Uses cheap local keys for exact matches, then an LLM pantry match for
+    abbreviation / naming variants. Ambiguous matches create new entries.
     """
     resolved = resolve_item_nutrition(item)
     name = resolved.ingredient_name.strip()
-    existing, is_ambiguous = _find_matching_pantry_item(db, user, name, resolved.unit)
+    existing, is_ambiguous, canonical_name = _find_matching_pantry_item(
+        db, user, name, resolved.unit
+    )
 
     if existing is not None and not is_ambiguous:
         existing.original_quantity = _sum_quantities(
@@ -175,7 +175,7 @@ def create_ingredient(
         db.refresh(existing)
         return IngredientResponse.model_validate(existing)
 
-    display_name = clean_display_name(name)
+    display_name = (canonical_name or "").strip() or clean_display_name(name)
 
     ingredient = Ingredient(
         user_id=user.id,

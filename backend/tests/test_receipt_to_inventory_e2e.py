@@ -456,6 +456,7 @@ class TestReceiptToInventoryE2E:
             mock_client.messages.create.side_effect = build_receipt_flow_side_effect(
                 second_receipt_response,
                 [second_nutrition],
+                existing_pantry_items=1,
             )
             
             # Upload second receipt

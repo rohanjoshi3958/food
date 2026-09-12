@@ -243,6 +243,24 @@ def mock_unit_check_response() -> Mock:
     )
 
 
+def mock_pantry_match_response(
+    *,
+    match_id: str | None = None,
+    ambiguous: bool = False,
+    canonical_name: str | None = None,
+) -> Mock:
+    """Mock an LLM pantry-match response."""
+    return create_mock_anthropic_response(
+        json.dumps(
+            {
+                "match_id": match_id,
+                "ambiguous": ambiguous,
+                "canonical_name": canonical_name,
+            }
+        )
+    )
+
+
 def mock_nutrition_response(estimate: dict) -> Mock:
     """Mock a nutrition estimate response, ensuring recognized is set."""
     payload = {"recognized": True, **estimate}
@@ -253,14 +271,26 @@ def build_receipt_flow_side_effect(
     receipt_response: dict,
     upload_nutrition: list[dict],
     confirm_nutrition: list[dict] | None = None,
+    *,
+    existing_pantry_items: int = 0,
 ) -> list[Mock]:
-    """Anthropic calls: receipt scan, upload enrichment, then confirm checks."""
-    confirm_nutrition = confirm_nutrition if confirm_nutrition is not None else upload_nutrition
+    """Anthropic calls: receipt scan, upload enrichment, then confirm checks.
+
+    Confirm sequence per food item: unit-check, nutrition, and (when the
+    pantry is already non-empty) pantry match.
+    """
+    confirm_nutrition = (
+        confirm_nutrition if confirm_nutrition is not None else upload_nutrition
+    )
     side_effect = [
         create_mock_anthropic_response(json.dumps(receipt_response)),
         *[mock_nutrition_response(estimate) for estimate in upload_nutrition],
     ]
+    pantry_size = existing_pantry_items
     for estimate in confirm_nutrition:
         side_effect.append(mock_unit_check_response())
         side_effect.append(mock_nutrition_response(estimate))
+        if pantry_size > 0:
+            side_effect.append(mock_pantry_match_response())
+        pantry_size += 1
     return side_effect

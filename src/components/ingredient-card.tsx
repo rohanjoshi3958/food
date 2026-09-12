@@ -34,6 +34,9 @@ export function IngredientCard({
     "can",
     "bottle",
     "pack",
+    "jar",
+    "tub",
+    "dozen",
     "bunch",
     "head",
   ]);
