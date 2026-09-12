@@ -4,6 +4,8 @@
 
 This directory contains automated backend tests for:
 
+- **Golden-path smoke / cost baseline** (`test_smoke_golden_path.py`) — signup → upload receipt → confirm → generate meal → cookbook through the HTTP API, with per-stage Claude call counts and models pinned. This is the QA gate for cost-optimization PRs; see `docs/qa.md`.
+- **Meal generation call budget** (`test_meal_generator.py`) — parsing, calorie retry loop, attempt cap, and fallback behaviour
 - **Authentication lifecycle** (`test_auth.py`) — login, logout, password reset, expired sessions, and cross-user access
 - **Receipt → inventory E2E flow** (`test_receipt_to_inventory_e2e.py`)
 - **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
