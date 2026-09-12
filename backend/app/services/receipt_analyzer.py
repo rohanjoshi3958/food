@@ -542,16 +542,26 @@ def extract_receipt_vision(
     return _run_receipt_extraction([content_block], model)
 
 
-RECEIPT_TEXT_ANALYSIS_PROMPT = (
+RECEIPT_TEXT_ANALYSIS_PREAMBLE = (
     "The following is OCR text from a grocery store receipt. Treat it exactly like "
     "the receipt image described below; OCR may have garbled some characters.\n\n"
-    "--- OCR TEXT START ---\n{ocr_text}\n--- OCR TEXT END ---\n\n" + RECEIPT_ANALYSIS_PROMPT
+    "--- OCR TEXT START ---\n"
 )
+
+
+def build_receipt_text_prompt(ocr_text: str) -> str:
+    # Plain concatenation: RECEIPT_ANALYSIS_PROMPT contains literal JSON braces.
+    return (
+        RECEIPT_TEXT_ANALYSIS_PREAMBLE
+        + ocr_text.strip()
+        + "\n--- OCR TEXT END ---\n\n"
+        + RECEIPT_ANALYSIS_PROMPT
+    )
 
 
 def extract_receipt_text(ocr_text: str, *, model: str) -> ParsedReceipt:
     """Text-only extraction from OCR output (soft fallback rung, e.g. Haiku)."""
-    prompt = RECEIPT_TEXT_ANALYSIS_PROMPT.format(ocr_text=ocr_text.strip())
+    prompt = build_receipt_text_prompt(ocr_text)
     return _run_receipt_extraction([{"type": "text", "text": prompt}], model)
 
 

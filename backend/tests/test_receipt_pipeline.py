@@ -259,6 +259,47 @@ class TestOcrFirstLadder:
                 analyze_receipt(real_receipt_image, contents, db=test_db, user_id=test_user.id)
 
 
+class TestExtractors:
+    """The real extraction helpers against a mocked Anthropic client (no patching of our own code)."""
+
+    @patch("app.services.receipt_analyzer.anthropic.Anthropic")
+    def test_extract_receipt_text_sends_ocr_text_and_parses_json(self, mock_anthropic_class, flags, ocr_receipt_text):
+        from tests.conftest import create_mock_anthropic_response
+
+        mock_client = Mock()
+        mock_anthropic_class.return_value = mock_client
+        mock_client.messages.create.return_value = create_mock_anthropic_response(
+            '{"store_name": "Whole Foods Market", "items": [{"store_item_name": "ORG BNNAS", "ingredient_name": "Organic Bananas", "is_food": true, "quantity": "2.14", "unit": "lb"}]}'
+        )
+        from app.services.receipt_analyzer import extract_receipt_text
+
+        parsed = extract_receipt_text(ocr_receipt_text, model="claude-haiku-test")
+
+        kwargs = mock_client.messages.create.call_args.kwargs
+        assert kwargs["model"] == "claude-haiku-test"
+        prompt = kwargs["messages"][0]["content"][0]["text"]
+        assert "ORG BNNAS" in prompt and "OCR TEXT START" in prompt
+        assert '"store_name": "Store Name or null"' in prompt  # JSON braces survived
+        assert parsed.store_name == "Whole Foods Market"
+        assert parsed.items[0].ingredient_name == "Organic Bananas"
+
+    @patch("app.services.receipt_analyzer.anthropic.Anthropic")
+    def test_extract_receipt_vision_uses_document_block_for_pdf(self, mock_anthropic_class, flags):
+        from tests.conftest import create_mock_anthropic_response
+
+        mock_client = Mock()
+        mock_anthropic_class.return_value = mock_client
+        mock_client.messages.create.return_value = create_mock_anthropic_response('{"store_name": null, "items": []}')
+        from app.services.receipt_analyzer import extract_receipt_vision
+
+        extract_receipt_vision(b"%PDF-1.4", "application/pdf", model="claude-sonnet-5")
+        kwargs = mock_client.messages.create.call_args.kwargs
+        block = kwargs["messages"][0]["content"][0]
+        assert kwargs["model"] == "claude-sonnet-5"
+        assert block["type"] == "document"
+        assert block["source"]["media_type"] == "application/pdf"
+
+
 class TestTelemetry:
     def test_path_for_model(self):
         assert path_for_model("claude-haiku-4") == PATH_HAIKU
