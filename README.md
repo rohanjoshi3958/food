@@ -88,6 +88,36 @@ Open [http://localhost:3000](http://localhost:3000), create an account, and star
 | `npm run db:up` | Start Postgres only |
 | `npm run db:down` | Stop Postgres |
 | `npm run lint` | Run ESLint |
+| `npm run typecheck` | Run TypeScript (`tsc --noEmit`) |
+| `npm run build` | Production Next.js build |
+
+## CI
+
+Pull requests and pushes to `main` run GitHub Actions (`.github/workflows/ci.yml`):
+
+| Job | Checks |
+| --- | --- |
+| **Frontend** | `npm run lint`, `npm run typecheck`, `npm run build` |
+| **Backend** | `pytest` in `backend/` (SQLite test DB; Anthropic/OpenAI mocked) |
+
+Jobs run in parallel. The workflow fails if lint, typecheck, build, or any test fails. AI provider API keys are cleared in CI; tests mock Anthropic (and related) clients so no real provider calls are made.
+
+Local equivalents:
+
+```bash
+# Frontend
+npm ci
+npm run lint
+npm run typecheck
+npm run build
+
+# Backend
+cd backend
+python3 -m pip install -r requirements.txt
+pytest
+```
+
+See `backend/tests/README.md` for more on the test suite.
 
 ## Notes
 
