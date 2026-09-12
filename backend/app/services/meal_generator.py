@@ -4,9 +4,10 @@ import re
 import anthropic
 from pydantic import BaseModel, Field
 
-from app.config import MEAL_ANTHROPIC_MODEL, settings
+from app.config import settings
 from app.models import Ingredient
 from app.services.anthropic_cache import create_cached_message
+from app.services.model_router import route_model
 from app.services.ingredient_deduction import (
     clamp_meal_ingredients_to_pantry,
     remaining_servings,
@@ -256,6 +257,9 @@ def generate_meal_from_ingredients(
         )
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    # One routing decision per generation; every retry turn reuses the same
+    # model so the cached prefix keeps hitting (caches are per model).
+    model = route_model("meal.generate").model
     system_prefix = MEAL_GENERATION_PROMPT.format(
         calorie_min=MEAL_CALORIE_MIN,
         calorie_max=MEAL_CALORIE_MAX,
@@ -306,7 +310,7 @@ def generate_meal_from_ingredients(
             message = create_cached_message(
                 client,
                 call_site="meal.generate",
-                model=MEAL_ANTHROPIC_MODEL,
+                model=model,
                 max_tokens=4096,
                 system_prefix=system_prefix,
                 messages=conversation,

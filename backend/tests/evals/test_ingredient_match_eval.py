@@ -21,6 +21,7 @@ from dataclasses import dataclass
 import pytest
 from sqlalchemy.orm import Session
 
+from app.config import OPUS_ANTHROPIC_MODEL
 from app.models import Ingredient, User
 from app.schemas import DraftIngredientItem
 from app.services.ingredient_merge import _merge_key, merge_draft_items
@@ -29,6 +30,7 @@ from app.services.ingredients import (
     canonicalize_draft_items,
     create_ingredient,
 )
+from app.services.receipt_analyzer import PANTRY_MATCH_PROMPT
 from tests.evals.conftest import FakeClaude, load_pantry_match_fixtures
 from tests.evals.scoring import Tally, names_equivalent
 
@@ -181,5 +183,40 @@ def test_ingredient_match_meets_baselines(fake_claude, test_db, test_user, gate)
         "mean_pantry_match_calls",
         pantry_match_calls / len(MATCH_CASES),
         f"{pantry_match_calls} calls over {len(MATCH_CASES)} cases",
+    )
+    suite.assert_all()
+
+
+def test_ingredient_match_with_routing_enabled(fake_claude, test_db, test_user, gate, monkeypatch):
+    """Same corpus with MODEL_ROUTING_ENABLED=true: decisions must not change,
+    and the model mix must shift off Opus (Sonnet first, Opus only on
+    low-confidence escalation). Documents the cost/quality trade the flag buys."""
+    monkeypatch.setenv("MODEL_ROUTING_ENABLED", "true")
+
+    decision = Tally()
+    total_calls = 0
+    opus_calls = 0
+    for case in MATCH_CASES:
+        outcome = run_match_case(fake_claude, test_db, test_user, case)
+        expected = case["expected"]
+        matched = outcome.decision == expected["decision"] and (
+            expected["decision"] != "merge" or outcome.row_id == expected["into"]
+        )
+        decision.add(matched, f"{case['id']}: got {outcome.decision}/{outcome.row_id}")
+        pantry_calls = fake_claude.calls_for(PANTRY_MATCH_PROMPT)
+        total_calls += len(pantry_calls)
+        opus_calls += sum(1 for call in pantry_calls if call["model"] == OPUS_ANTHROPIC_MODEL)
+
+    suite = gate("ingredient_match_routing_on")
+    suite.check("match_decision_accuracy", decision.rate, decision.describe())
+    suite.check(
+        "mean_pantry_match_calls",
+        total_calls / len(MATCH_CASES),
+        f"{total_calls} calls over {len(MATCH_CASES)} cases (escalations add a call)",
+    )
+    suite.check(
+        "opus_share_of_pantry_match_calls",
+        opus_calls / total_calls if total_calls else 0.0,
+        f"{opus_calls}/{total_calls} pantry-match calls reached Opus",
     )
     suite.assert_all()

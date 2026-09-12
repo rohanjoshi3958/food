@@ -67,18 +67,22 @@ def extract_cache_usage(message: Any) -> dict[str, int | None]:
     return {field: _usage_int(usage, field) for field in USAGE_FIELDS}
 
 
-def log_cache_usage(message: Any, *, call_site: str) -> dict[str, int | None]:
+def log_cache_usage(
+    message: Any, *, call_site: str, model: str | None = None
+) -> dict[str, int | None]:
     """Log prompt-cache counters for one call and return them.
 
     Both cache counters at 0 means the prefix was not cached, usually because
     it is below the model's minimum cacheable length or because something
-    volatile sits before the breakpoint.
+    volatile sits before the breakpoint. ``model`` is included so the model
+    mix per call site can be read off the same line (FOOD-58 routing).
     """
     usage = extract_cache_usage(message)
     logger.info(
-        "anthropic call_site=%s input_tokens=%s output_tokens=%s "
+        "anthropic call_site=%s model=%s input_tokens=%s output_tokens=%s "
         "cache_creation_input_tokens=%s cache_read_input_tokens=%s",
         call_site,
+        model or "",
         usage["input_tokens"],
         usage["output_tokens"],
         usage["cache_creation_input_tokens"],
@@ -109,5 +113,5 @@ def create_cached_message(
         messages=messages,
         **kwargs,
     )
-    log_cache_usage(message, call_site=call_site)
+    log_cache_usage(message, call_site=call_site, model=model)
     return message

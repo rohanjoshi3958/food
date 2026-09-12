@@ -413,14 +413,23 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # no
 
 @pytest.fixture
 def live_anthropic(monkeypatch):
-    """Restore a real API key for live evals.
+    """Restore a real API key and, optionally, force one model for live evals.
 
-    Skips unless ``FOOD_EVAL_LIVE=1``. Yields ``FOOD_EVAL_MODEL`` (may be
-    ``None``) so live suites can report which tier they exercised.
+    Skips unless ``FOOD_EVAL_LIVE=1``. When ``FOOD_EVAL_MODEL`` is set (e.g.
+    ``claude-haiku-4-5``) every call site is forced onto that model through
+    ``model_router.forced_model`` so a tier can be scored end to end before
+    it is routed in production. Yields the forced model id or ``None``.
     """
     if not LIVE_ENABLED:
         pytest.skip("live evals are opt-in: set FOOD_EVAL_LIVE=1 (paid Anthropic calls)")
     if not _LIVE_API_KEY:
         pytest.skip("live evals need ANTHROPIC_API_KEY or FOOD_EVAL_ANTHROPIC_API_KEY")
     monkeypatch.setenv("ANTHROPIC_API_KEY", _LIVE_API_KEY)
-    yield LIVE_MODEL
+
+    from app.services.model_router import forced_model
+
+    if LIVE_MODEL:
+        with forced_model(LIVE_MODEL):
+            yield LIVE_MODEL
+    else:
+        yield None

@@ -27,6 +27,12 @@
     "draft_collapse_rate": {"baseline": 1.0, "min": 1.0},
     "mean_pantry_match_calls": {"baseline": 0.929, "max": 1.0}
   },
+  "ingredient_match_routing_on": {
+    "_comment": "Same corpus with MODEL_ROUTING_ENABLED=true (Sonnet first, Opus on low-confidence escalation). Decisions must not move; the Opus share is the cost lever the flag buys.",
+    "match_decision_accuracy": {"baseline": 1.0, "min": 0.95},
+    "mean_pantry_match_calls": {"baseline": 1.286, "max": 1.35},
+    "opus_share_of_pantry_match_calls": {"baseline": 0.278, "max": 0.3}
+  },
   "meal_plan": {
     "schema_valid_rate": {"baseline": 1.0, "min": 1.0},
     "acceptability_rate": {"baseline": 0.875, "min": 0.85},
