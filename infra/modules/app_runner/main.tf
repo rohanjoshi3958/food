@@ -152,9 +152,10 @@ resource "aws_apprunner_auto_scaling_configuration_version" "this" {
 # ---------------------------------------------------------------------------
 # Service
 #
-# NOTE: App Runner enforces a fixed 120-second request timeout that is not
-# configurable through any API, so the FOOD-49/FOOD-51 target of >=300s cannot
-# be expressed here. See infra/README.md ("Request timeout") for options.
+# NOTE: App Runner enforces a fixed 120-second synchronous request timeout
+# that is not configurable through any API; the service therefore already runs
+# at the platform maximum (FOOD-51). Long receipt/AI work is handled as async
+# jobs at the application level. See infra/README.md ("Request timeout").
 # ---------------------------------------------------------------------------
 
 resource "aws_apprunner_service" "this" {

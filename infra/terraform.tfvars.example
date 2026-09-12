@@ -39,6 +39,6 @@ amplify_branch     = "main"
 # frontend_url = "https://main.d1234abcd.amplifyapp.com"
 # cors_origins = ["https://main.d1234abcd.amplifyapp.com"]
 
-# FOOD-48 option B (edge rewrite). Leave false unless you accept the ~30 s
-# Amplify proxy limit - see README.
+# FOOD-48 option B (edge rewrite). Fine for short CRUD (~30 s Amplify proxy
+# limit); long AI work is async and must not go through this proxy - see README.
 amplify_enable_api_rewrite = false

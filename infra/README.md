@@ -146,32 +146,39 @@ Plain env vars set by Terraform (`modules/app_runner`, names from `backend/app/c
 Secrets injected from Secrets Manager: `DATABASE_URL`, `AUTH_SECRET`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `RESEND_API_KEY`.
 Extra vars: `backend_extra_environment`.
 
-## Request timeout — read this (FOOD-49 / FOOD-51)
+## Request timeout and health check (FOOD-51)
 
-FOOD-49/FOOD-51 ask for a **≥ 300 s** request timeout for receipt analysis. **App Runner enforces a fixed 120-second request timeout** (read + process + write) that is not exposed in the API, console or Terraform ([AWS docs](https://docs.aws.amazon.com/apprunner/latest/dg/develop.html#develop.considerations), [roadmap #104](https://github.com/aws/apprunner-roadmap/issues/104)). This module configures everything App Runner *does* allow — `/api/health` health check, autoscaling, instance size — but cannot lift that ceiling.
+**Architecture decision:** the backend stays on App Runner, and long-running receipt/AI work is handled **asynchronously** rather than as a ≥300 s synchronous request. The original ≥300 s target in FOOD-49/FOOD-51 is therefore superseded.
 
-Options, in rough order of preference:
+- **App Runner enforces a fixed 120-second synchronous request timeout** (read + process + write). It is not exposed in the API, console or Terraform ([AWS docs](https://docs.aws.amazon.com/apprunner/latest/dg/develop.html#develop.considerations), [roadmap #104](https://github.com/aws/apprunner-roadmap/issues/104)). This is the expected, documented ceiling for any single request to the API; the service already runs at the App Runner maximum, and nothing in the container lowers it (uvicorn has no request timeout).
+- **Long AI work is async by design:** the receipt-analysis and meal-generation endpoints should enqueue a job and return immediately (job id), with the client polling a status endpoint (or SSE well under 120 s). No additional infrastructure is required for that pattern beyond what is here; if a dedicated worker or queue is introduced later it can reuse the network, RDS, S3 and secrets modules unchanged.
+- **Health check:** `/api/health` over HTTP, 10 s interval, 5 s timeout, 1 healthy / 5 unhealthy thresholds (`modules/app_runner`, variables `health_check_*`).
 
-1. **Make receipt analysis asynchronous** — `POST /api/receipts` returns a job id immediately; the client polls `GET /api/receipts/{id}` (or uses SSE under 120 s). No infra change; also fixes the Amplify limits below.
-2. **Run the API on ECS Fargate behind an ALB** (idle timeout up to 4000 s). A different compute module; the network, RDS, S3, secrets and IAM in this repo carry over unchanged.
-3. Keep App Runner and accept that a single receipt request must finish within 120 s (the README says "up to a minute", so this may be acceptable in practice — but there is no headroom).
+FOOD-51 infra acceptance:
 
-Also note that uvicorn itself has no request timeout, so nothing in the container caps it below App Runner's limit.
+| Item | Status |
+| --- | --- |
+| Health check against `/api/health` configured | Done (`health_check_configuration` in `modules/app_runner/main.tf`) |
+| Request timeout set to the App Runner maximum | Done — 120 s is the platform maximum and cannot be raised |
+| 120 s limit documented | This section, `modules/app_runner/main.tf`, and the FOOD-48 notes below |
+| Long receipt/AI work not cut off | Handled at the application level via async jobs, not by the sync request timeout |
 
 ## Notes for FOOD-48 — Next.js `/api/*` → App Runner
 
-`next.config.ts` currently rewrites `/api/:path*` to `http://localhost:8000`. Terraform gives Amplify a **`BACKEND_URL`** environment variable (custom API domain if set, otherwise the App Runner URL; see output `backend_url`). Two ways to use it:
+`next.config.ts` currently rewrites `/api/:path*` to `http://localhost:8000`. Terraform gives Amplify a **`BACKEND_URL`** environment variable (custom API domain if set, otherwise the App Runner URL; see output `backend_url`).
+
+**Rule of thumb:** the Amplify rewrite is fine for short CRUD calls. **Long AI work must not rely on the Amplify SSR proxy** — it goes through async jobs (see FOOD-51 above), so every request that passes through Amplify is a quick enqueue or a status poll.
 
 - **Option A (recommended) — Next.js rewrite driven by env:**
   ```ts
   const backend = process.env.BACKEND_URL ?? "http://localhost:8000";
   rewrites: async () => [{ source: "/api/:path*", destination: `${backend}/api/:path*` }]
   ```
-  Same-origin from the browser's point of view, so cookies "just work". Caveat: the rewrite runs in Amplify's SSR compute, which has a **~30 s hard limit** ([amplify-hosting #3508](https://github.com/aws-amplify/amplify-hosting/issues/3508)). Fine for CRUD, not for a 60 s receipt analysis.
-- **Option B — Amplify edge rewrite:** set `amplify_enable_api_rewrite = true` to add a `200` custom rule `/api/<*> → ${BACKEND_URL}/api/<*>`. This bypasses SSR compute but still goes through Amplify's CloudFront proxy, which has similar (~30 s) timeout behaviour and rewrites `Host`; test cookie behaviour before relying on it.
-- **Option C — call App Runner directly for long requests:** point the receipt-upload `fetch` at `NEXT_PUBLIC_API_URL` (add it via `amplify_environment_variables`) with `credentials: "include"`. This is the only path that gets the full 120 s. It requires the CORS/cookie work in FOOD-50. Putting the API on a sibling subdomain (`backend_custom_domain = "api.example.com"` next to `app.example.com`) keeps the session cookie same-site so no `SameSite=None` changes are needed.
+  Same-origin from the browser's point of view, so cookies "just work". The rewrite runs in Amplify's SSR compute, which has a **~30 s hard limit** ([amplify-hosting #3508](https://github.com/aws-amplify/amplify-hosting/issues/3508)) — acceptable for CRUD, job submission and polling; never route a synchronous AI call through it.
+- **Option B — Amplify edge rewrite:** set `amplify_enable_api_rewrite = true` to add a `200` custom rule `/api/<*> → ${BACKEND_URL}/api/<*>`. This bypasses SSR compute but still goes through Amplify's CloudFront proxy, which has similar (~30 s) timeout behaviour and rewrites `Host`; test cookie behaviour before relying on it. Same short-request rule applies.
+- **Option C — direct calls to App Runner:** only needed if some request must use the full App Runner 120 s window (e.g. a large upload). Point that `fetch` at `NEXT_PUBLIC_API_URL` (add it via `amplify_environment_variables`) with `credentials: "include"`; requires the CORS/cookie work in FOOD-50. Putting the API on a sibling subdomain (`backend_custom_domain = "api.example.com"` next to `app.example.com`) keeps the session cookie same-site so no `SameSite=None` changes are needed.
 
-A pragmatic split: Option A for everything, Option C only for the receipt-analysis call.
+With the async-job design, Option A alone should cover the app; keep Option C in reserve.
 
 ## Notes for FOOD-50 — CORS / FRONTEND_URL / cookies
 
