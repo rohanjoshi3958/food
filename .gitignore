@@ -23,6 +23,9 @@
 # misc
 .DS_Store
 *.pem
+# macOS Finder duplicate copies (e.g. "package 2.json")
+*[[:space:]]2.*
+*[[:space:]]2
 
 # debug
 npm-debug.log*
