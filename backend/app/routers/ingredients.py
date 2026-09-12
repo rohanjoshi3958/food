@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -10,11 +10,18 @@ from app.schemas import (
     CreateManualIngredientRequest,
     DraftIngredientItem,
     IngredientResponse,
+    UpdateIngredientRequest,
+)
+from app.services.ingredient_deduction import (
+    _format_quantity,
+    normalize_unit,
+    parse_number,
+    remaining_servings,
 )
 from app.services.ingredient_merge import _merge_key, _sum_quantities
 from app.services.ingredients import create_ingredient
 from app.services.receipt_analyzer import ReceiptAnalysisError, check_ingredient_unit
-from app.validation import validate_ingredient_input
+from app.validation import PACKAGE_UNITS, validate_ingredient_input
 
 router = APIRouter(prefix="/ingredients", tags=["ingredients"])
 
@@ -138,6 +145,86 @@ def create_manual_ingredient(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+
+
+@router.patch(
+    "/{ingredient_id}",
+    response_model=IngredientResponse,
+    responses={204: {"description": "Ingredient removed because nothing usable remained."}},
+)
+def update_ingredient(
+    ingredient_id: str,
+    payload: UpdateIngredientRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> IngredientResponse | Response:
+    is_valid, error_message = validate_ingredient_input(payload.quantity, payload.unit)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_message,
+        )
+
+    ingredient = (
+        db.query(Ingredient)
+        .filter(Ingredient.id == ingredient_id, Ingredient.user_id == current_user.id)
+        .first()
+    )
+    if ingredient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ingredient not found.",
+        )
+
+    new_quantity_value = parse_number(payload.quantity.strip().replace(",", ""))
+    if new_quantity_value is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Quantity must be a number.",
+        )
+
+    new_unit = normalize_unit(payload.unit.strip()) or payload.unit.strip()
+
+    try:
+        unit_warning = check_ingredient_unit(ingredient.name, new_unit)
+    except ReceiptAnalysisError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    if unit_warning:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=unit_warning.strip(),
+        )
+
+    final_quantity = _format_quantity(new_quantity_value)
+
+    # Package units require whole numbers
+    if new_unit in PACKAGE_UNITS and "." in payload.quantity.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Package quantities must be whole numbers.",
+        )
+
+    ingredient.quantity = final_quantity
+    ingredient.unit = new_unit
+
+    # Same depletion rule as meal deduction: drop leftovers that are not
+    # practically usable (near-zero quantity or under ~1/4 serving).
+    servings_left = remaining_servings(ingredient)
+    if new_quantity_value <= 1e-6 or (
+        servings_left is not None and servings_left < 0.25
+    ):
+        db.delete(ingredient)
+        db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    db.commit()
+    db.refresh(ingredient)
+
+    return IngredientResponse.model_validate(ingredient)
 
 
 @router.delete("/{ingredient_id}", status_code=status.HTTP_204_NO_CONTENT)

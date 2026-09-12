@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { IngredientNutritionDisplay } from "@/components/ingredient-nutrition-display";
+import { UnitSelect } from "@/components/unit-select";
 import { useIngredientUnitWarning } from "@/hooks/use-ingredient-unit-warning";
 import type { Ingredient } from "@/lib/ingredients";
 import {
@@ -11,6 +12,8 @@ import {
   servingsNoun,
 } from "@/lib/ingredients";
 import { apiFetch, parseError } from "@/lib/api";
+import { convertAmount, formatConvertedQuantity } from "@/lib/units";
+import { validateQuantity } from "@/lib/validation";
 
 function StockProgressBar({ ratio }: { ratio: number }) {
   const percent = Math.max(0, Math.min(100, ratio * 100));
@@ -89,18 +92,110 @@ function IngredientDetail({
   ingredient,
   onClose,
   onRemove,
+  onUpdate,
   removing,
 }: {
   ingredient: Ingredient;
   onClose: () => void;
   onRemove: () => void;
+  onUpdate: (updated: Ingredient | null) => void;
   removing: boolean;
 }) {
   const stock = getIngredientStock(ingredient);
-  const { warning: unitWarning } = useIngredientUnitWarning(
+  const [editing, setEditing] = useState(false);
+  const [editQuantity, setEditQuantity] = useState(ingredient.quantity ?? "1");
+  const [editUnit, setEditUnit] = useState(ingredient.unit ?? "each");
+  const [editError, setEditError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const prevEditUnit = useRef(editUnit);
+
+  const { warning: storedUnitWarning } = useIngredientUnitWarning(
     ingredient.name,
     ingredient.unit ?? "",
+    { enabled: !editing },
   );
+  const { warning: editUnitWarning, checking: checkingEditUnit } =
+    useIngredientUnitWarning(ingredient.name, editUnit, { enabled: editing });
+
+  function startEditing() {
+    setEditQuantity(ingredient.quantity ?? "1");
+    setEditUnit(ingredient.unit ?? "each");
+    setEditError("");
+    setEditing(true);
+    prevEditUnit.current = ingredient.unit ?? "each";
+  }
+
+  function cancelEditing() {
+    setEditing(false);
+    setEditError("");
+  }
+
+  function handleUnitChange(newUnit: string) {
+    const oldUnit = prevEditUnit.current;
+    const currentQty = parseFloat(editQuantity);
+
+    if (oldUnit && newUnit && Number.isFinite(currentQty) && currentQty > 0) {
+      const converted = convertAmount(currentQty, oldUnit, newUnit);
+      if (converted != null) {
+        setEditQuantity(formatConvertedQuantity(converted));
+      }
+    }
+
+    setEditUnit(newUnit);
+    setEditError("");
+    prevEditUnit.current = newUnit;
+  }
+
+  async function saveEdit() {
+    const trimmedQty = editQuantity.trim() || "1";
+    const trimmedUnit = editUnit.trim() || "each";
+
+    const quantityError = validateQuantity(trimmedQty, trimmedUnit);
+    if (quantityError) {
+      setEditError(quantityError);
+      return;
+    }
+
+    if (checkingEditUnit) {
+      setEditError("Still checking whether this unit makes sense…");
+      return;
+    }
+
+    if (editUnitWarning) {
+      setEditError(editUnitWarning);
+      return;
+    }
+
+    setSaving(true);
+    setEditError("");
+
+    try {
+      const response = await apiFetch(`/api/ingredients/${ingredient.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ quantity: trimmedQty, unit: trimmedUnit }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await parseError(response, "Unable to update ingredient."));
+      }
+
+      // Server removes items that are effectively empty (< ~1/4 serving).
+      if (response.status === 204) {
+        onUpdate(null);
+        return;
+      }
+
+      const updated: Ingredient = await response.json();
+      onUpdate(updated);
+      setEditing(false);
+    } catch (err) {
+      setEditError(
+        err instanceof Error ? err.message : "Unable to update ingredient.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4 sm:p-6">
@@ -115,6 +210,15 @@ function IngredientDetail({
             )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {!editing && (
+            <button
+              type="button"
+              onClick={startEditing}
+              className="rounded-lg px-2 py-1 text-sm text-orange-600 transition hover:bg-orange-50"
+            >
+              Edit
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -133,40 +237,103 @@ function IngredientDetail({
         </div>
       </div>
 
-      {unitWarning && (
+      {storedUnitWarning && !editing && (
         <p className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-          {unitWarning}
+          {storedUnitWarning}
         </p>
       )}
 
-      {stock.servingsLeft != null && stock.originalServings != null && (
-        <div className="mb-4 space-y-2">
-          {stock.quantityLabel && (
-            <p className="text-sm text-stone-600">
+      {editing ? (
+        <div className="mb-4 space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-stone-600">
+                Quantity
+              </label>
+              <input
+                type="text"
+                value={editQuantity}
+                onChange={(e) => setEditQuantity(e.target.value)}
+                disabled={saving}
+                className="w-full rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 outline-none transition focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-stone-600">
+                Unit
+              </label>
+              <UnitSelect
+                value={editUnit}
+                onChange={handleUnitChange}
+                disabled={saving}
+                required={false}
+              />
+            </div>
+          </div>
+          {editUnitWarning && (
+            <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+              {editUnitWarning}
+            </p>
+          )}
+          {checkingEditUnit && !editUnitWarning && (
+            <p className="text-xs text-stone-500">Checking unit…</p>
+          )}
+          {editError && (
+            <p className="text-sm text-red-600">{editError}</p>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={saveEdit}
+              disabled={
+                saving || Boolean(editUnitWarning) || checkingEditUnit
+              }
+              className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={cancelEditing}
+              disabled={saving}
+              className="rounded-xl border border-stone-200 px-4 py-2 text-sm font-medium text-stone-700 transition hover:bg-stone-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {stock.servingsLeft != null && stock.originalServings != null && (
+            <div className="mb-4 space-y-2">
+              {stock.quantityLabel && (
+                <p className="text-sm text-stone-600">
+                  On hand:{" "}
+                  <strong className="font-semibold text-stone-900">
+                    {stock.quantityLabel}
+                  </strong>
+                </p>
+              )}
+              <p className="text-sm text-stone-600">
+                ~{formatServingCount(stock.originalServings)}{" "}
+                {servingsNoun(stock.originalServings)} ·{" "}
+                <strong className="font-semibold text-stone-900">
+                  {formatServingCount(stock.servingsLeft)} left
+                </strong>
+              </p>
+              {stock.stockRatio != null && <StockProgressBar ratio={stock.stockRatio} />}
+            </div>
+          )}
+
+          {stock.servingsLeft == null && stock.quantityLabel && (
+            <p className="mb-4 text-sm text-stone-600">
               On hand:{" "}
               <strong className="font-semibold text-stone-900">
                 {stock.quantityLabel}
               </strong>
             </p>
           )}
-          <p className="text-sm text-stone-600">
-            ~{formatServingCount(stock.originalServings)}{" "}
-            {servingsNoun(stock.originalServings)} ·{" "}
-            <strong className="font-semibold text-stone-900">
-              {formatServingCount(stock.servingsLeft)} left
-            </strong>
-          </p>
-          {stock.stockRatio != null && <StockProgressBar ratio={stock.stockRatio} />}
-        </div>
-      )}
-
-      {stock.servingsLeft == null && stock.quantityLabel && (
-        <p className="mb-4 text-sm text-stone-600">
-          On hand:{" "}
-          <strong className="font-semibold text-stone-900">
-            {stock.quantityLabel}
-          </strong>
-        </p>
+        </>
       )}
 
       {ingredient.serving_size && (
@@ -384,6 +551,18 @@ export function IngredientsTab({ refreshKey }: { refreshKey: number }) {
                     ingredient={item}
                     onClose={() => setSelectedId(null)}
                     onRemove={() => removeIngredient(item.id)}
+                    onUpdate={(updated) => {
+                      if (updated == null) {
+                        setItems((current) =>
+                          current.filter((i) => i.id !== item.id),
+                        );
+                        setSelectedId(null);
+                        return;
+                      }
+                      setItems((current) =>
+                        current.map((i) => (i.id === updated.id ? updated : i)),
+                      );
+                    }}
                     removing={removingId === item.id}
                   />
                 </div>
