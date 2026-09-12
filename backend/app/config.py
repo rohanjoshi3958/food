@@ -5,9 +5,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
-# Fixed model choices — not user-configurable.
-RECEIPT_ANTHROPIC_MODEL = "claude-opus-5"
-MEAL_ANTHROPIC_MODEL = "claude-sonnet-5"
+# Claude tiers, strongest to cheapest. Anthropic API aliases (dateless ids);
+# see backend/MODEL_ROUTING.md for which call site may use which tier.
+OPUS_ANTHROPIC_MODEL = "claude-opus-5"
+SONNET_ANTHROPIC_MODEL = "claude-sonnet-5"
+HAIKU_ANTHROPIC_MODEL = "claude-haiku-4-5"
+
+# Fixed defaults per pipeline — not user-configurable. These are what every
+# call site uses while MODEL_ROUTING_ENABLED is off (the shipped state).
+RECEIPT_ANTHROPIC_MODEL = OPUS_ANTHROPIC_MODEL
+MEAL_ANTHROPIC_MODEL = SONNET_ANTHROPIC_MODEL
+# Cheap tier reserved for the receipt pipeline's text-only steps (soft OCR
+# cleanup, classify/extract over OCR text). FOOD-55 should import this rather
+# than hard-code a model id.
+RECEIPT_HAIKU_MODEL = HAIKU_ANTHROPIC_MODEL
 OPENAI_IMAGE_MODEL = "gpt-image-1"
 
 
@@ -27,6 +38,11 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     email_from: str = "Food <onboarding@resend.dev>"
     frontend_url: str = "http://localhost:3000"
+    # FOOD-58: when off (default) every call site uses its RECEIPT_/MEAL_
+    # default above and the router only logs. When on, the routed tiers in
+    # app/services/model_router.py apply. Flip only after the live evals in
+    # backend/tests/evals are green for the cheaper tier.
+    model_routing_enabled: bool = False
 
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),

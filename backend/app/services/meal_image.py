@@ -3,9 +3,10 @@ import base64
 import anthropic
 from openai import OpenAI
 
-from app.config import MEAL_ANTHROPIC_MODEL, OPENAI_IMAGE_MODEL, settings
+from app.config import OPENAI_IMAGE_MODEL, settings
 from app.models import Meal
 from app.services.anthropic_cache import create_cached_message
+from app.services.model_router import route_model
 
 PROMPT_SYSTEM = """You write short prompts for photorealistic food photography.
 Respond with ONLY the image prompt text — no quotes, labels, or explanation."""
@@ -44,7 +45,7 @@ def _build_image_prompt(meal: Meal) -> str:
         response = create_cached_message(
             client,
             call_site="meal.image_prompt",
-            model=MEAL_ANTHROPIC_MODEL,
+            model=route_model("meal.image_prompt").model,
             max_tokens=200,
             system_prefix=PROMPT_SYSTEM,
             messages=[{"role": "user", "content": user_prompt}],
