@@ -19,17 +19,23 @@ from pathlib import Path
 
 import pytest
 
-from app.services.receipt_analyzer import ParsedReceipt, analyze_receipt_image
+from app.services.receipt_analyzer import (
+    ParsedReceipt,
+    ParsedReceiptItem,
+    analyze_receipt_image,
+)
 from tests.evals.conftest import FakeClaude, load_receipt_fixtures
 from tests.evals.scoring import (
     Tally,
     names_equivalent,
+    pair_receipt_lines,
     quantities_equivalent,
-    receipt_line_key,
+    require_nonempty_corpus,
     units_equivalent,
 )
 
 RECEIPT_FIXTURES = load_receipt_fixtures()
+require_nonempty_corpus(RECEIPT_FIXTURES, name="receipt_parse fixtures")
 FIXTURE_IDS = [fixture["id"] for fixture in RECEIPT_FIXTURES]
 
 
@@ -55,10 +61,7 @@ def run_receipt_fixture(fake: FakeClaude, fixture: dict, tmp_path: Path) -> Pars
 def score_receipt(card: ReceiptScorecard, fixture: dict, parsed: ParsedReceipt) -> None:
     rid = fixture["id"]
     expected = fixture["expected"]
-    expected_by_key = {
-        receipt_line_key(item["store_item_name"]): item for item in expected["items"]
-    }
-    parsed_by_key = {receipt_line_key(item.store_item_name): item for item in parsed.items}
+    pairs, unmatched_parsed = pair_receipt_lines(expected["items"], parsed.items)
 
     card.store_name.add(
         (parsed.store_name or "").strip().casefold()
@@ -66,17 +69,17 @@ def score_receipt(card: ReceiptScorecard, fixture: dict, parsed: ParsedReceipt) 
         f"{rid}: store_name {parsed.store_name!r} != {expected['store_name']!r}",
     )
 
-    for key, parsed_item in parsed_by_key.items():
+    for parsed_item in unmatched_parsed:
         card.line_precision.add(
-            key in expected_by_key,
+            False,
             f"{rid}: hallucinated line {parsed_item.store_item_name!r}",
         )
 
-    for key, want in expected_by_key.items():
-        got = parsed_by_key.get(key)
+    for want, got in pairs:
         card.line_recall.add(got is not None, f"{rid}: missing line {want['store_item_name']!r}")
         if got is None:
             continue
+        card.line_precision.add(True, f"{rid}: matched line {got.store_item_name!r}")
 
         label = f"{rid}/{want['store_item_name']}"
         card.ingredient_name.add(
@@ -129,6 +132,7 @@ def test_receipt_fixture_parses_through_pipeline(fixture, fake_claude, tmp_path)
 
 def test_receipt_parse_meets_baselines(fake_claude, tmp_path, gate):
     """Corpus-level gate against ``baselines.json``."""
+    require_nonempty_corpus(RECEIPT_FIXTURES, name="receipt_parse fixtures")
     card = ReceiptScorecard()
     for fixture in RECEIPT_FIXTURES:
         fake_claude.calls.clear()
@@ -149,3 +153,88 @@ def test_receipt_parse_meets_baselines(fake_claude, tmp_path, gate):
         "nutrition_coverage", card.nutrition_coverage.rate, card.nutrition_coverage.describe()
     )
     suite.assert_all()
+
+
+def test_require_nonempty_receipt_corpus_rejects_empty():
+    with pytest.raises(AssertionError, match="refusing to score"):
+        require_nonempty_corpus([], name="receipt_parse fixtures")
+
+
+def test_score_receipt_preserves_duplicate_store_item_names():
+    """Two labelled BANANAS lines must not collapse to one dict key."""
+    fixture = {
+        "id": "dup_sku",
+        "expected": {
+            "store_name": "Corner",
+            "items": [
+                {
+                    "store_item_name": "BANANAS",
+                    "ingredient_name": "Bananas",
+                    "is_food": True,
+                    "quantity": "1",
+                    "unit": "lb",
+                    "expect_recognized": False,
+                },
+                {
+                    "store_item_name": "BANANAS",
+                    "ingredient_name": "Bananas",
+                    "is_food": True,
+                    "quantity": "2",
+                    "unit": "lb",
+                    "expect_recognized": False,
+                },
+            ],
+        },
+    }
+    one_line = ParsedReceipt(
+        store_name="Corner",
+        items=[
+            ParsedReceiptItem(
+                store_item_name="BANANAS",
+                ingredient_name="Bananas",
+                is_food=True,
+                quantity="1",
+                unit="lb",
+            )
+        ],
+    )
+    two_parsed = ParsedReceipt(
+        store_name="Corner",
+        items=[
+            ParsedReceiptItem(
+                store_item_name="BANANAS",
+                ingredient_name="Bananas",
+                is_food=True,
+                quantity="1",
+                unit="lb",
+            ),
+            ParsedReceiptItem(
+                store_item_name="BANANAS",
+                ingredient_name="Bananas",
+                is_food=True,
+                quantity="2",
+                unit="lb",
+            ),
+            ParsedReceiptItem(
+                store_item_name="BANANAS",
+                ingredient_name="Bananas",
+                is_food=True,
+                quantity="3",
+                unit="lb",
+            ),
+        ],
+    )
+
+    short = ReceiptScorecard()
+    score_receipt(short, fixture, one_line)
+    assert short.line_recall.hits == 1
+    assert short.line_recall.total == 2
+    assert short.line_precision.hits == 1
+    assert short.line_precision.total == 1
+
+    extra = ReceiptScorecard()
+    score_receipt(extra, fixture, two_parsed)
+    assert extra.line_recall.hits == 2
+    assert extra.line_recall.total == 2
+    assert extra.line_precision.hits == 2
+    assert extra.line_precision.total == 3

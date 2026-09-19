@@ -252,6 +252,57 @@ class TestCallSiteEscalationWiring:
         assert result.canonical_name == "Quinoa"
         assert len(client.calls) == 2
 
+    def test_pantry_match_malformed_missing_ambiguous_escalates(
+        self, routing_on, monkeypatch
+    ):
+        """``{"match_id": null}`` is schema-invalid and must not look confident."""
+        client = _FakeClient(
+            [
+                create_mock_anthropic_response(json.dumps({"match_id": None})),
+                _pantry_response("rice-white", False, "White Rice"),
+            ]
+        )
+        monkeypatch.setattr(receipt_analyzer, "_get_client", lambda: client)
+
+        result = match_ingredient_to_pantry("White Rice", "lb", self.PANTRY)
+
+        assert result.match_id == "rice-white"
+        assert result.ambiguous is False
+        assert [call["model"] for call in client.calls] == [
+            SONNET_ANTHROPIC_MODEL,
+            OPUS_ANTHROPIC_MODEL,
+        ]
+
+    def test_pantry_match_malformed_flag_off_is_still_one_call(
+        self, routing_off, monkeypatch
+    ):
+        """Flag off: same as pre-FOOD-58 — no second call, result is a new row."""
+        client = _FakeClient(
+            [create_mock_anthropic_response(json.dumps({"match_id": None}))]
+        )
+        monkeypatch.setattr(receipt_analyzer, "_get_client", lambda: client)
+
+        result = match_ingredient_to_pantry("White Rice", "lb", self.PANTRY)
+
+        assert result.match_id is None
+        assert result.ambiguous is False
+        assert [call["model"] for call in client.calls] == [RECEIPT_ANTHROPIC_MODEL]
+
+    def test_pantry_match_omitted_canonical_name_is_not_schema_invalid(
+        self, routing_on, monkeypatch
+    ):
+        client = _FakeClient(
+            [create_mock_anthropic_response(json.dumps({"match_id": None, "ambiguous": False}))]
+        )
+        monkeypatch.setattr(receipt_analyzer, "_get_client", lambda: client)
+
+        result = match_ingredient_to_pantry("Quinoa", "lb", self.PANTRY)
+
+        assert result.match_id is None
+        assert result.ambiguous is False
+        assert result.canonical_name is None
+        assert [call["model"] for call in client.calls] == [SONNET_ANTHROPIC_MODEL]
+
     def test_pantry_match_confident_answer_stays_on_sonnet(self, routing_on, monkeypatch):
         client = _FakeClient([_pantry_response("rice-white", False, "White Rice")])
         monkeypatch.setattr(receipt_analyzer, "_get_client", lambda: client)

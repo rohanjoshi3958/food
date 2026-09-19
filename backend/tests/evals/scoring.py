@@ -6,7 +6,10 @@ score mocked CI runs and live-model runs identically.
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.services.ingredient_deduction import normalize_unit, parse_number
 from app.services.ingredient_normalization import normalize_ingredient_name
@@ -62,6 +65,46 @@ def quantities_equivalent(left: str | None, right: str | None) -> bool:
 
 def receipt_line_key(store_item_name: str | None) -> str:
     return " ".join((store_item_name or "").upper().split())
+
+
+def require_nonempty_corpus(items: Sequence[Any], *, name: str) -> None:
+    """Refuse to score a required fixture set that loaded nothing.
+
+    ``Tally.rate`` / :func:`ratio` treat an empty denominator as 1.0 so
+    optional metrics never fail. A required corpus (receipt fixtures, …)
+    must not ride that fallback — every min-gate would pass.
+    """
+    if not items:
+        raise AssertionError(
+            f"{name} is empty; refusing to score "
+            "(empty Tally.rate is 1.0 and would pass every min-gate)"
+        )
+
+
+def pair_receipt_lines(
+    expected_items: Sequence[dict[str, Any]],
+    parsed_items: Sequence[Any],
+) -> tuple[list[tuple[dict[str, Any], Any | None]], list[Any]]:
+    """Match parsed lines to expected lines without collapsing duplicates.
+
+    Lines are keyed on normalized ``store_item_name``. Each parsed line
+    consumes at most one expected line with the same key (FIFO). Returns
+    ``(pairs, unmatched_parsed)`` where ``pairs`` has one entry per
+    expected item.
+    """
+    unused: dict[str, list[Any]] = defaultdict(list)
+    for item in parsed_items:
+        unused[receipt_line_key(getattr(item, "store_item_name", None))].append(item)
+
+    pairs: list[tuple[dict[str, Any], Any | None]] = []
+    for want in expected_items:
+        key = receipt_line_key(want.get("store_item_name"))
+        bucket = unused.get(key) or []
+        got = bucket.pop(0) if bucket else None
+        pairs.append((want, got))
+
+    unmatched = [item for bucket in unused.values() for item in bucket]
+    return pairs, unmatched
 
 
 def ratio(numerator: int, denominator: int) -> float:

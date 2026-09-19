@@ -331,9 +331,20 @@ class EvalGate:
         return record
 
     def check(self, metric: str, value: float, detail: str = "") -> MetricRecord:
-        """Record a metric and remember a failure; ``assert_all`` raises them together."""
+        """Record a metric and remember a failure; ``assert_all`` raises them together.
+
+        ``check`` is a CI gate: a missing or misspelled ``baselines.json``
+        entry (``kind == "info"``) is a failure so a typo cannot silently
+        disable a locked bar. Informational-only numbers should use
+        :meth:`record`, not this method.
+        """
         record = self.record(metric, value, detail)
-        if record.kind != "info" and not record.passed:
+        if record.kind == "info":
+            record.passed = False
+            self.failures.append(
+                f"{metric} has no min/max threshold in baselines.json"
+            )
+        elif not record.passed:
             op = ">=" if record.kind == "min" else "<="
             self.failures.append(
                 f"{metric}={value:.3f} must be {op} {record.threshold:.3f} "

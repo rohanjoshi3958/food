@@ -49,7 +49,7 @@ low-confidence answer (routing on only).
 | `receipt.analyze_image` | Opus | Opus | — | — | Live `test_live_receipt_parse` green on the cheaper tier with a labelled image set (FOOD-53 gap). |
 | `receipt.nutrition_estimate` | Opus | Opus | — | — | Nutrition-value fixtures + live run green. |
 | `receipt.unit_check` | Opus | **Haiku** | Opus | `unit_plausible: false` (a rejection blocks the user, so confirm it) | Mocked evals already cover the wiring; live run with `FOOD_EVAL_MODEL=claude-haiku-4-5` before enabling. |
-| `receipt.pantry_match` | Opus | **Sonnet** | Opus | `ambiguous: true`, a `match_id` not in the offered pantry, or a non-JSON answer | `ingredient_match` live run on Sonnet ≥ baselines. |
+| `receipt.pantry_match` | Opus | **Sonnet** | Opus | `ambiguous: true`, a `match_id` not in the offered pantry, a missing/`ambiguous` that is not a bool, or a non-JSON answer | `ingredient_match` live run on Sonnet ≥ baselines. |
 | `receipt.ocr_cleanup` | Haiku | Haiku | Sonnet | reserved for FOOD-55 | New call site; start on Haiku, no downgrade involved. |
 | `receipt.classify_text` | Haiku | Haiku | Sonnet | reserved for FOOD-55 | New call site. |
 | `meal.generate` | Sonnet | Sonnet | — | — | Not a downgrade candidate. |

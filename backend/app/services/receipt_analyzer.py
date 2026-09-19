@@ -370,6 +370,13 @@ def match_ingredient_to_pantry(
         if not isinstance(payload, dict):
             return PantryMatchResult(), True
 
+        # match_id may be null; the key itself must be present. ambiguous is
+        # required and must be a real bool — a missing field used to coerce
+        # to False and look like a confident "new item". canonical_name stays
+        # optional.
+        schema_invalid = "match_id" not in payload or not isinstance(
+            payload.get("ambiguous"), bool
+        )
         match_id = _as_optional_str(payload.get("match_id"))
         invented_id = match_id is not None and match_id not in valid_ids
         if not valid_ids or invented_id:
@@ -386,8 +393,10 @@ def match_ingredient_to_pantry(
             canonical_name=canonical_name,
         )
         # Low confidence = the model could not commit (ambiguous), pointed at
-        # an id it was never offered, or failed to answer in the JSON shape.
-        return result, ambiguous or invented_id
+        # an id it was never offered, or failed the required JSON shape.
+        # Flag off: escalation_for() is None, so the returned result is
+        # unchanged (still a non-ambiguous new row, same as pre-FOOD-58).
+        return result, schema_invalid or ambiguous or invented_id
 
     decision = route_model("receipt.pantry_match")
     result, low_confidence = ask(decision)

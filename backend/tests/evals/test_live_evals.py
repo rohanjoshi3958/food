@@ -106,6 +106,8 @@ def test_live_meal_plan(live_anthropic, gate):
             meal = generate_meal_from_ingredients(pantry, previous_meal=previous)
         except MealGenerationError as exc:
             acceptable.add(False, f"{case['id']}: {exc}")
+            calories_ok.add(False, f"{case['id']}: generation failed: {exc}")
+            pantry_only.add(False, f"{case['id']}: generation failed: {exc}")
             continue
         calories = _estimate_meal_calories(pantry, meal.ingredients_used)
         in_band = calories is not None and MEAL_CALORIE_MIN <= calories <= MEAL_CALORIE_MAX
