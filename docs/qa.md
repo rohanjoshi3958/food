@@ -138,9 +138,11 @@ mapping), `routers/cookbook.py` delete/photo, manual-add receipt path
 
 ## 4. Where to mock vs where a real eval is needed
 
-Every Anthropic call is `anthropic.Anthropic(api_key=…).messages.create(...)`
-created at call time, so `patch("anthropic.Anthropic")` covers all sites
-(`receipt_analyzer.py`, `meal_generator.py`, `meal_image.py`). OpenAI is
+Interactive Anthropic calls are `anthropic.Anthropic(api_key=…).messages.create(...)`
+created at call time, so `patch("anthropic.Anthropic")` covers all user-facing
+sites (`receipt_analyzer.py`, `meal_generator.py`, `meal_image.py`). Offline
+jobs use `client.messages.batches.create` via `app/services/anthropic_batch.py`
+(see `backend/BATCH_API.md`). OpenAI is
 `OpenAI(api_key=…).images.generate` in `meal_image.py`.
 
 | Call site (`backend/app/services/…`) | Model | Mock in CI proves | Needs a real-model eval for |

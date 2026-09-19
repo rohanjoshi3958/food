@@ -86,6 +86,18 @@ If the binary is missing the OCR rung reports `ocr_unavailable` and the upload f
 
 The path that produced each receipt is stored in `receipts.analysis_path`. Per-upload metrics (path, tokens, confidence, latency) are not emitted yet; FOOD-54 will wire its helper at the marked call site in `backend/app/routers/receipts.py`. The labeled eval set that gates flipping the default lives in `backend/evals/receipts/`.
 
+### Offline Claude batches (FOOD-57)
+
+Interactive upload / generate / image-prompt stay on the sync Messages API. Historical receipt reprocess and nightly first-turn meal regen go through Anthropic Message Batches (~50% off, 1-hour prompt-cache TTL). Dry-run unless you pass `--apply`:
+
+```bash
+cd backend
+python -m app.jobs.reprocess_receipts --receipt-id <uuid> --apply
+python -m app.jobs.regen_meals --user-id <uuid> --apply
+```
+
+See `backend/BATCH_API.md` for retry/failure and the interactive vs batch split.
+
 ## Run locally
 
 From the project root:

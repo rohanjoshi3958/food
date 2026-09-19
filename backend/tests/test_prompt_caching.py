@@ -19,6 +19,8 @@ from app.config import MEAL_ANTHROPIC_MODEL, RECEIPT_ANTHROPIC_MODEL
 from app.models import Ingredient, Meal
 from app.services import meal_generator, meal_image, receipt_analyzer
 from app.services.anthropic_cache import (
+    CACHE_TTL_1H,
+    EPHEMERAL_1H_CACHE_CONTROL,
     EPHEMERAL_CACHE_CONTROL,
     cached_system_prompt,
     cached_text_block,
@@ -116,6 +118,31 @@ class TestAnthropicCacheHelpers:
     def test_cached_system_prompt_is_single_block_list(self):
         system = cached_system_prompt("prefix")
         assert system == [cached_text_block("prefix")]
+
+    def test_cached_text_block_1h_ttl_is_opt_in(self):
+        block = cached_text_block("rules", ttl=CACHE_TTL_1H)
+        assert block["cache_control"] == EPHEMERAL_1H_CACHE_CONTROL
+        # Interactive default is still unadorned ephemeral (5-minute TTL).
+        assert cached_text_block("rules")["cache_control"] == {"type": "ephemeral"}
+
+    def test_cached_text_block_rejects_unknown_ttl(self):
+        with pytest.raises(ValueError, match="cache ttl"):
+            cached_text_block("rules", ttl="2h")
+
+    def test_create_cached_message_can_request_1h_ttl(self):
+        client = MagicMock()
+        client.messages.create.return_value = _text_response("ok")
+        create_cached_message(
+            client,
+            call_site="test",
+            model="model-x",
+            max_tokens=12,
+            system_prefix="prefix",
+            messages=[{"role": "user", "content": "tail"}],
+            cache_ttl=CACHE_TTL_1H,
+        )
+        kwargs = client.messages.create.call_args.kwargs
+        assert kwargs["system"][0]["cache_control"] == EPHEMERAL_1H_CACHE_CONTROL
 
     def test_create_cached_message_passes_system_and_messages(self):
         client = MagicMock()

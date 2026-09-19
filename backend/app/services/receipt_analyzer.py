@@ -9,7 +9,7 @@ import anthropic
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.services.anthropic_cache import create_cached_message
+from app.services.anthropic_cache import create_cached_message, message_text_blocks
 from app.services.model_router import RouteDecision, escalation_for, route_model
 
 
@@ -304,7 +304,7 @@ def check_ingredient_unit(
             ],
         )
 
-        text_blocks = [block.text for block in message.content if block.type == "text"]
+        text_blocks = message_text_blocks(message)
         if not text_blocks:
             return None, True
 
@@ -374,7 +374,7 @@ def match_ingredient_to_pantry(
             ],
         )
 
-        text_blocks = [block.text for block in message.content if block.type == "text"]
+        text_blocks = message_text_blocks(message)
         if not text_blocks:
             return PantryMatchResult(), True, True
 
@@ -454,39 +454,12 @@ def estimate_ingredient_nutrition(
         ],
     )
 
-    text_blocks = [block.text for block in message.content if block.type == "text"]
-    if not text_blocks:
-        raise ReceiptAnalysisError(
-            f"Could not estimate nutrition for {ingredient_name}."
-        )
-
-    try:
-        payload = _extract_json(text_blocks[-1])
-        guessed_quantity = quantity or _as_optional_str(payload.get("quantity")) or "1"
-        guessed_unit = unit or _as_optional_str(payload.get("unit")) or "each"
-
-        return ParsedReceiptItem(
-            store_item_name=ingredient_name,
-            ingredient_name=ingredient_name,
-            recognized=payload.get("recognized") is True,
-            quantity=guessed_quantity,
-            unit=guessed_unit,
-            serving_size=payload.get("serving_size"),
-            servings_per_container=_as_optional_float(
-                payload.get("servings_per_container")
-            ),
-            calories=payload.get("calories"),
-            protein_g=payload.get("protein_g"),
-            carbs_g=payload.get("carbs_g"),
-            fat_g=payload.get("fat_g"),
-            fiber_g=payload.get("fiber_g"),
-            sodium_mg=payload.get("sodium_mg"),
-            nutrition_notes=payload.get("nutrition_notes"),
-        )
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise ReceiptAnalysisError(
-            f"Could not parse nutrition estimate for {ingredient_name}."
-        ) from exc
+    return parse_nutrition_message(
+        message,
+        ingredient_name=ingredient_name,
+        quantity=quantity,
+        unit=unit,
+    )
 
 
 def _as_optional_str(value) -> str | None:
@@ -577,17 +550,7 @@ def _run_receipt_extraction(
     except anthropic.APIError as exc:
         raise ReceiptAnalysisError(_anthropic_error_message(exc, model)) from exc
 
-    text_blocks = [block.text for block in message.content if block.type == "text"]
-    if not text_blocks:
-        raise ReceiptAnalysisError("Anthropic returned an empty response.")
-
-    try:
-        payload = _extract_json(text_blocks[-1])
-        return ParsedReceipt.model_validate(payload)
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise ReceiptAnalysisError(
-            "Could not parse ingredient data from the receipt analysis."
-        ) from exc
+    return parse_receipt_message(message)
 
 
 def extract_receipt_vision(
@@ -637,6 +600,64 @@ def extract_receipt_text(ocr_text: str, *, model: str) -> ParsedReceipt:
         model=model,
         call_site="receipt.ocr_text_cleanup",
     )
+
+
+def parse_receipt_message(message) -> ParsedReceipt:
+    """Parse a vision / OCR-cleanup Messages (or Batch) response into items."""
+    text_blocks = message_text_blocks(message)
+    if not text_blocks:
+        raise ReceiptAnalysisError("Anthropic returned an empty response.")
+
+    try:
+        payload = _extract_json(text_blocks[-1])
+        return ParsedReceipt.model_validate(payload)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ReceiptAnalysisError(
+            "Could not parse ingredient data from the receipt analysis."
+        ) from exc
+
+
+def parse_nutrition_message(
+    message,
+    *,
+    ingredient_name: str,
+    quantity: str | None,
+    unit: str | None,
+) -> ParsedReceiptItem:
+    """Parse a nutrition-estimate Messages (or Batch) response."""
+    text_blocks = message_text_blocks(message)
+    if not text_blocks:
+        raise ReceiptAnalysisError(
+            f"Could not estimate nutrition for {ingredient_name}."
+        )
+
+    try:
+        payload = _extract_json(text_blocks[-1])
+        guessed_quantity = quantity or _as_optional_str(payload.get("quantity")) or "1"
+        guessed_unit = unit or _as_optional_str(payload.get("unit")) or "each"
+
+        return ParsedReceiptItem(
+            store_item_name=ingredient_name,
+            ingredient_name=ingredient_name,
+            recognized=payload.get("recognized") is True,
+            quantity=guessed_quantity,
+            unit=guessed_unit,
+            serving_size=payload.get("serving_size"),
+            servings_per_container=_as_optional_float(
+                payload.get("servings_per_container")
+            ),
+            calories=payload.get("calories"),
+            protein_g=payload.get("protein_g"),
+            carbs_g=payload.get("carbs_g"),
+            fat_g=payload.get("fat_g"),
+            fiber_g=payload.get("fiber_g"),
+            sodium_mg=payload.get("sodium_mg"),
+            nutrition_notes=payload.get("nutrition_notes"),
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ReceiptAnalysisError(
+            f"Could not parse nutrition estimate for {ingredient_name}."
+        ) from exc
 
 
 def require_food_items(parsed: ParsedReceipt) -> ParsedReceipt:

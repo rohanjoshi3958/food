@@ -12,6 +12,7 @@ This directory contains automated backend tests for:
 - **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
 - **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
 - **Prompt caching breakpoints** on every Claude call site (`test_prompt_caching.py`)
+- **Message Batches helper** (FOOD-57): submit/poll/result mapping, partial failure/retry, 1h cache TTL on the batch path only (`test_anthropic_batch.py`). Interactive routers stay on the sync Messages API.
 - **Model routing** policy, flag-off guarantee, and escalation wiring (`test_model_router.py`)
 - **Quality evals (FOOD-58)** — receipt accuracy, ingredient match rate, meal-plan acceptability against documented baselines (`tests/evals/`, see `tests/evals/README.md`)
 - **OCR-first receipt eval scaffold (FOOD-55)** — labelled cases and scoring under `evals/receipts/` (see `evals/receipts/README.md`)
