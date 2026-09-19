@@ -96,6 +96,15 @@ async function pollReceiptAnalysis(
 ): Promise<Receipt> {
   let consecutiveErrors = 0;
 
+  function recordTransientError() {
+    consecutiveErrors += 1;
+    if (consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+      throw new Error(
+        "Lost connection while checking on your receipt. Please try again.",
+      );
+    }
+  }
+
   for (;;) {
     let response: Response | null = null;
     try {
@@ -104,26 +113,39 @@ async function pollReceiptAnalysis(
       if (signal.aborted) {
         throw networkError;
       }
-      consecutiveErrors += 1;
-      if (consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
-        throw new Error(
-          "Lost connection while checking on your receipt. Please try again.",
-        );
-      }
+      recordTransientError();
     }
 
     if (response) {
-      const data = await readJsonResponse<Receipt>(response);
-      if (!response.ok) {
-        throw new Error(
-          errorDetailFromBody(data, "Unable to check receipt status."),
-        );
+      let data: Receipt | undefined;
+      try {
+        data = await readJsonResponse<Receipt>(response);
+      } catch (readError) {
+        if (signal.aborted) {
+          throw readError;
+        }
+        // 2xx parse failures and 5xx bodies are retryable; 4xx stays terminal.
+        if (response.ok || response.status >= 500) {
+          recordTransientError();
+        } else {
+          throw new Error("Unable to check receipt status.");
+        }
       }
 
-      consecutiveErrors = 0;
-      onUpdate(data);
-      if (data.analysis_status !== "processing") {
-        return data;
+      if (data !== undefined) {
+        if (response.status >= 500) {
+          recordTransientError();
+        } else if (!response.ok) {
+          throw new Error(
+            errorDetailFromBody(data, "Unable to check receipt status."),
+          );
+        } else {
+          consecutiveErrors = 0;
+          onUpdate(data);
+          if (data.analysis_status !== "processing") {
+            return data;
+          }
+        }
       }
     }
 
