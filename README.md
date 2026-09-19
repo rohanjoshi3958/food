@@ -123,6 +123,7 @@ See `backend/tests/README.md` for more on the test suite.
 
 ## Notes
 
+- Leftover Prisma/NextAuth models (`User` / `Account` / `Session` / `VerificationToken`) are **not used at runtime**. They live under `legacy/unused-prisma-nextauth/` so they are not mistaken for the live schema. Auth and the database are FastAPI + SQLAlchemy.
 - Receipt upload is **U.S.-only** for now. Non-U.S. receipts (for example EU metric pack sizes embedded in product names) may parse incorrectly.
 - Receipt analysis can take up to a minute; wait for Claude to finish before expecting the review screen.
 - Meal generation only uses food already in **View ingredients**, and never asks for more than you have on hand.
