@@ -6,6 +6,7 @@ MIGRATIONS = [
     "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS store_name VARCHAR",
     "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS analysis_status VARCHAR DEFAULT 'pending'",
     "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS analysis_error TEXT",
+    "ALTER TABLE receipts ADD COLUMN IF NOT EXISTS analysis_stage VARCHAR",
     "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS receipt_id VARCHAR REFERENCES receipts(id) ON DELETE SET NULL",
     "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS store_item_name VARCHAR",
     "ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS serving_size VARCHAR",
