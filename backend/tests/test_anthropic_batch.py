@@ -659,6 +659,48 @@ class TestMealRegenJob:
         assert f"{MEAL_CALORIE_MIN}" in request.messages[2]["content"]
         assert f"{MEAL_CALORIE_MAX}" in request.messages[2]["content"]
 
+    def test_regen_job_stays_on_first_turn_when_a_meal_exists(
+        self, test_db, test_user
+    ):
+        ingredient = Ingredient(
+            user_id=test_user.id,
+            name="Oats",
+            quantity="500",
+            unit="g",
+            calories=150,
+        )
+        test_db.add(ingredient)
+        test_db.add(
+            Meal(
+                user_id=test_user.id,
+                name="Old Bowl",
+                description="Keep this out of the batch prompt.",
+                ingredients_used="- Oats: 100 g",
+                instructions="1. Eat.",
+            )
+        )
+        test_db.commit()
+        meal_json = json.dumps(
+            {
+                "name": "New Oats",
+                "description": "A bowl.",
+                "ingredients_used": [{"name": "Oats", "amount": "100 g"}],
+                "instructions": ["Cook."],
+            }
+        )
+        client, batches = _client([[_succeeded(test_user.id, meal_json)]])
+        regen_meals(
+            test_db,
+            client,
+            [MealWork(custom_id=test_user.id, user_id=test_user.id, pantry=[ingredient])],
+            apply=False,
+            sleep=lambda _: None,
+        )
+        messages = batches.creates[0][0]["params"]["messages"]
+        assert [message["role"] for message in messages] == ["user"]
+        assert "Old Bowl" not in messages[0]["content"]
+        assert "Available ingredients:" in messages[0]["content"]
+
     def test_regen_apply_writes_meal_row(self, test_db, test_user):
         ingredient = Ingredient(
             user_id=test_user.id,

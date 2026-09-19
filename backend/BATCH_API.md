@@ -16,7 +16,7 @@ Prompt caching (FOOD-56) still applies. Interactive calls keep the default
 | Meal generate ("try another") | Sync `messages.create` | 5m | `POST /api/meals/generate` → `generate_meal_from_ingredients` |
 | Meal image prompt | Sync `messages.create` | 5m | `POST /api/meals/{id}/complete` → `meal_image` |
 | Historical receipt reprocess | **Batch** `messages.batches` | **1h** | `python -m app.jobs.reprocess_receipts` |
-| Nightly meal regen (one request per pantry) | **Batch** `messages.batches` | **1h** | `python -m app.jobs.regen_meals` |
+| Nightly first-turn meal regen | **Batch** `messages.batches` | **1h** | `python -m app.jobs.regen_meals` |
 
 Interactive routers and `app/services/{receipt_analyzer,meal_generator,meal_image}.py`
 must not import `app.services.anthropic_batch` or `app.jobs`. Do not move a
@@ -79,9 +79,8 @@ are **dry-run** until `--apply`.
 # --apply writes receipts.analysis_result only (not pantry, not draft_items).
 python -m app.jobs.reprocess_receipts --receipt-id <uuid> --apply
 
-# One meal.generate request per user pantry (no calorie-retry loop).
-# If the user already has a meal, it is passed as the previous turn so
-# the model proposes a different dish. --apply replaces that meals row.
+# First-turn meal.generate per user pantry (no previous-meal follow-up,
+# no calorie-retry loop). --apply replaces that user's meals row.
 python -m app.jobs.regen_meals --user-id <uuid> --apply
 ```
 

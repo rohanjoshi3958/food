@@ -1,15 +1,14 @@
-"""Nightly meal regeneration via Message Batches (FOOD-57).
+"""Nightly first-turn meal regeneration via Message Batches (FOOD-57).
 
 Interactive ``POST /api/meals/generate`` stays on the sync Messages API and
-keeps its calorie / similarity retry loop. This CLI submits **one**
+keeps its calorie / similarity retry loop. This CLI submits **one first-turn**
 ``meal.generate`` request per user pantry as a batch (50% off, 1h cache TTL).
+Existing meals are not passed as a previous turn — follow-up / "try another"
+corrections stay on the interactive path.
 
-Calorie retries are intentionally not in this job: they are extra conversation
-turns that depend on the previous assistant JSON. If the user already has a
-meal, that JSON is included so the model proposes a different dish (same as
-interactive "try another") — still a single batch item, not a retry loop.
-Out-of-range answers are finalized the same way a single successful sync
-attempt is (clamp + one-person scale).
+Calorie retries are intentionally not in this job. Out-of-range first turns
+are finalized the same way a single successful sync attempt is (clamp +
+one-person scale).
 
 By default nothing is written. Pass ``--apply`` to replace that user's
 current ``meals`` row the same way the generate endpoint does.
@@ -196,23 +195,6 @@ def load_user_pantries(
     return work
 
 
-def _previous_meal_for(db: Session, user_id: str) -> PreviousMealTurn | None:
-    meal = (
-        db.query(Meal)
-        .filter(Meal.user_id == user_id)
-        .order_by(Meal.created_at.desc())
-        .first()
-    )
-    if meal is None or not meal.name:
-        return None
-    return PreviousMealTurn(
-        name=meal.name,
-        description=meal.description,
-        ingredients_used=meal.ingredients_used,
-        instructions=meal.instructions,
-    )
-
-
 def persist_generated_meal(
     db: Session, user_id: str, suggestion: GeneratedMeal
 ) -> Meal:
@@ -260,15 +242,7 @@ def regen_meals(
         if not item.pantry:
             report.skipped_empty_pantry.append(item.user_id)
             continue
-        # Include the current meal when present so nightly regen asks for a
-        # different dish. Still one batch request — not the calorie-retry loop.
-        requests.append(
-            build_meal_request(
-                item.user_id,
-                item.pantry,
-                _previous_meal_for(db, item.user_id),
-            )
-        )
+        requests.append(build_meal_request(item.user_id, item.pantry))
 
     if not requests:
         return report
@@ -319,7 +293,7 @@ def regen_meals(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Regenerate one meal per pantry through Anthropic Message Batches. "
+            "Regenerate first-turn meals through Anthropic Message Batches. "
             "Interactive generate stays on the sync Messages API."
         )
     )
