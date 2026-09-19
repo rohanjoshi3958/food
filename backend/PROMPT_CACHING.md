@@ -16,7 +16,8 @@ prefix to match a recent request byte for byte. That gives one rule:
 
 | Call site (`call_site` log tag) | Model | Cached prefix (`system`) | After the breakpoint (`messages`) |
 | --- | --- | --- | --- |
-| `receipt.analyze_image` | `RECEIPT_ANTHROPIC_MODEL` | `RECEIPT_ANALYSIS_PROMPT` (extraction rules + JSON shape) | the receipt image / PDF block |
+| `receipt.analyze_image` | `RECEIPT_ANTHROPIC_MODEL` (flag off) or `RECEIPT_OCR_VISION_FALLBACK_MODEL` (FOOD-55 `sonnet` rung) | `RECEIPT_ANALYSIS_PROMPT` (extraction rules + JSON shape) | the receipt image / PDF block (downsampled JPEG on the Sonnet rung) |
+| `receipt.ocr_text_cleanup` | `RECEIPT_OCR_CLEANUP_MODEL` (FOOD-55 `haiku` rung, `RECEIPT_OCR_FIRST=1` only) | `RECEIPT_ANALYSIS_PROMPT` (same prefix, so it shares the cache with `analyze_image` per model) | `--- OCR TEXT START ---` … Tesseract text … `--- OCR TEXT END ---` |
 | `receipt.nutrition_estimate` | `RECEIPT_ANTHROPIC_MODEL` | `NUTRITION_ESTIMATE_PROMPT` | `- Item / - Quantity purchased / - Unit` lines |
 | `receipt.unit_check` | `RECEIPT_ANTHROPIC_MODEL` | `UNIT_CHECK_PROMPT` | `- Item / - Unit` lines |
 | `receipt.pantry_match` | `RECEIPT_ANTHROPIC_MODEL` | `PANTRY_MATCH_PROMPT` (matching rules + JSON shape) | incoming item + pantry JSON snapshot |

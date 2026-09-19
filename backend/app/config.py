@@ -6,9 +6,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 # Fixed model choices — not user-configurable.
+# Receipt vision baseline (flag off) and, until FOOD-58 adds routing, every
+# nutrition / pantry-match / unit-check call.
 RECEIPT_ANTHROPIC_MODEL = "claude-opus-5"
 MEAL_ANTHROPIC_MODEL = "claude-sonnet-5"
 OPENAI_IMAGE_MODEL = "gpt-image-1"
+# FOOD-55 OCR-first escalation ladder (only used when RECEIPT_OCR_FIRST is on).
+# Soft fail: cheap text model cleans up the Tesseract output.
+RECEIPT_OCR_CLEANUP_MODEL = "claude-haiku-4-5"
+# Hard fail: Sonnet vision on the downsampled image instead of the Opus extract.
+RECEIPT_OCR_VISION_FALLBACK_MODEL = "claude-sonnet-5"
 
 
 class Settings(BaseSettings):
@@ -27,6 +34,18 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     email_from: str = "Food <onboarding@resend.dev>"
     frontend_url: str = "http://localhost:3000"
+
+    # FOOD-55 receipt pipeline flags. Both default OFF so production keeps the
+    # vision-Opus baseline until we deliberately flip them.
+    receipt_analysis_cache: bool = False
+    receipt_ocr_first: bool = False
+    # OCR-first tuning (only used when receipt_ocr_first is on).
+    receipt_ocr_min_confidence: float = 60.0  # Tesseract mean word confidence, 0-100
+    receipt_ocr_max_missing_qty_unit_ratio: float = 0.5
+    receipt_ocr_totals_tolerance: float = 0.02  # relative; absolute floor is $0.05
+    receipt_ocr_tesseract_config: str = "--psm 4"
+    receipt_ocr_tesseract_cmd: str = ""  # optional path override for the binary
+    receipt_vision_long_edge: int = 1600
 
     model_config = SettingsConfigDict(
         env_file=str(ROOT_DIR / ".env"),

@@ -8,6 +8,7 @@ This directory contains automated backend tests for:
 - **Meal generation call budget** (`test_meal_generator.py`) — parsing, calorie retry loop, attempt cap, and fallback behaviour
 - **Authentication lifecycle** (`test_auth.py`) — login, logout, password reset, expired sessions, and cross-user access
 - **Receipt → inventory E2E flow** (`test_receipt_to_inventory_e2e.py`)
+- **OCR-first receipt pipeline (FOOD-55)** — `test_receipt_preprocess.py` (hash, downsample), `test_receipt_ocr.py` (Tesseract wrapper), `test_receipt_parser.py` (deterministic parser), `test_receipt_gates.py` (confidence gates), `test_receipt_pipeline.py` (cache hit/miss, escalation ladder, outcome fields), `test_receipt_ocr_first_e2e.py` (flag ON end-to-end with mocked OCR text), `test_receipt_evals.py` (eval scaffold + scoring)
 - **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
 - **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
 
@@ -80,7 +81,15 @@ Key features:
 - Isolated SQLite database per test
 - FastAPI TestClient for HTTP requests
 
-Fixtures in `conftest.py`: `test_db`, `client`, `test_user`, `auth_headers`, `mock_receipt_image`, `sample_receipt_response`, `sample_nutrition_estimates`, `create_mock_anthropic_response`
+Fixtures in `conftest.py`: `test_db`, `client`, `test_user`, `auth_headers`, `mock_receipt_image`, `real_receipt_image`, `ocr_receipt_text`, `sample_receipt_response`, `sample_nutrition_estimates`, `create_mock_anthropic_response`, `build_anthropic_router`
+
+### OCR / Tesseract in tests
+
+No test needs a live Anthropic key. Tesseract is **not** required either: the
+OCR-first tests patch `run_tesseract` with text fixtures. The one live smoke
+test (`test_receipt_ocr.py::TestLiveTesseract`) is skipped automatically when
+the `tesseract` binary is not on `PATH`. Install it locally with
+`sudo apt-get install tesseract-ocr` / `brew install tesseract` to run it.
 
 ## Inventory Unit Tests
 

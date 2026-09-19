@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://food.local/evals/receipts/label.schema.json",
+  "title": "Receipt eval label",
+  "description": "Ground-truth extraction for one receipt. Mirrors the public ParsedReceipt shape (store_name + items) so predictions and labels compare field-for-field.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "store_name", "items"],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$",
+      "description": "Must match the manifest entry id and the case folder name."
+    },
+    "store_name": {
+      "type": ["string", "null"],
+      "description": "Canonical store name as a human would write it, or null if not printed."
+    },
+    "items": {
+      "type": "array",
+      "description": "Every printed line item, food and non-food. Summary lines (SUBTOTAL, TAX, TOTAL, payment) are NOT items.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["store_item_name", "ingredient_name", "quantity", "unit", "is_food"],
+        "properties": {
+          "store_item_name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Text exactly as printed (minus item codes/UPCs)."
+          },
+          "ingredient_name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Plain-English grocery name with abbreviations expanded."
+          },
+          "quantity": {
+            "type": ["string", "null"],
+            "description": "Quantity as printed (\"2.14\", \"12\"). null when the receipt shows none."
+          },
+          "unit": {
+            "type": ["string", "null"],
+            "description": "One of app.validation.INGREDIENT_UNITS, or null when not printed/inferable."
+          },
+          "is_food": { "type": "boolean" }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "description": "Optional printed totals; used to sanity-check the parser's totals gate.",
+      "additionalProperties": false,
+      "properties": {
+        "subtotal": { "type": ["number", "null"] },
+        "tax": { "type": ["number", "null"] },
+        "total": { "type": ["number", "null"] }
+      }
+    },
+    "labeler_notes": { "type": "string" }
+  }
+}
