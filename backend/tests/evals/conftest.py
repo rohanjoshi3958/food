@@ -148,10 +148,10 @@ class FakeClaude:
 
     Routes each request on its cached ``system`` prefix:
 
-    * receipt analysis        -> ``receipt_response``
-    * nutrition estimate      -> ``nutrition[item name]`` (default: recognized, 100 kcal)
-    * unit check              -> ``unit_checks[item name]`` (default: plausible)
-    * pantry match            -> ``pantry_matches[incoming name]`` (default: no match)
+    * receipt analysis        -> ``receipt_response`` (required)
+    * nutrition estimate      -> ``nutrition[item name]`` (required; no default)
+    * unit check              -> ``unit_checks[item name]`` (required; no default)
+    * pantry match            -> ``pantry_matches[incoming name]`` (required; no default)
     * meal generation         -> ``meal_responses`` in order (last one repeats)
     * meal image prompt       -> fixed text
     """
@@ -178,6 +178,9 @@ class FakeClaude:
 
     def script_unit_check(self, item_name: str, payload: Any) -> None:
         self.unit_checks[canonical_name(item_name)] = payload
+
+    def script_nutrition(self, item_name: str, payload: Any) -> None:
+        self.nutrition[canonical_name(item_name)] = payload
 
     def script_meals(self, responses: Iterable[Any]) -> None:
         self.meal_responses = [render_model_response(item) for item in responses]
@@ -222,32 +225,24 @@ class FakeClaude:
 
         if system_text == NUTRITION_ESTIMATE_PROMPT:
             item = _first_match(r"^- Item: (.*)$", tail) or ""
-            payload = self.nutrition.get(
-                canonical_name(item),
-                {
-                    "recognized": True,
-                    "serving_size": "1 serving",
-                    "servings_per_container": 1,
-                    "calories": 100,
-                    "nutrition_notes": "eval default",
-                },
-            )
-            return fake_message(render_model_response(payload))
+            key = canonical_name(item)
+            if key not in self.nutrition:
+                raise FakeClaudeError(f"no nutrition response scripted for {item!r}")
+            return fake_message(render_model_response(self.nutrition[key]))
 
         if system_text == UNIT_CHECK_PROMPT:
             item = _first_match(r"^- Item: (.*)$", tail) or ""
-            payload = self.unit_checks.get(
-                canonical_name(item), {"unit_plausible": True, "unit_warning": None}
-            )
-            return fake_message(render_model_response(payload))
+            key = canonical_name(item)
+            if key not in self.unit_checks:
+                raise FakeClaudeError(f"no unit-check response scripted for {item!r}")
+            return fake_message(render_model_response(self.unit_checks[key]))
 
         if system_text == PANTRY_MATCH_PROMPT:
             item = _first_match(r"^- name: (.*)$", tail) or ""
-            payload = self.pantry_matches.get(
-                canonical_name(item),
-                {"match_id": None, "ambiguous": False, "canonical_name": None},
-            )
-            return fake_message(render_model_response(payload))
+            key = canonical_name(item)
+            if key not in self.pantry_matches:
+                raise FakeClaudeError(f"no pantry-match response scripted for {item!r}")
+            return fake_message(render_model_response(self.pantry_matches[key]))
 
         if system_text == MEAL_PREFIX:
             if not self.meal_responses:
@@ -434,7 +429,9 @@ def live_anthropic(monkeypatch):
     if not LIVE_ENABLED:
         pytest.skip("live evals are opt-in: set FOOD_EVAL_LIVE=1 (paid Anthropic calls)")
     if not _LIVE_API_KEY:
-        pytest.skip("live evals need ANTHROPIC_API_KEY or FOOD_EVAL_ANTHROPIC_API_KEY")
+        pytest.fail(
+            "FOOD_EVAL_LIVE=1 requires ANTHROPIC_API_KEY or FOOD_EVAL_ANTHROPIC_API_KEY"
+        )
     monkeypatch.setenv("ANTHROPIC_API_KEY", _LIVE_API_KEY)
 
     from app.services.model_router import forced_model

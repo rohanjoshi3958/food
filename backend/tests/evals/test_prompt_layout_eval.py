@@ -107,6 +107,9 @@ class TestPromptSnapshots:
 
 class TestLayoutEquivalence:
     def test_unit_check_rejoins_to_single_turn_prompt(self, fake_claude):
+        fake_claude.script_unit_check(
+            "Watermelon", {"unit_plausible": True, "unit_warning": None}
+        )
         check_ingredient_unit("Watermelon", "gallon")
         call = _request(fake_claude)
         expected = UNIT_CHECK_PROMPT + "\n\n" + UNIT_CHECK_USER_PROMPT.format(
@@ -117,6 +120,15 @@ class TestLayoutEquivalence:
         assert "Watermelon" not in call["system_text"]
 
     def test_nutrition_rejoins_to_single_turn_prompt(self, fake_claude):
+        fake_claude.script_nutrition(
+            "Almond Butter",
+            {
+                "recognized": True,
+                "serving_size": "2 tbsp (32g)",
+                "servings_per_container": 15,
+                "calories": 190,
+            },
+        )
         estimate_ingredient_nutrition("Almond Butter", "1", "each")
         call = _request(fake_claude)
         expected = NUTRITION_ESTIMATE_PROMPT + "\n\n" + NUTRITION_ESTIMATE_USER_PROMPT.format(
@@ -127,6 +139,10 @@ class TestLayoutEquivalence:
 
     def test_pantry_match_rejoins_to_single_turn_prompt(self, fake_claude):
         pantry = [{"id": "ing-1", "name": "Sweet Potato", "unit": "lb"}]
+        fake_claude.script_pantry_match(
+            "SWT PTATO",
+            {"match_id": None, "ambiguous": False, "canonical_name": "Sweet Potato"},
+        )
         match_ingredient_to_pantry("SWT PTATO", "lb", pantry)
         call = _request(fake_claude)
         expected = PANTRY_MATCH_PROMPT + "\n\n" + PANTRY_MATCH_USER_PROMPT.format(

@@ -381,6 +381,66 @@ class TestCallSiteEscalationWiring:
         assert check_ingredient_unit("Watermelon", "gallon") == "Use each."
         assert [call["model"] for call in client.calls] == [RECEIPT_ANTHROPIC_MODEL]
 
+    def test_unit_check_malformed_from_haiku_is_confirmed_on_opus(
+        self, routing_on, monkeypatch
+    ):
+        client = _FakeClient(
+            [
+                create_mock_anthropic_response("not-json"),
+                create_mock_anthropic_response(
+                    json.dumps({"unit_plausible": False, "unit_warning": "Use each."})
+                ),
+            ]
+        )
+        monkeypatch.setattr(receipt_analyzer, "_get_client", lambda: client)
+
+        assert check_ingredient_unit("Watermelon", "gallon") == "Use each."
+        assert [call["model"] for call in client.calls] == [
+            HAIKU_ANTHROPIC_MODEL,
+            OPUS_ANTHROPIC_MODEL,
+        ]
+
+    def test_unit_check_reject_without_warning_escalates(
+        self, routing_on, monkeypatch
+    ):
+        client = _FakeClient(
+            [
+                create_mock_anthropic_response(
+                    json.dumps({"unit_plausible": False, "unit_warning": None})
+                ),
+                create_mock_anthropic_response(
+                    json.dumps({"unit_plausible": True, "unit_warning": None})
+                ),
+            ]
+        )
+        monkeypatch.setattr(receipt_analyzer, "_get_client", lambda: client)
+
+        assert check_ingredient_unit("Bananas", "bunch") is None
+        assert [call["model"] for call in client.calls] == [
+            HAIKU_ANTHROPIC_MODEL,
+            OPUS_ANTHROPIC_MODEL,
+        ]
+
+    def test_pantry_match_keeps_ambiguous_when_escalation_is_malformed(
+        self, routing_on, monkeypatch
+    ):
+        client = _FakeClient(
+            [
+                _pantry_response(None, True),
+                create_mock_anthropic_response("not-json"),
+            ]
+        )
+        monkeypatch.setattr(receipt_analyzer, "_get_client", lambda: client)
+
+        result = match_ingredient_to_pantry("Rice", "lb", self.PANTRY)
+
+        assert result.ambiguous is True
+        assert result.match_id is None
+        assert [call["model"] for call in client.calls] == [
+            SONNET_ANTHROPIC_MODEL,
+            OPUS_ANTHROPIC_MODEL,
+        ]
+
 
 class _FakeClient:
     """Records ``messages.create`` kwargs and replays scripted responses."""

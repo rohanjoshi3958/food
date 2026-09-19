@@ -52,7 +52,7 @@ from tests.evals.conftest import (
     load_pantry_match_fixtures,
     load_receipt_fixtures,
 )
-from tests.evals.scoring import Tally, names_equivalent
+from tests.evals.scoring import Tally, names_equivalent, require_nonempty_corpus
 from tests.evals.test_meal_plan_eval import build_pantry
 from tests.evals.test_receipt_parse_eval import ReceiptScorecard, score_receipt
 
@@ -69,6 +69,11 @@ def _decision_matches(result: PantryMatchResult, expected: dict) -> bool:
 
 def test_live_ingredient_match(live_anthropic, gate):
     cases = [c for c in load_pantry_match_fixtures()["cases"] if c["expected"]["llm_calls"]]
+    require_nonempty_corpus(cases, name="live ingredient_match cases")
+    canonical_cases = [c for c in cases if c["expected"].get("display_name")]
+    require_nonempty_corpus(
+        canonical_cases, name="live ingredient_match display_name cases"
+    )
     decision = Tally()
     canonical = Tally()
     for case in cases:
@@ -96,6 +101,7 @@ def test_live_ingredient_match(live_anthropic, gate):
 
 def test_live_meal_plan(live_anthropic, gate):
     fixtures = load_meal_plan_fixtures()
+    require_nonempty_corpus(fixtures["cases"], name="live meal_plan cases")
     acceptable = Tally()
     calories_ok = Tally()
     pantry_only = Tally()
@@ -154,6 +160,7 @@ def test_live_receipt_parse(live_anthropic, gate):
 def test_live_layout_ab_pantry_match(live_anthropic, gate):
     """FOOD-56 residual: cached system+tail vs. legacy single user turn."""
     cases = [c for c in load_pantry_match_fixtures()["cases"] if c["expected"]["llm_calls"]]
+    require_nonempty_corpus(cases, name="live layout A/B pantry cases")
     client = _get_client()
     agreement = Tally()
     for case in cases:

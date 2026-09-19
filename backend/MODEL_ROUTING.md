@@ -48,7 +48,7 @@ low-confidence answer (routing on only).
 | --- | --- | --- | --- | --- | --- |
 | `receipt.analyze_image` | Opus | Opus | — | — | Live `test_live_receipt_parse` green on the cheaper tier with a labelled image set (FOOD-53 gap). |
 | `receipt.nutrition_estimate` | Opus | Opus | — | — | Nutrition-value fixtures + live run green. |
-| `receipt.unit_check` | Opus | **Haiku** | Opus | `unit_plausible: false` (a rejection blocks the user, so confirm it) | Mocked evals already cover the wiring; live run with `FOOD_EVAL_MODEL=claude-haiku-4-5` before enabling. |
+| `receipt.unit_check` | Opus | **Haiku** | Opus | `unit_plausible: false`, a missing/non-bool `unit_plausible`, or a non-JSON answer (only a schema-valid `true` skips confirmation) | Mocked evals already cover the wiring; live run with `FOOD_EVAL_MODEL=claude-haiku-4-5` before enabling. |
 | `receipt.pantry_match` | Opus | **Sonnet** | Opus | `ambiguous: true`, a `match_id` not in the offered pantry, a missing/`ambiguous` that is not a bool, or a non-JSON answer | `ingredient_match` live run on Sonnet ≥ baselines. |
 | `receipt.ocr_text_cleanup` | Haiku | Haiku | Sonnet | FOOD-55 live: Haiku cleans Tesseract text when `RECEIPT_OCR_FIRST` is on. The pipeline's next rung is Sonnet vision (`RECEIPT_OCR_VISION_FALLBACK_MODEL`), not `escalation_for()`. | OCR-first evals in `backend/evals/receipts`. |
 | `receipt.ocr_cleanup` | Haiku | Haiku | Sonnet | FOOD-58 alias for `receipt.ocr_text_cleanup` (the name reserved before FOOD-55 landed). | — |

@@ -73,7 +73,19 @@ def run_match_case(fake: FakeClaude, db: Session, user: User, case: dict) -> Mat
 
     fake.calls.clear()
     fake.pantry_matches.clear()
-    fake.script_pantry_match(case["incoming"]["ingredient_name"], case["model_response"])
+    incoming_name = case["incoming"]["ingredient_name"]
+    fake.script_pantry_match(incoming_name, case["model_response"])
+    fake.script_unit_check(incoming_name, {"unit_plausible": True, "unit_warning": None})
+    fake.script_nutrition(
+        incoming_name,
+        {
+            "recognized": True,
+            "serving_size": "1 serving",
+            "servings_per_container": 1,
+            "calories": 100,
+            "nutrition_notes": "eval scripted",
+        },
+    )
 
     item = DraftIngredientItem(**case["incoming"], is_food=True)
     try:

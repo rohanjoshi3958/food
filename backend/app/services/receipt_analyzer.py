@@ -255,9 +255,24 @@ def _as_optional_float(value) -> float | None:
 
 
 def _unit_warning_from_payload(payload: dict) -> str | None:
+    warning, _low_confidence = _unit_check_from_payload(payload)
+    return warning
+
+
+def _unit_check_from_payload(payload: object) -> tuple[str | None, bool]:
+    """Return ``(warning, low_confidence)``.
+
+    Only a schema-valid ``unit_plausible: true`` is a confident accept.
+    A valid reject, a missing/non-bool ``unit_plausible``, or a non-object
+    payload is low confidence so a cheap tier can be confirmed on Opus.
+    """
+    if not isinstance(payload, dict):
+        return None, True
     if payload.get("unit_plausible") is True:
-        return None
-    return _as_optional_str(payload.get("unit_warning"))
+        return None, False
+    if payload.get("unit_plausible") is False:
+        return _as_optional_str(payload.get("unit_warning")), True
+    return None, True
 
 
 def check_ingredient_unit(
@@ -271,7 +286,7 @@ def check_ingredient_unit(
 
     client = _get_client()
 
-    def ask(decision: RouteDecision) -> str | None:
+    def ask(decision: RouteDecision) -> tuple[str | None, bool]:
         message = create_cached_message(
             client,
             call_site="receipt.unit_check",
@@ -291,23 +306,24 @@ def check_ingredient_unit(
 
         text_blocks = [block.text for block in message.content if block.type == "text"]
         if not text_blocks:
-            return None
+            return None, True
 
         try:
             payload = _extract_json(text_blocks[-1])
         except (json.JSONDecodeError, ValueError):
-            return None
+            return None, True
 
-        return _unit_warning_from_payload(payload)
+        return _unit_check_from_payload(payload)
 
     decision = route_model("receipt.unit_check")
-    warning = ask(decision)
-    # A rejection blocks the user, so a cheap tier's "implausible" is treated
-    # as low confidence and confirmed on the escalation tier (routing on only).
-    if warning is not None:
+    warning, low_confidence = ask(decision)
+    # A rejection blocks the user, so a cheap tier's "implausible" or a
+    # malformed answer is treated as low confidence and confirmed on the
+    # escalation tier (routing on only).
+    if low_confidence:
         escalated = escalation_for(decision)
         if escalated is not None:
-            warning = ask(escalated)
+            warning, _ = ask(escalated)
     return warning
 
 
@@ -338,8 +354,8 @@ def match_ingredient_to_pantry(
     # empty. match_id must stay null when there are no candidates.
     client = _get_client()
 
-    def ask(decision: RouteDecision) -> tuple[PantryMatchResult, bool]:
-        """Return (result, low_confidence)."""
+    def ask(decision: RouteDecision) -> tuple[PantryMatchResult, bool, bool]:
+        """Return ``(result, low_confidence, schema_invalid)``."""
         message = create_cached_message(
             client,
             call_site="receipt.pantry_match",
@@ -360,15 +376,15 @@ def match_ingredient_to_pantry(
 
         text_blocks = [block.text for block in message.content if block.type == "text"]
         if not text_blocks:
-            return PantryMatchResult(), True
+            return PantryMatchResult(), True, True
 
         try:
             payload = _extract_json(text_blocks[-1])
         except (json.JSONDecodeError, ValueError):
-            return PantryMatchResult(), True
+            return PantryMatchResult(), True, True
 
         if not isinstance(payload, dict):
-            return PantryMatchResult(), True
+            return PantryMatchResult(), True, True
 
         # match_id may be null; the key itself must be present. ambiguous is
         # required and must be a real bool — a missing field used to coerce
@@ -396,14 +412,18 @@ def match_ingredient_to_pantry(
         # an id it was never offered, or failed the required JSON shape.
         # Flag off: escalation_for() is None, so the returned result is
         # unchanged (still a non-ambiguous new row, same as pre-FOOD-58).
-        return result, schema_invalid or ambiguous or invented_id
+        return result, schema_invalid or ambiguous or invented_id, schema_invalid
 
     decision = route_model("receipt.pantry_match")
-    result, low_confidence = ask(decision)
+    result, low_confidence, _schema_invalid = ask(decision)
     if low_confidence:
         escalated = escalation_for(decision)
         if escalated is not None:
-            result, _ = ask(escalated)
+            escalated_result, _escalated_low, escalated_schema_invalid = ask(escalated)
+            # A malformed Opus answer must not wipe a valid first-pass
+            # ``ambiguous=True`` (defaults to False on PantryMatchResult).
+            if not escalated_schema_invalid:
+                result = escalated_result
     return result
 
 
