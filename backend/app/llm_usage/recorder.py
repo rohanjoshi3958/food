@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -252,11 +254,122 @@ class DatabaseSink:
             session.close()
 
 
+_DB_QUEUE_MAXSIZE = 256
+
+
+def _snapshot_run(run: WorkflowRun) -> WorkflowRun:
+    return WorkflowRun(
+        workflow=run.workflow,
+        recorded=run.recorded,
+        run_id=run.run_id,
+        user_id=run.user_id,
+        receipt_id=run.receipt_id,
+        meal_id=run.meal_id,
+        started_monotonic=run.started_monotonic,
+        call_count=run.call_count,
+    )
+
+
+class AsyncDatabaseSink:
+    """Enqueue durable writes so the product path never waits on Postgres.
+
+    Logging stays on :class:`LogSink` and is dispatched independently. When
+    the bounded queue is full, the write is dropped and logged.
+    """
+
+    def __init__(
+        self,
+        inner: DatabaseSink | None = None,
+        *,
+        maxsize: int = _DB_QUEUE_MAXSIZE,
+    ) -> None:
+        self._inner = inner or DatabaseSink()
+        self._queue: queue.Queue[tuple[str, tuple[Any, ...], dict[str, Any]]] = queue.Queue(
+            maxsize=maxsize
+        )
+        self._started = False
+        self._start_lock = threading.Lock()
+        self._thread = threading.Thread(
+            target=self._worker,
+            name="llm-usage-db-sink",
+            daemon=True,
+        )
+
+    def _ensure_worker(self) -> None:
+        with self._start_lock:
+            if not self._started:
+                self._thread.start()
+                self._started = True
+
+    def _enqueue(self, method: str, *args: Any, **kwargs: Any) -> None:
+        self._ensure_worker()
+        try:
+            self._queue.put_nowait((method, args, kwargs))
+        except queue.Full:
+            _internal_logger.warning(
+                "LLM usage DB queue full; dropping %s",
+                method,
+            )
+
+    def record_event(self, event: UsageEvent) -> None:
+        self._enqueue("record_event", replace(event))
+
+    def run_started(self, run: WorkflowRun) -> None:
+        self._enqueue("run_started", _snapshot_run(run))
+
+    def run_finished(
+        self,
+        run: WorkflowRun,
+        *,
+        status: str,
+        error_type: str | None,
+        duration_ms: int,
+    ) -> None:
+        self._enqueue(
+            "run_finished",
+            _snapshot_run(run),
+            status=status,
+            error_type=error_type,
+            duration_ms=duration_ms,
+        )
+
+    def _worker(self) -> None:
+        while True:
+            method, args, kwargs = self._queue.get()
+            try:
+                getattr(self._inner, method)(*args, **kwargs)
+            except Exception:  # noqa: BLE001 - instrumentation must never break product flows
+                _internal_logger.warning(
+                    "LLM usage sink DatabaseSink.%s failed",
+                    method,
+                    exc_info=True,
+                )
+            finally:
+                self._queue.task_done()
+
+    def flush(self, timeout: float | None = 5.0) -> None:
+        """Wait until queued writes finish (tests)."""
+        if not self._started:
+            return
+        if timeout is None:
+            self._queue.join()
+            return
+        done = threading.Event()
+
+        def _join() -> None:
+            self._queue.join()
+            done.set()
+
+        threading.Thread(target=_join, name="llm-usage-db-flush", daemon=True).start()
+        if not done.wait(timeout):
+            raise TimeoutError("LLM usage DB queue did not drain")
+
+
 _sinks: list[UsageSink] | None = None
 
 
 def default_sinks() -> list[UsageSink]:
-    return [LogSink(), DatabaseSink()]
+    return [LogSink(), AsyncDatabaseSink()]
 
 
 def get_sinks() -> list[UsageSink]:

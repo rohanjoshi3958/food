@@ -2,6 +2,8 @@
 
 import contextvars
 import json
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -25,7 +27,13 @@ from app.llm_usage import (
     set_sinks,
     workflow_scope,
 )
-from app.llm_usage.recorder import token_usage_from_response
+from app.llm_usage.context import WorkflowRun
+from app.llm_usage.recorder import (
+    AsyncDatabaseSink,
+    UsageEvent,
+    default_sinks,
+    token_usage_from_response,
+)
 from app.services import meal_image, receipt_analyzer
 
 
@@ -463,3 +471,65 @@ class TestCallSitesAreInstrumented:
         assert event.step == "image_prompt"
         assert event.workflow == WORKFLOW_MEAL_GEN
         assert event.meal_id == "m1"
+
+
+class SlowMemorySink(MemorySink):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def record_event(self, event) -> None:
+        self.entered.set()
+        self.release.wait(timeout=5)
+        super().record_event(event)
+
+
+class TestAsyncDatabaseSink:
+    def test_default_sinks_do_not_block_on_database(self):
+        sinks = default_sinks()
+        assert type(sinks[0]).__name__ == "LogSink"
+        assert type(sinks[1]).__name__ == "AsyncDatabaseSink"
+
+    def test_record_event_returns_before_inner_commit(self):
+        inner = SlowMemorySink()
+        async_sink = AsyncDatabaseSink(inner, maxsize=8)
+        event = UsageEvent(workflow="meal_gen", step="x", model="m", status="ok", latency_ms=1)
+
+        started = time.perf_counter()
+        async_sink.record_event(event)
+        elapsed = time.perf_counter() - started
+        assert elapsed < 0.2
+        assert inner.events == []
+        assert inner.entered.wait(timeout=2)
+        inner.release.set()
+        async_sink.flush()
+        assert len(inner.events) == 1
+        assert inner.events[0].step == "x"
+
+    def test_full_queue_drops_without_blocking(self):
+        inner = SlowMemorySink()
+        async_sink = AsyncDatabaseSink(inner, maxsize=1)
+        first = UsageEvent(workflow="meal_gen", step="one", model="m", status="ok", latency_ms=1)
+        second = UsageEvent(workflow="meal_gen", step="two", model="m", status="ok", latency_ms=1)
+        third = UsageEvent(workflow="meal_gen", step="three", model="m", status="ok", latency_ms=1)
+
+        async_sink.record_event(first)
+        assert inner.entered.wait(timeout=2)
+        async_sink.record_event(second)
+        async_sink.record_event(third)
+        inner.release.set()
+        async_sink.flush()
+        steps = [event.step for event in inner.events]
+        assert "one" in steps
+        assert "two" in steps
+        assert "three" not in steps
+
+    def test_run_payloads_are_snapshots(self):
+        inner = MemorySink()
+        async_sink = AsyncDatabaseSink(inner, maxsize=8)
+        run = WorkflowRun(workflow=WORKFLOW_MEAL_GEN, user_id="u1")
+        async_sink.run_started(run)
+        run.user_id = "mutated"
+        async_sink.flush()
+        assert inner.runs_started[0].user_id == "u1"
