@@ -13,7 +13,8 @@ This directory contains automated backend tests for:
 - **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
 - **Prompt caching breakpoints** on every Claude call site (`test_prompt_caching.py`)
 - **Model routing** policy, flag-off guarantee, and escalation wiring (`test_model_router.py`)
-- **Quality evals** — receipt accuracy, ingredient match rate, meal-plan acceptability against documented baselines (`evals/`, see `evals/README.md`)
+- **Quality evals (FOOD-58)** — receipt accuracy, ingredient match rate, meal-plan acceptability against documented baselines (`tests/evals/`, see `tests/evals/README.md`)
+- **OCR-first receipt eval scaffold (FOOD-55)** — labelled cases and scoring under `evals/receipts/` (see `evals/receipts/README.md`)
 
 ## Running Tests
 

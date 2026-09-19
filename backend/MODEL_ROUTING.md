@@ -50,8 +50,9 @@ low-confidence answer (routing on only).
 | `receipt.nutrition_estimate` | Opus | Opus | — | — | Nutrition-value fixtures + live run green. |
 | `receipt.unit_check` | Opus | **Haiku** | Opus | `unit_plausible: false` (a rejection blocks the user, so confirm it) | Mocked evals already cover the wiring; live run with `FOOD_EVAL_MODEL=claude-haiku-4-5` before enabling. |
 | `receipt.pantry_match` | Opus | **Sonnet** | Opus | `ambiguous: true`, a `match_id` not in the offered pantry, a missing/`ambiguous` that is not a bool, or a non-JSON answer | `ingredient_match` live run on Sonnet ≥ baselines. |
-| `receipt.ocr_cleanup` | Haiku | Haiku | Sonnet | reserved for FOOD-55 | New call site; start on Haiku, no downgrade involved. |
-| `receipt.classify_text` | Haiku | Haiku | Sonnet | reserved for FOOD-55 | New call site. |
+| `receipt.ocr_text_cleanup` | Haiku | Haiku | Sonnet | FOOD-55 live: Haiku cleans Tesseract text when `RECEIPT_OCR_FIRST` is on. The pipeline's next rung is Sonnet vision (`RECEIPT_OCR_VISION_FALLBACK_MODEL`), not `escalation_for()`. | OCR-first evals in `backend/evals/receipts`. |
+| `receipt.ocr_cleanup` | Haiku | Haiku | Sonnet | FOOD-58 alias for `receipt.ocr_text_cleanup` (the name reserved before FOOD-55 landed). | — |
+| `receipt.classify_text` | Haiku | Haiku | Sonnet | reserved; FOOD-55 uses the deterministic parser instead of an LLM classify step. | — |
 | `meal.generate` | Sonnet | Sonnet | — | — | Not a downgrade candidate. |
 | `meal.image_prompt` | Sonnet | **Haiku** | — | — (deterministic fallback exists) | None needed; cosmetic. |
 
@@ -104,6 +105,9 @@ byte-for-byte the pre-FOOD-58 request pattern.
 - `MODEL_ROUTING_ENABLED` (env / `.env`, default `false`) — read at request
   time through `settings`. Nothing in a cached prompt prefix depends on it
   (model id is not part of the prefix; caches are per model anyway).
+- FOOD-55's `RECEIPT_OCR_FIRST` and `RECEIPT_ANALYSIS_CACHE` also default
+  **off**. Routing does not flip them. Flag-off receipt upload still uses
+  `analyze_receipt_image` on Opus (`opus_baseline`).
 - Rollout order: (1) this PR — flag off, router logging live; (2) run the
   live evals for the tiers listed as `routed`; (3) enable in a canary
   environment and watch the model mix and `reason=escalated` rate for a

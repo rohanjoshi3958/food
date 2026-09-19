@@ -26,6 +26,8 @@ from app.config import (
     OPUS_ANTHROPIC_MODEL,
     RECEIPT_ANTHROPIC_MODEL,
     RECEIPT_HAIKU_MODEL,
+    RECEIPT_OCR_CLEANUP_MODEL,
+    RECEIPT_OCR_VISION_FALLBACK_MODEL,
     SONNET_ANTHROPIC_MODEL,
     get_settings,
 )
@@ -81,10 +83,17 @@ class TestSharedConstants:
         assert RECEIPT_ANTHROPIC_MODEL == OPUS_ANTHROPIC_MODEL
         assert MEAL_ANTHROPIC_MODEL == SONNET_ANTHROPIC_MODEL
         assert RECEIPT_HAIKU_MODEL == HAIKU_ANTHROPIC_MODEL
+        assert RECEIPT_OCR_CLEANUP_MODEL == RECEIPT_HAIKU_MODEL
+        assert RECEIPT_OCR_VISION_FALLBACK_MODEL == SONNET_ANTHROPIC_MODEL
 
     def test_flag_defaults_off(self, monkeypatch):
         monkeypatch.delenv("MODEL_ROUTING_ENABLED", raising=False)
-        assert get_settings().model_routing_enabled is False
+        monkeypatch.delenv("RECEIPT_OCR_FIRST", raising=False)
+        monkeypatch.delenv("RECEIPT_ANALYSIS_CACHE", raising=False)
+        settings = get_settings()
+        assert settings.model_routing_enabled is False
+        assert settings.receipt_ocr_first is False
+        assert settings.receipt_analysis_cache is False
 
 
 class TestPolicyTable:
@@ -102,7 +111,11 @@ class TestPolicyTable:
         assert TIER_MODELS[POLICY[call_site].default] == expected_model
 
     def test_receipt_text_steps_default_to_shared_haiku_constant(self):
-        for call_site in ("receipt.ocr_cleanup", "receipt.classify_text"):
+        for call_site in (
+            "receipt.ocr_text_cleanup",
+            "receipt.ocr_cleanup",
+            "receipt.classify_text",
+        ):
             assert TIER_MODELS[POLICY[call_site].default] == RECEIPT_HAIKU_MODEL
 
     def test_escalation_is_always_stronger_than_routed(self):
@@ -157,6 +170,7 @@ class TestRouteModelFlagOn:
         assert route_model("receipt.nutrition_estimate").model == OPUS_ANTHROPIC_MODEL
         assert route_model("meal.generate").model == SONNET_ANTHROPIC_MODEL
         assert route_model("meal.image_prompt").model == HAIKU_ANTHROPIC_MODEL
+        assert route_model("receipt.ocr_text_cleanup").model == RECEIPT_HAIKU_MODEL
         assert route_model("receipt.ocr_cleanup").model == RECEIPT_HAIKU_MODEL
 
     def test_low_confidence_escalates_once(self, routing_on):
