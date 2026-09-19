@@ -62,7 +62,13 @@ def _store_meal_photo_bytes(
     contents: bytes,
     filename: str,
     content_type: str | None = None,
-) -> None:
+) -> tuple[str | None, str]:
+    """Store a new photo and assign ``meal.photo_filename``.
+
+    Returns ``(previous_stored_value, new_object_key)``. The previous object is
+    not deleted here; the caller must remove it only after a successful commit.
+    If assigning the new key fails, the newly stored object is deleted.
+    """
     object_key = build_object_key(MEALS_PREFIX, current_user.id, filename)
     try:
         get_storage().put(object_key, contents, content_type=content_type)
@@ -73,10 +79,13 @@ def _store_meal_photo_bytes(
             detail="Unable to store the photo right now. Please try again.",
         ) from exc
 
-    if meal.photo_filename:
-        delete_quietly(_meal_photo_key(current_user.id, meal.photo_filename))
-
-    meal.photo_filename = object_key
+    previous = meal.photo_filename
+    try:
+        meal.photo_filename = object_key
+    except Exception:
+        delete_quietly(object_key)
+        raise
+    return previous, object_key
 
 
 def _finalize_meal_to_cookbook(
@@ -87,12 +96,13 @@ def _finalize_meal_to_cookbook(
     add_meal_to_cookbook(db, meal, current_user)
 
     response = meal_response(meal)
-
-    if meal.photo_filename:
-        delete_quietly(_meal_photo_key(current_user.id, meal.photo_filename))
+    photo_filename = meal.photo_filename
 
     db.delete(meal)
     db.commit()
+
+    if photo_filename:
+        delete_quietly(_meal_photo_key(current_user.id, photo_filename))
 
     return response
 
@@ -202,31 +212,44 @@ async def complete_meal(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Upload a valid image file.",
             )
-        _store_meal_photo_bytes(
-            current_user,
-            meal,
-            contents,
-            file.filename,
-            content_type=file.content_type,
-        )
-    elif not skip_photo:
-        try:
-            image_bytes = generate_meal_image(meal)
-        except MealImageError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=str(exc),
-            ) from exc
-        _store_meal_photo_bytes(
-            current_user,
-            meal,
-            image_bytes,
-            f"{meal.name.replace(' ', '_').lower()[:40] or 'meal'}.png",
-            content_type="image/png",
-        )
 
-    db.commit()
-    db.refresh(meal)
+    previous_photo: str | None = None
+    stored_key: str | None = None
+    try:
+        if file is not None and file.filename:
+            previous_photo, stored_key = _store_meal_photo_bytes(
+                current_user,
+                meal,
+                contents,
+                file.filename,
+                content_type=file.content_type,
+            )
+        elif not skip_photo:
+            try:
+                image_bytes = generate_meal_image(meal)
+            except MealImageError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+            previous_photo, stored_key = _store_meal_photo_bytes(
+                current_user,
+                meal,
+                image_bytes,
+                f"{meal.name.replace(' ', '_').lower()[:40] or 'meal'}.png",
+                content_type="image/png",
+            )
+
+        db.commit()
+        db.refresh(meal)
+    except Exception:
+        db.rollback()
+        if stored_key:
+            delete_quietly(stored_key)
+        raise
+    else:
+        if previous_photo and previous_photo != stored_key:
+            delete_quietly(_meal_photo_key(current_user.id, previous_photo))
 
     return _finalize_meal_to_cookbook(db, meal, current_user)
 

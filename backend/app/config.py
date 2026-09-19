@@ -24,8 +24,9 @@ class Settings(BaseSettings):
     meal_upload_dir: str = "uploads/meals"
     cookbook_upload_dir: str = "uploads/cookbook"
     # S3 mode: name of the private uploads bucket (Terraform output, injected by
-    # App Runner as UPLOADS_BUCKET). Region and credentials come from the default
-    # AWS SDK chain (AWS_REGION + instance role in prod), never from app config.
+    # App Runner as UPLOADS_BUCKET). Credentials come from the default AWS SDK
+    # chain (instance role in prod). Region is AWS_REGION / AWS_DEFAULT_REGION,
+    # passed through to boto3 as region_name — not a custom Terraform variable.
     uploads_bucket: str = ""
     # Lifetime of presigned GET URLs handed to the browser. 0 disables redirects
     # and streams object bytes through the API instead.

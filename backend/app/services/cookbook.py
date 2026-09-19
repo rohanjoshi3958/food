@@ -87,6 +87,7 @@ def add_meal_to_cookbook(db: Session, meal: Meal, user: User) -> CookbookEntry:
     photo_filename = _copy_meal_photo_to_cookbook(user, meal)
 
     is_new_entry = entry is None
+    previous_photo = None if is_new_entry else entry.photo_filename
 
     try:
         if is_new_entry:
@@ -102,9 +103,6 @@ def add_meal_to_cookbook(db: Session, meal: Meal, user: User) -> CookbookEntry:
             )
             db.add(entry)
         else:
-            if entry.photo_filename and entry.photo_filename != photo_filename:
-                _remove_cookbook_photo(user.id, entry.photo_filename)
-
             entry.title = meal.name
             entry.description = meal.description
             entry.ingredients = meal.ingredients_used
@@ -118,9 +116,11 @@ def add_meal_to_cookbook(db: Session, meal: Meal, user: User) -> CookbookEntry:
 
         db.commit()
         db.refresh(entry)
+        if previous_photo and previous_photo != photo_filename:
+            _remove_cookbook_photo(user.id, previous_photo)
         return entry
     except Exception:
         db.rollback()
-        if is_new_entry and photo_filename:
+        if photo_filename and photo_filename != previous_photo:
             _remove_cookbook_photo(user.id, photo_filename)
         raise

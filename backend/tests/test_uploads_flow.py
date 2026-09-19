@@ -14,6 +14,7 @@ import re
 from unittest.mock import Mock, patch
 from urllib.parse import quote
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.models import CookbookEntry, Meal, Receipt, User
@@ -299,3 +300,128 @@ class TestLocalFallback:
         assert client.get("/api/receipts", headers=auth_headers).status_code == 200
         assert not legacy_file.exists()
         assert test_db.query(Receipt).count() == 0
+
+
+class TestStorageCompensation:
+    """Rollback / commit-order compensation for S3 objects (CodeRabbit FOOD-47)."""
+
+    def test_receipt_upload_deletes_object_when_initial_commit_fails(
+        self, fake_s3, client, test_db: Session, test_user: User, auth_headers
+    ):
+        from sqlalchemy.exc import IntegrityError
+
+        with patch.object(
+            test_db,
+            "commit",
+            side_effect=IntegrityError("INSERT", {}, Exception("constraint")),
+        ):
+            response = client.post(
+                "/api/receipts/upload",
+                files={"file": ("receipt.jpg", b"fake image data", "image/jpeg")},
+                data={"manual_items": "[]"},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 503
+        test_db.rollback()
+        assert test_db.query(Receipt).count() == 0
+        assert fake_s3.keys(FAKE_BUCKET) == set()
+
+    def test_receipt_upload_keeps_object_when_commit_error_is_ambiguous_and_row_exists(
+        self, fake_s3, client, test_db: Session, test_user: User, auth_headers
+    ):
+        original_commit = test_db.commit
+
+        def commit_then_lose_connection():
+            original_commit()
+            raise Exception("connection lost after commit")
+
+        with patch.object(test_db, "commit", side_effect=commit_then_lose_connection):
+            response = client.post(
+                "/api/receipts/upload",
+                files={"file": ("receipt.jpg", b"fake image data", "image/jpeg")},
+                data={"manual_items": "[]"},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 503
+        receipts = test_db.query(Receipt).all()
+        assert len(receipts) == 1
+        assert receipts[0].filename in fake_s3.keys(FAKE_BUCKET)
+        assert receipts[0].filename.startswith(f"receipts/{test_user.id}/")
+
+    def test_meal_photo_is_deleted_when_persist_commit_fails(
+        self, fake_s3, client, test_db: Session, test_user: User, auth_headers
+    ):
+        from sqlalchemy.exc import IntegrityError
+
+        meal = _create_meal(test_db, test_user)
+        with patch.object(
+            test_db,
+            "commit",
+            side_effect=IntegrityError("UPDATE", {}, Exception("constraint")),
+        ):
+            response = _complete_meal_with_photo(client, meal.id)
+
+        assert response.status_code == 500
+        test_db.rollback()
+        remaining = test_db.query(Meal).filter(Meal.id == meal.id).one()
+        assert remaining.photo_filename is None
+        assert fake_s3.keys(FAKE_BUCKET) == set()
+
+    def test_meal_source_photo_survives_failed_delete_commit(
+        self, fake_s3, client, test_db: Session, test_user: User, auth_headers
+    ):
+        meal = _create_meal(test_db, test_user)
+        original_commit = test_db.commit
+        commits = {"n": 0}
+
+        def counted_commit():
+            commits["n"] += 1
+            if commits["n"] == 3:
+                raise Exception("meal delete commit failed")
+            original_commit()
+
+        with patch.object(test_db, "commit", side_effect=counted_commit):
+            response = _complete_meal_with_photo(client, meal.id)
+
+        assert response.status_code == 500
+        test_db.rollback()
+        remaining = test_db.query(Meal).filter(Meal.id == meal.id).one()
+        assert remaining.photo_filename
+        assert remaining.photo_filename in fake_s3.keys(FAKE_BUCKET)
+        entry = test_db.query(CookbookEntry).filter(CookbookEntry.user_id == test_user.id).one()
+        assert entry.photo_filename in fake_s3.keys(FAKE_BUCKET)
+        assert entry.photo_filename != remaining.photo_filename
+
+    def test_cookbook_update_keeps_old_photo_when_commit_fails(
+        self, fake_s3, test_db: Session, test_user: User
+    ):
+        from app.services.cookbook import add_meal_to_cookbook
+        from app.storage import get_storage
+
+        meal = _create_meal(test_db, test_user)
+        first_key = f"meals/{test_user.id}/aaa_first.png"
+        get_storage().put(first_key, b"first", content_type="image/png")
+        meal.photo_filename = first_key
+        test_db.commit()
+
+        entry = add_meal_to_cookbook(test_db, meal, test_user)
+        old_photo = entry.photo_filename
+        assert old_photo.startswith(f"cookbook/{test_user.id}/")
+        assert fake_s3.objects[(FAKE_BUCKET, old_photo)]["Body"] == b"first"
+
+        second_key = f"meals/{test_user.id}/bbb_second.png"
+        get_storage().put(second_key, b"second", content_type="image/png")
+        meal.photo_filename = second_key
+        test_db.commit()
+
+        with patch.object(test_db, "commit", side_effect=Exception("update failed")):
+            with pytest.raises(Exception, match="update failed"):
+                add_meal_to_cookbook(test_db, meal, test_user)
+
+        test_db.refresh(entry)
+        assert entry.photo_filename == old_photo
+        cookbook_keys = {key for key in fake_s3.keys(FAKE_BUCKET) if key.startswith("cookbook/")}
+        assert cookbook_keys == {old_photo}
+        assert fake_s3.objects[(FAKE_BUCKET, old_photo)]["Body"] == b"first"

@@ -65,6 +65,8 @@ class TestKeys:
             build_object_key(MEALS_PREFIX, "", "a.png")
         with pytest.raises(InvalidObjectKey):
             build_object_key(MEALS_PREFIX, "a/b", "a.png")
+        with pytest.raises(InvalidObjectKey):
+            build_object_key(MEALS_PREFIX, r"a\b", "a.png")
 
     @pytest.mark.parametrize(
         "bad_key",
@@ -78,6 +80,9 @@ class TestKeys:
             "receipts/./f.jpg",
             "uploads/receipts/u/f.jpg",
             "avatars/u/f.jpg",
+            r"receipts\u\f.jpg",
+            r"receipts/u/..\..\secret",
+            r"receipts/u/foo\bar.jpg",
         ],
     )
     def test_validate_object_key_rejects(self, bad_key):
@@ -119,7 +124,7 @@ class TestLocalUploadStorage:
 
         assert local_backend.exists(key)
         assert local_backend.get(key) == b"png-bytes"
-        assert local_backend.local_path(key) == tmp_path / "m" / USER / "x_photo.png"
+        assert local_backend.local_path(key) == (tmp_path / "m" / USER / "x_photo.png").resolve()
         assert (tmp_path / "m" / USER / "x_photo.png").read_bytes() == b"png-bytes"
         assert local_backend.signed_url(key, 60) is None
 
@@ -147,6 +152,18 @@ class TestLocalUploadStorage:
             local_backend.put(f"receipts/{USER}/../../escape.txt", b"x")
         with pytest.raises(InvalidObjectKey):
             local_backend.get("uploads/receipts/u/f.jpg")
+
+    def test_path_stays_under_configured_root(self, local_backend, tmp_path):
+        key = f"receipts/{USER}/ok.jpg"
+        path = local_backend._path(key)
+        assert path.is_relative_to((tmp_path / "r").resolve())
+
+    def test_path_rejects_resolved_escape_even_if_key_slipped_through(
+        self, local_backend, monkeypatch
+    ):
+        monkeypatch.setattr("app.storage.validate_object_key", lambda key: key)
+        with pytest.raises(InvalidObjectKey, match="outside the receipts storage root"):
+            local_backend._path(f"receipts/{USER}/../../outside.txt")
 
     def test_ensure_directories(self, local_backend, tmp_path):
         local_backend.ensure_directories()
@@ -248,22 +265,50 @@ class TestGetStorage:
         assert isinstance(backend, LocalUploadStorage)
         assert backend.local_path(f"receipts/{USER}/a.jpg") == (
             local_uploads["receipts"] / USER / "a.jpg"
-        )
+        ).resolve()
 
     def test_local_when_bucket_is_blank(self, local_uploads, monkeypatch):
         monkeypatch.setenv("UPLOADS_BUCKET", "   ")
         assert isinstance(get_storage(), LocalUploadStorage)
 
-    def test_s3_when_uploads_bucket_set(self, fake_s3):
+    def test_s3_when_uploads_bucket_set(self, fake_s3, monkeypatch):
+        monkeypatch.delenv("AWS_REGION", raising=False)
+        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+        storage.reset_storage_cache()
         backend = get_storage()
         assert isinstance(backend, S3UploadStorage)
         assert backend.bucket == FAKE_BUCKET
-        # Region/credentials must come from the default SDK chain: no explicit
-        # region_name / keys are passed to boto3.client.
+        # Credentials stay on the default chain; region is only passed when
+        # AWS_REGION / AWS_DEFAULT_REGION is set (see tests below).
         _, kwargs = fake_s3.client_factory.call_args
         assert "region_name" not in kwargs
         assert "aws_access_key_id" not in kwargs
         assert "endpoint_url" not in kwargs
+
+    def test_s3_client_passes_aws_region(self, fake_s3, monkeypatch):
+        monkeypatch.setenv("AWS_REGION", "us-west-2")
+        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+        storage.reset_storage_cache()
+        get_storage()
+        _, kwargs = fake_s3.client_factory.call_args
+        assert kwargs["region_name"] == "us-west-2"
+        assert "aws_access_key_id" not in kwargs
+
+    def test_s3_client_falls_back_to_aws_default_region(self, fake_s3, monkeypatch):
+        monkeypatch.delenv("AWS_REGION", raising=False)
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "eu-west-1")
+        storage.reset_storage_cache()
+        get_storage()
+        _, kwargs = fake_s3.client_factory.call_args
+        assert kwargs["region_name"] == "eu-west-1"
+
+    def test_s3_client_prefers_aws_region_over_default(self, fake_s3, monkeypatch):
+        monkeypatch.setenv("AWS_REGION", "us-east-1")
+        monkeypatch.setenv("AWS_DEFAULT_REGION", "eu-west-1")
+        storage.reset_storage_cache()
+        get_storage()
+        _, kwargs = fake_s3.client_factory.call_args
+        assert kwargs["region_name"] == "us-east-1"
 
     def test_s3_client_is_cached_per_bucket(self, fake_s3, monkeypatch):
         first = get_storage()

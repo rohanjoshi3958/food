@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, ProgrammingError
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -42,6 +43,36 @@ router = APIRouter(prefix="/receipts", tags=["receipts"])
 
 
 MAX_RECEIPTS_PER_USER = 3
+
+# Failures where SQLAlchemy has not committed the transaction. Ambiguous
+# errors (timeouts, dropped connections) may have committed; those need a
+# follow-up existence check before deleting the uploaded object.
+_DEFINITE_RECEIPT_COMMIT_FAILURES = (
+    DataError,
+    IntegrityError,
+    InvalidRequestError,
+    ProgrammingError,
+)
+
+
+def _receipt_row_exists(db: Session, receipt_id: str) -> bool:
+    return (
+        db.query(Receipt.id).filter(Receipt.id == receipt_id).first() is not None
+    )
+
+
+def _cleanup_upload_after_failed_receipt_commit(
+    db: Session,
+    *,
+    receipt_id: str,
+    object_key: str,
+    exc: BaseException,
+) -> None:
+    db.rollback()
+    if isinstance(exc, _DEFINITE_RECEIPT_COMMIT_FAILURES) or not _receipt_row_exists(
+        db, receipt_id
+    ):
+        delete_quietly(object_key)
 
 
 def _delete_receipt_file(receipt: Receipt) -> None:
@@ -285,8 +316,21 @@ async def upload_receipt(
         analysis_status="processing",
     )
     db.add(receipt)
-    db.commit()
-    db.refresh(receipt)
+    try:
+        db.commit()
+        db.refresh(receipt)
+    except Exception as exc:
+        _cleanup_upload_after_failed_receipt_commit(
+            db,
+            receipt_id=receipt.id,
+            object_key=object_key,
+            exc=exc,
+        )
+        logger.exception("Failed to persist receipt %s", object_key)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to store the receipt right now. Please try again.",
+        ) from exc
 
     try:
         parsed = analyze_receipt_image(contents, safe_name)

@@ -6,8 +6,9 @@ the database regardless of backend:
 
 * **S3** (``UPLOADS_BUCKET`` set): objects live in the private uploads bucket
   under those prefixes, matching the IAM policy attached to the App Runner
-  instance role. Region and credentials are resolved by the default AWS SDK
-  chain (``AWS_REGION`` injected by App Runner, instance role credentials).
+  instance role. Credentials stay on the default AWS SDK chain (instance role
+  in prod). Region is taken from ``AWS_REGION`` or ``AWS_DEFAULT_REGION`` (the
+  latter is what boto3 reads on its own) and passed as ``region_name``.
 * **Local disk** (``UPLOADS_BUCKET`` unset): each prefix maps to one of the
   ``*_upload_dir`` settings so ``docker-compose`` / ``npm run dev`` keep working
   without any AWS configuration.
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import os
 import shutil
 import threading
 import uuid
@@ -73,7 +75,7 @@ def safe_filename(name: str | None) -> str:
 
 
 def validate_object_key(key: str) -> str:
-    if not key or key.startswith("/") or key.endswith("/"):
+    if not key or key.startswith("/") or key.endswith("/") or "\\" in key:
         raise InvalidObjectKey(f"Invalid object key: {key!r}")
 
     parts = key.split("/")
@@ -91,7 +93,7 @@ def build_object_key(prefix: str, user_id: str, filename: str | None) -> str:
     """Create a new, unique key: ``<prefix>/<user_id>/<uuid>_<safe filename>``."""
     if prefix not in UPLOAD_PREFIXES:
         raise InvalidObjectKey(f"Unknown upload prefix: {prefix!r}")
-    if not user_id or "/" in user_id:
+    if not user_id or "/" in user_id or "\\" in user_id:
         raise InvalidObjectKey(f"Invalid user id for object key: {user_id!r}")
     return validate_object_key(
         f"{prefix}/{user_id}/{uuid.uuid4().hex}_{safe_filename(filename)}"
@@ -175,7 +177,13 @@ class LocalUploadStorage(UploadStorage):
     def _path(self, key: str) -> Path:
         validate_object_key(key)
         prefix, remainder = key.split("/", 1)
-        return self._roots[prefix] / remainder
+        root = self._roots[prefix].resolve()
+        candidate = (root / remainder).resolve()
+        if not candidate.is_relative_to(root):
+            raise InvalidObjectKey(
+                f"Object key {key!r} resolves outside the {prefix} storage root"
+            )
+        return candidate
 
     def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
         del content_type
@@ -219,12 +227,16 @@ class S3UploadStorage(UploadStorage):
             import boto3
             from botocore.config import Config
 
-            # Region/credentials intentionally come from the default chain:
-            # AWS_REGION (+ instance role) in App Runner, ~/.aws or env locally.
-            client = boto3.client(
-                "s3",
-                config=Config(signature_version="s3v4", retries={"mode": "standard"}),
-            )
+            # Credentials stay on the default chain (instance role in prod).
+            # Region: boto3 reads AWS_DEFAULT_REGION, not AWS_REGION. App Runner
+            # documents AWS_REGION, so pass whichever of the two is set.
+            client_kwargs: dict[str, object] = {
+                "config": Config(signature_version="s3v4", retries={"mode": "standard"}),
+            }
+            region = (os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "").strip()
+            if region:
+                client_kwargs["region_name"] = region
+            client = boto3.client("s3", **client_kwargs)
         self._client = client
 
     @staticmethod
