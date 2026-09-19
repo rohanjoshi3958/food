@@ -642,7 +642,7 @@ def parse_receipt_text(text: str) -> ParseOutcome:
             diagnostics.item_price_sum += line.price
         if line.is_food:
             diagnostics.food_item_count += 1
-            if not line.explicit_quantity and line.unit is None:
+            if not line.explicit_quantity and not line.explicit_unit:
                 diagnostics.missing_qty_unit_count += 1
 
     diagnostics.item_count = len(items)

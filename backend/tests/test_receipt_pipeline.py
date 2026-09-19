@@ -274,7 +274,7 @@ class TestOcrFirstLadder:
 
 class TestModelConstants:
     def test_ladder_models_are_named_constants_not_settings(self):
-        assert RECEIPT_OCR_CLEANUP_MODEL and "haiku" in RECEIPT_OCR_CLEANUP_MODEL
+        assert RECEIPT_OCR_CLEANUP_MODEL == "claude-haiku-4-5"
         assert RECEIPT_OCR_VISION_FALLBACK_MODEL and "sonnet" in RECEIPT_OCR_VISION_FALLBACK_MODEL
         assert RECEIPT_ANTHROPIC_MODEL and "opus" in RECEIPT_ANTHROPIC_MODEL
         for removed in ("receipt_ocr_text_fallback_model", "receipt_ocr_vision_fallback_model"):

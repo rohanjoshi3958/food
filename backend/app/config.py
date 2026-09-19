@@ -13,7 +13,7 @@ MEAL_ANTHROPIC_MODEL = "claude-sonnet-5"
 OPENAI_IMAGE_MODEL = "gpt-image-1"
 # FOOD-55 OCR-first escalation ladder (only used when RECEIPT_OCR_FIRST is on).
 # Soft fail: cheap text model cleans up the Tesseract output.
-RECEIPT_OCR_CLEANUP_MODEL = "claude-haiku-5"
+RECEIPT_OCR_CLEANUP_MODEL = "claude-haiku-4-5"
 # Hard fail: Sonnet vision on the downsampled image instead of the Opus extract.
 RECEIPT_OCR_VISION_FALLBACK_MODEL = "claude-sonnet-5"
 

@@ -122,8 +122,11 @@ class TestLineItems:
         assert outcome.diagnostics.tax == pytest.approx(0.26)
 
     def test_packaged_goods_default_to_one_each(self):
-        item = _by_store_name(parse_receipt_text("MARKET\nKIND BAR 1.99\nTOTAL 1.99\n").receipt)["KIND BAR"]
+        outcome = parse_receipt_text("MARKET\nKIND BAR 1.99\nTOTAL 1.99\n")
+        item = _by_store_name(outcome.receipt)["KIND BAR"]
         assert (item.quantity, item.unit) == ("1", "each")
+        # Inferred 1/each is not receipt evidence; the missing-qty/unit gate must still fire.
+        assert outcome.diagnostics.missing_qty_unit_count == 1
 
     def test_output_is_a_valid_parsed_receipt(self, ocr_receipt_text):
         receipt = parse_receipt_text(ocr_receipt_text).receipt
