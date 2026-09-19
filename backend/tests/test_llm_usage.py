@@ -287,6 +287,17 @@ class TestRoutesAndPipelineSteps:
         assert event.error_type == "RuntimeError"
         assert event.route == ROUTE_OCR
 
+    def test_pipeline_step_records_handled_error_without_reraise(self, sink):
+        with workflow_scope(WORKFLOW_RECEIPT_PARSE):
+            with pipeline_step("receipt_ocr", route=ROUTE_OCR) as ocr:
+                ocr.confidence = 0.0
+                ocr.error = RuntimeError("tesseract missing")
+        [event] = sink.events
+        assert event.status == "error"
+        assert event.error_type == "RuntimeError"
+        assert event.confidence == 0.0
+        assert event.route == ROUTE_OCR
+
     def test_cache_hit_step_with_zero_cost(self, sink):
         with workflow_scope(WORKFLOW_RECEIPT_PARSE):
             event = record_pipeline_step(step="receipt_cache_lookup", route=ROUTE_CACHE, latency_ms=3, confidence=1.0)

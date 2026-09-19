@@ -17,7 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.llm_usage.context import KNOWN_WORKFLOWS
@@ -186,13 +186,18 @@ def load_window(
             .order_by(LlmUsageEvent.created_at.asc())
         )
     )
+    # A run can start before `since` and still emit events inside the window
+    # (long receipt parses, overnight retries). Count those runs so in-window
+    # events are not classified as runless spend.
+    event_run_ids = {event.run_id for event in events if event.run_id}
+    run_filters = [
+        (LlmWorkflowRun.started_at >= since) & (LlmWorkflowRun.started_at < until)
+    ]
+    if event_run_ids:
+        run_filters.append(LlmWorkflowRun.id.in_(event_run_ids))
     runs = {
         run.id: run
-        for run in db.scalars(
-            select(LlmWorkflowRun).where(
-                LlmWorkflowRun.started_at >= since, LlmWorkflowRun.started_at < until
-            )
-        )
+        for run in db.scalars(select(LlmWorkflowRun).where(or_(*run_filters)))
     }
     return events, runs
 

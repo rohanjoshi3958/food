@@ -344,6 +344,50 @@ class TestSevenDayAggregates:
         assert earlier_row["by_workflow"] == {"meal_gen": pytest.approx(0.005)}
         assert sum(row["calls"] for row in summary["daily"]) == 6
 
+    def test_in_window_events_include_runs_that_started_before_the_window(
+        self, client, test_db, auth_headers
+    ):
+        now = datetime(2026, 9, 15, 12, 30, tzinfo=UTC)
+        recent = now - timedelta(minutes=5)
+        _seed_run(
+            test_db,
+            "run-straddle",
+            "meal_gen",
+            "succeeded",
+            started_at=now - timedelta(days=8),
+        )
+        _seed_event(
+            test_db,
+            run_id="run-straddle",
+            created_at=recent,
+            uncached_input_tokens=1000,
+            output_tokens=500,
+            estimated_cost_usd=0.01,
+        )
+        _seed_run(
+            test_db,
+            "run-old",
+            "meal_gen",
+            "succeeded",
+            started_at=now - timedelta(days=10),
+        )
+        _seed_event(
+            test_db,
+            run_id="run-old",
+            created_at=now - timedelta(days=10),
+            estimated_cost_usd=99.0,
+        )
+
+        with patch("app.llm_usage.aggregates.utcnow", return_value=now):
+            summary = client.get("/api/metrics/llm/summary?days=7", headers=auth_headers).json()
+
+        meal = next(row for row in summary["workflows"] if row["workflow"] == "meal_gen")
+        assert meal["calls"] == 1
+        assert meal["runs"] == 1
+        assert meal["successful_runs"] == 1
+        assert meal["cost_per_successful_run_usd"] == pytest.approx(0.01)
+        assert meal["cost_outside_runs_usd"] == 0.0
+
     def test_route_share_and_confidence_are_exposed(self, client, test_db, auth_headers):
         """FOOD-55 schema: ocr/cache steps sit next to Claude calls in the same run."""
         _seed_run(test_db, "r-ocr", "receipt_parse", "succeeded")

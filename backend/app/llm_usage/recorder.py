@@ -560,6 +560,11 @@ class PipelineStep:
     provider: str = PROVIDER_LOCAL
     usage: TokenUsage | None = None
     attempt: int = 1
+    # Set this when the step caught and handled an execution failure (e.g. the
+    # OCR binary is missing) so the event is recorded as status="error" even
+    # though nothing propagated. A normal negative outcome (a gate rejecting
+    # low-confidence output) is *not* an error.
+    error: BaseException | None = None
 
 
 @contextmanager
@@ -571,6 +576,9 @@ def pipeline_step(step: str, *, route: str | None = None, attempt: int = 1) -> I
         with pipeline_step("receipt_ocr", route=ROUTE_OCR) as ocr:
             text, score = run_ocr(image)
             ocr.confidence = score
+
+    Exceptions escaping the block are recorded and re-raised; failures the
+    block handled itself can be reported via ``handle.error``.
     """
     handle = PipelineStep(step=step, route=route, attempt=attempt)
     started = time.perf_counter()
@@ -593,6 +601,7 @@ def pipeline_step(step: str, *, route: str | None = None, attempt: int = 1) -> I
         step=handle.step,
         route=handle.route,
         latency_ms=int((time.perf_counter() - started) * 1000),
+        error=handle.error,
         confidence=handle.confidence,
         model=handle.model,
         provider=handle.provider,

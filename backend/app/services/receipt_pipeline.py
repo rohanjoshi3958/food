@@ -25,6 +25,7 @@ from app.config import (
     RECEIPT_OCR_VISION_FALLBACK_MODEL,
     settings,
 )
+from app.llm_usage import ROUTE_CACHE, ROUTE_OCR, pipeline_step, record_pipeline_step
 from app.models import Receipt
 from app.services.receipt_analyzer import (
     ParsedReceipt,
@@ -120,19 +121,25 @@ def _run_ocr(contents: bytes) -> OcrResult:
     return run_tesseract(image)
 
 
-def _ocr_rung(contents: bytes) -> tuple[ParsedReceipt | None, GateDecision, OcrResult | None]:
-    """Tesseract -> rules -> gates. Never raises; a failure is a failed gate."""
+def _ocr_rung(
+    contents: bytes,
+) -> tuple[ParsedReceipt | None, GateDecision, OcrResult | None, Exception | None]:
+    """Tesseract -> rules -> gates. Never raises; a failure is a failed gate.
+
+    The fourth element is the execution error that was swallowed (OCR
+    unavailable, parser crash), or None when OCR ran and the gates decided.
+    """
     try:
         ocr = _run_ocr(contents)
     except OcrUnavailableError as exc:
         logger.info("OCR unavailable, escalating: %s", exc)
-        return None, GateDecision(passed=False, confidence=0.0, reasons=["ocr_unavailable"]), None
+        return None, GateDecision(passed=False, confidence=0.0, reasons=["ocr_unavailable"]), None, exc
 
     try:
         outcome = parse_receipt_text(ocr.text)
     except Exception as exc:  # parser bugs must escalate, not 500
         logger.exception("Receipt parser failed")
-        return None, GateDecision(passed=False, confidence=0.0, reasons=["schema_invalid"], notes=[str(exc)]), ocr
+        return None, GateDecision(passed=False, confidence=0.0, reasons=["schema_invalid"], notes=[str(exc)]), ocr, exc
 
     decision = evaluate_ocr_gates(
         outcome.receipt,
@@ -142,7 +149,7 @@ def _ocr_rung(contents: bytes) -> tuple[ParsedReceipt | None, GateDecision, OcrR
         max_missing_qty_unit_ratio=settings.receipt_ocr_max_missing_qty_unit_ratio,
         totals_tolerance=settings.receipt_ocr_totals_tolerance,
     )
-    return outcome.receipt, decision, ocr
+    return outcome.receipt, decision, ocr, None
 
 
 def _llm_rung_ok(parsed: ParsedReceipt) -> list[str]:
@@ -171,7 +178,16 @@ def extract_ocr_first(
     escalations: list[str] = []
     gate_reasons: list[str] = []
 
+<<<<<<< HEAD
     parsed, decision, ocr = _ocr_rung(contents)
+=======
+    # FOOD-54: the OCR rung is a non-Claude step; report it into the same
+    # usage table as the LLM rungs so the dashboard shows the route mix.
+    with pipeline_step("receipt_ocr", route=ROUTE_OCR) as ocr_step:
+        parsed, decision, ocr, ocr_error = _ocr_rung(contents)
+        ocr_step.confidence = decision.confidence
+        ocr_step.error = ocr_error  # a rejected gate is not an error; a crashed OCR/parser is
+>>>>>>> be54374 (fix(llm-usage): count straddling runs and OCR execution errors)
     ocr_confidence = ocr.confidence if ocr else None
     if parsed is not None and decision.passed:
         return ReceiptAnalysisOutcome(
