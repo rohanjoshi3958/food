@@ -58,8 +58,11 @@ _CACHEABLE_STATUSES = ("pending_review", "completed", "cancelled")
 class ReceiptAnalysisOutcome:
     """Result of one extraction plus the structured fields FOOD-54 will export.
 
-    Nothing here is emitted anywhere yet; the metrics helper from Metrics eng
-    is the single wire-up point (see the TODO in routers/receipts.py).
+    Metrics (FOOD-54): the upload route wraps ``analyze_receipt`` in a
+    ``receipt_parse`` workflow run. Claude rungs record usage events through
+    ``create_cached_message``; the OCR rung and cache hits report via
+    ``app.llm_usage.pipeline_step`` / ``record_pipeline_step`` with their
+    ``route`` and ``confidence``.
     """
 
     parsed: ParsedReceipt
@@ -178,16 +181,12 @@ def extract_ocr_first(
     escalations: list[str] = []
     gate_reasons: list[str] = []
 
-<<<<<<< HEAD
-    parsed, decision, ocr = _ocr_rung(contents)
-=======
     # FOOD-54: the OCR rung is a non-Claude step; report it into the same
     # usage table as the LLM rungs so the dashboard shows the route mix.
     with pipeline_step("receipt_ocr", route=ROUTE_OCR) as ocr_step:
         parsed, decision, ocr, ocr_error = _ocr_rung(contents)
         ocr_step.confidence = decision.confidence
         ocr_step.error = ocr_error  # a rejected gate is not an error; a crashed OCR/parser is
->>>>>>> be54374 (fix(llm-usage): count straddling runs and OCR execution errors)
     ocr_confidence = ocr.confidence if ocr else None
     if parsed is not None and decision.passed:
         return ReceiptAnalysisOutcome(
@@ -268,6 +267,12 @@ def analyze_receipt(
     if settings.receipt_analysis_cache:
         cached = find_cached_analysis(db, user_id, digest, exclude_receipt_id=receipt_id)
         if cached is not None:
+            record_pipeline_step(
+                step="receipt_cache_hit",
+                route=ROUTE_CACHE,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                confidence=1.0,
+            )
             return ReceiptAnalysisOutcome(
                 parsed=cached,
                 path=PATH_CACHE,
