@@ -68,10 +68,16 @@ receipt → Claude-shaped response (mocked) → review → confirm → inventory
 
 Test cases:
 
-1. **`test_complete_receipt_flow`** — upload, review, confirm, verify inventory
+1. **`test_complete_receipt_flow`** — upload (202 `processing`), poll until `pending_review`, review, confirm, verify inventory
 2. **`test_receipt_cancellation`** — cancel before confirm, no ingredients created
 3. **`test_receipt_with_item_removal`** — remove items during review
 4. **`test_multiple_receipts_flow`** — sequential receipt processing
+
+`TestAsyncReceiptAnalysis` covers the accept → job id → poll contract: upload
+returns before analysis runs, `GET /api/receipts/{id}` reports
+`analysis_stage` progress and the final result, failures surface as `failed`
+with `analysis_error`, stale `processing` receipts time out on poll, and late
+results are dropped for receipts the user already discarded.
 
 Key features:
 

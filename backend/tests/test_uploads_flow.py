@@ -83,9 +83,11 @@ class TestS3Mode:
             headers=auth_headers,
         )
 
-        assert response.status_code == 201, response.text
+        assert response.status_code == 202, response.text
         payload = response.json()
         key = payload["filename"]
+        assert payload["analysis_status"] == "processing"
+        assert payload["analysis_stage"] == "queued"
         assert re.fullmatch(rf"receipts/{test_user.id}/{HEX32}_My Receipt\.jpg", key)
         assert payload["original_name"] == "My Receipt.jpg"
 
@@ -99,9 +101,13 @@ class TestS3Mode:
         assert not fake_s3.local_root.exists()
 
         # Claude received the uploaded bytes without a round-trip to disk.
+        # The FOOD-59 background job must read them back through UploadStorage.
         first_call = mock_client.messages.create.call_args_list[0]
         image_block = first_call.kwargs["messages"][0]["content"][0]
         assert image_block["source"]["media_type"] == "image/jpeg"
+        assert any(
+            call[0] == "get_object" and call[1]["Key"] == key for call in fake_s3.calls
+        )
 
         # Discarding the pending review removes the object from the bucket.
         assert client.post("/api/receipts/discard-pending", headers=auth_headers).status_code == 204
@@ -273,7 +279,8 @@ class TestLocalFallback:
             headers=auth_headers,
         )
 
-        assert response.status_code == 201, response.text
+        assert response.status_code == 202, response.text
+        assert response.json()["analysis_status"] == "processing"
         key = response.json()["filename"]
         assert key.startswith(f"receipts/{test_user.id}/")
         stored = local_uploads["receipts"] / test_user.id / key.rsplit("/", 1)[-1]

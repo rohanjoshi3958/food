@@ -179,13 +179,13 @@ FOOD-51 infra acceptance:
 
 ## Notes for FOOD-48 — Next.js `/api/*` → App Runner
 
-`next.config.ts` currently rewrites `/api/:path*` to `http://localhost:8000`. Terraform gives the Amplify **production branch** a **`BACKEND_URL`** environment variable (custom API domain if set, otherwise the App Runner URL; see output `backend_url`). The build spec also copies `BACKEND_URL` and `NEXT_PUBLIC_*` into `.env.production` so they are available to SSR at runtime, not just at build.
+`next.config.ts` rewrites `/api/:path*` to `${BACKEND_URL}/api/:path*`, defaulting to `http://localhost:8000` when the variable is unset (local dev). A trailing slash on `BACKEND_URL` is tolerated. Terraform gives the Amplify **production branch** a **`BACKEND_URL`** environment variable (custom API domain if set, otherwise the App Runner URL; see output `backend_url`). The build spec also copies `BACKEND_URL` and `NEXT_PUBLIC_*` into `.env.production` so they are available to SSR at runtime, not just at build.
 
 `BACKEND_URL` lives on the branch rather than the app deliberately: the App Runner service reads the Amplify *app's* default domain for `CORS_ORIGINS`/`FRONTEND_URL`, so the dependency chain is `aws_amplify_app → aws_apprunner_service → aws_amplify_branch`. Anything that would make the Amplify **app** depend on App Runner (app-level env vars, custom rules) would create a cycle — which is why the edge rewrite below requires a statically known `backend_custom_domain`.
 
 **Rule of thumb:** the Amplify rewrite is fine for short CRUD calls. **Long AI work must not rely on the Amplify SSR proxy** — it goes through async jobs (see FOOD-51 above), so every request that passes through Amplify is a quick enqueue or a status poll.
 
-- **Option A (recommended) — Next.js rewrite driven by env:**
+- **Option A (implemented in `next.config.ts`) — Next.js rewrite driven by env:**
   ```ts
   const backend = process.env.BACKEND_URL ?? "http://localhost:8000";
   rewrites: async () => [{ source: "/api/:path*", destination: `${backend}/api/:path*` }]

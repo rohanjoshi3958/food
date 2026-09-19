@@ -62,6 +62,8 @@ FRONTEND_URL="http://localhost:3000"
 
 `RESEND_API_KEY` is used to email password-reset links. For local development you can use Resend’s `onboarding@resend.dev` sender (`EMAIL_FROM`); messages only deliver to addresses verified in your Resend account. If `RESEND_API_KEY` is unset, the reset URL is logged in the API console instead of being emailed.
 
+`BACKEND_URL` (optional) is the base URL that Next.js proxies `/api/*` to (see `next.config.ts`). It defaults to `http://localhost:8000`, the local FastAPI dev server, so you do not need to set it for local development. In production the Amplify branch sets it to the App Runner (or custom API domain) URL provisioned by Terraform in `infra/`. It is read at build/server start, not in the browser, so it must not be prefixed with `NEXT_PUBLIC_`.
+
 Receipt analysis uses Claude Opus; meal generation uses Claude Sonnet 5; meal images use OpenAI `gpt-image-1`.
 
 ### Upload storage (receipts, meal photos, cookbook photos)

@@ -120,6 +120,7 @@ class ReceiptResponse(BaseModel):
     filename: str
     store_name: str | None = None
     analysis_status: str
+    analysis_stage: str | None = None
     analysis_error: str | None = None
     uploaded_at: datetime
     ingredients: list[IngredientResponse] = Field(default_factory=list)
