@@ -159,9 +159,14 @@ def _per(value: float, count: int, digits: int = 6) -> float | None:
     return round(value / count, digits)
 
 
+def utcnow() -> datetime:
+    """Aggregation clock; a single seam so tests can pin the window."""
+    return datetime.now(UTC)
+
+
 def window_bounds(days: int) -> tuple[datetime, datetime]:
     days = max(1, min(int(days), MAX_WINDOW_DAYS))
-    until = datetime.now(UTC)
+    until = utcnow()
     return until - timedelta(days=days), until
 
 

@@ -254,6 +254,19 @@ class TestPersistenceThroughProductFlows:
 
 class TestSevenDayAggregates:
     def test_answers_cost_and_tokens_per_successful_workflow(self, client, test_db, auth_headers):
+        # One fixed clock for every seeded timestamp and for the aggregation
+        # window, so the test cannot straddle UTC midnight.
+        now = datetime(2026, 9, 15, 12, 30, tzinfo=UTC)
+        recent = now - timedelta(minutes=5)  # the window's `until` is exclusive
+
+        def _seed_event(db, **overrides):
+            overrides.setdefault("created_at", recent)
+            return globals()["_seed_event"](db, **overrides)
+
+        def _seed_run(db, run_id, workflow, status, **overrides):
+            overrides.setdefault("started_at", recent)
+            return globals()["_seed_run"](db, run_id, workflow, status, **overrides)
+
         # meal_gen: two runs, one succeeded (with a retry), one failed.
         _seed_run(test_db, "run-ok", "meal_gen", "succeeded")
         _seed_run(test_db, "run-fail", "meal_gen", "failed", error_type="MealGenerationError")
@@ -270,11 +283,12 @@ class TestSevenDayAggregates:
             approx_visual_tokens=1500, estimated_cost_usd=0.02,
         )
         # Stale event outside the window must be ignored.
-        _seed_event(test_db, created_at=datetime.now(UTC) - timedelta(days=10), estimated_cost_usd=99.0)
+        _seed_event(test_db, created_at=now - timedelta(days=10), estimated_cost_usd=99.0)
         # In-window event on an earlier day pins the daily grouping key (run-less meal_gen spend).
-        _seed_event(test_db, created_at=datetime.now(UTC) - timedelta(days=2), estimated_cost_usd=0.005)
+        _seed_event(test_db, created_at=now - timedelta(days=2), estimated_cost_usd=0.005)
 
-        summary = client.get("/api/metrics/llm/summary?days=7", headers=auth_headers).json()
+        with patch("app.llm_usage.aggregates.utcnow", return_value=now):
+            summary = client.get("/api/metrics/llm/summary?days=7", headers=auth_headers).json()
 
         assert summary["window"]["days"] == 7
         totals = summary["totals"]
@@ -319,8 +333,8 @@ class TestSevenDayAggregates:
 
         # A 7-day trailing window spans 8 calendar dates (partial first and last day).
         assert len(summary["daily"]) == 8
-        today = datetime.now(UTC).date().isoformat()
-        earlier = (datetime.now(UTC) - timedelta(days=2)).date().isoformat()
+        today = now.date().isoformat()
+        earlier = (now - timedelta(days=2)).date().isoformat()
         today_row = next(row for row in summary["daily"] if row["date"] == today)
         assert today_row["calls"] == 5
         assert today_row["by_workflow"]["receipt_parse"] == pytest.approx(0.02)
