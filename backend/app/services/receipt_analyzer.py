@@ -12,7 +12,7 @@ from app.config import RECEIPT_ANTHROPIC_MODEL, settings
 from app.services.anthropic_cache import create_cached_message
 
 
-def _anthropic_error_message(exc: Exception) -> str:
+def _anthropic_error_message(exc: Exception, model: str) -> str:
     response = getattr(exc, "response", None)
     if response is not None:
         try:
@@ -27,7 +27,7 @@ def _anthropic_error_message(exc: Exception) -> str:
     message = str(exc)
     if "not_found_error" in message or "model:" in message:
         return (
-            f"The Anthropic model ({RECEIPT_ANTHROPIC_MODEL}) is unavailable. "
+            f"The Anthropic model ({model}) is unavailable. "
             "Receipt analysis failed."
         )
 
@@ -518,7 +518,7 @@ def _run_receipt_extraction(
             messages=[{"role": "user", "content": user_content}],
         )
     except anthropic.APIError as exc:
-        raise ReceiptAnalysisError(_anthropic_error_message(exc)) from exc
+        raise ReceiptAnalysisError(_anthropic_error_message(exc, model)) from exc
 
     text_blocks = [block.text for block in message.content if block.type == "text"]
     if not text_blocks:

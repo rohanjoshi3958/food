@@ -153,6 +153,24 @@ class TestDiagnostics:
         assert diag.missing_qty_unit_count == 1
         assert diag.missing_qty_unit_ratio == pytest.approx(0.5)
 
+    def test_inferred_defaults_count_as_missing_qty_unit(self):
+        """Inferred 1/each is not receipt evidence; it must not satisfy the gate."""
+        outcome = parse_receipt_text("MARKET\nKIND BAR 1.99\nGRND BF 80/20 6.97\nTOTAL 8.96\n")
+        assert outcome.diagnostics.food_item_count == 2
+        assert outcome.diagnostics.missing_qty_unit_count == 2
+        assert outcome.diagnostics.missing_qty_unit_ratio == pytest.approx(1.0)
+
+    def test_explicit_quantity_does_not_count_as_missing_even_if_unit_inferred(self):
+        outcome = parse_receipt_text(WALMART_TEXT)
+        items = {line.store_item_name: line for line in outcome.lines}
+        # KIND BAR "2 @" is printed; GRND BF has no qty/unit on the receipt.
+        assert items["KIND BAR"].explicit_quantity is True
+        assert items["GRND BF 80/20"].explicit_quantity is False
+        assert items["GRND BF 80/20"].explicit_unit is False
+        assert items["GRND BF 80/20"].unit == "each"
+        assert outcome.diagnostics.food_item_count == 4
+        assert outcome.diagnostics.missing_qty_unit_count == 1
+
     def test_garbage_text_yields_zero_items(self):
         outcome = parse_receipt_text("~~~ !! ##\n1lI|\nsdfg 2\n")
         assert outcome.receipt.items == []

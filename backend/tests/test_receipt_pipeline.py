@@ -327,6 +327,38 @@ class TestExtractors:
         assert content[0]["source"]["media_type"] == "application/pdf"
         assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
 
+    def test_unavailable_model_message_uses_requested_model(self):
+        from app.config import RECEIPT_ANTHROPIC_MODEL
+        from app.services.receipt_analyzer import _anthropic_error_message
+
+        haiku = _anthropic_error_message(Exception("not_found_error: model: claude-haiku-5"), "claude-haiku-5")
+        sonnet = _anthropic_error_message(Exception("model: claude-sonnet-5"), "claude-sonnet-5")
+        assert "claude-haiku-5" in haiku
+        assert "claude-sonnet-5" in sonnet
+        assert RECEIPT_ANTHROPIC_MODEL not in haiku
+        assert RECEIPT_ANTHROPIC_MODEL not in sonnet
+
+    @patch("app.services.receipt_analyzer.anthropic.Anthropic")
+    def test_extract_receipt_text_unavailable_model_names_requested_model(
+        self, mock_anthropic_class, flags
+    ):
+        import anthropic
+        import httpx
+
+        mock_client = Mock()
+        mock_anthropic_class.return_value = mock_client
+        mock_client.messages.create.side_effect = anthropic.APIError(
+            "404 not_found_error: model: claude-haiku-test",
+            httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+            body=None,
+        )
+        from app.config import RECEIPT_ANTHROPIC_MODEL
+        from app.services.receipt_analyzer import extract_receipt_text
+
+        with pytest.raises(ReceiptAnalysisError, match="claude-haiku-test") as exc_info:
+            extract_receipt_text("MILK 3.49", model="claude-haiku-test")
+        assert RECEIPT_ANTHROPIC_MODEL not in str(exc_info.value)
+
 
 class TestOutcomeFields:
     """The structured fields FOOD-54's metrics helper will read off the outcome."""

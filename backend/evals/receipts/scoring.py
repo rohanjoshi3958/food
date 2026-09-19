@@ -327,7 +327,8 @@ def compare(
 ) -> Verdict:
     """Ship bar: item F1 within ``f1_margin`` of baseline, no smoke failures.
     Cheaper-but-worse is a FAIL regardless of $/parse. ``strict`` also fails
-    on skipped cases and on a missing baseline (use it for the real gate)."""
+    on skipped cases, an incomplete baseline, and a missing baseline
+    (use it for the real gate)."""
     reasons: list[str] = []
     if baseline is not None:
         floor = baseline.micro_f1 - f1_margin
@@ -335,6 +336,11 @@ def compare(
             reasons.append(
                 f"item F1 {candidate.micro_f1:.3f} below baseline floor {floor:.3f} "
                 f"(baseline {baseline.micro_f1:.3f} - {f1_margin:.2f}); cheaper-but-worse"
+            )
+        if strict and baseline.skipped:
+            reasons.append(
+                "baseline has unscored cases: "
+                + ", ".join(f"{case_id} ({why})" for case_id, why in baseline.skipped)
             )
     elif strict:
         reasons.append("no baseline run supplied; F1 bar cannot be enforced")

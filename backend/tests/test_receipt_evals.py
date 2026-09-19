@@ -154,3 +154,24 @@ class TestScoring:
         assert verdict.passed is False
         assert any("baseline" in r for r in verdict.reasons)
         assert any("unscored" in r for r in verdict.reasons)
+
+    def test_strict_rejects_incomplete_baseline(self):
+        manifest = [{"id": "a"}, {"id": "b"}]
+        labels = {"a": _label("Milk"), "b": _label("Eggs")}
+        candidate = score_run(
+            {"a": _pred("Milk"), "b": _pred("Eggs")},
+            labels,
+            manifest,
+        )
+        baseline = score_run(
+            {"a": _pred("Milk", path="opus_baseline")},
+            labels,
+            manifest,
+        )
+        assert baseline.skipped and baseline.skipped[0][0] == "b"
+        advisory = compare(candidate, baseline)
+        assert advisory.passed is True
+        verdict = compare(candidate, baseline, strict=True)
+        assert verdict.passed is False
+        assert any("baseline has unscored cases" in reason for reason in verdict.reasons)
+        assert "b (" in verdict.reasons[-1]
