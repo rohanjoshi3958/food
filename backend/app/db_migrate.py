@@ -69,6 +69,7 @@ MIGRATIONS = [
     # FOOD-54: Claude usage instrumentation. Tables are created by
     # Base.metadata.create_all; these composite indexes back the dashboard's
     # time-window aggregates.
+    "ALTER TABLE llm_usage_events ADD COLUMN IF NOT EXISTS call_site VARCHAR",
     "ALTER TABLE llm_usage_events ADD COLUMN IF NOT EXISTS route VARCHAR",
     "ALTER TABLE llm_usage_events ADD COLUMN IF NOT EXISTS confidence DOUBLE PRECISION",
     "CREATE INDEX IF NOT EXISTS ix_llm_usage_events_workflow_created_at ON llm_usage_events (workflow, created_at)",

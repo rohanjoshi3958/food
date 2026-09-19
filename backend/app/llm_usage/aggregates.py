@@ -386,6 +386,7 @@ def event_to_dict(event: LlmUsageEvent) -> dict:
         "created_at": _as_utc(event.created_at).isoformat(),
         "workflow": event.workflow,
         "step": event.step,
+        "call_site": event.call_site,
         "run_id": event.run_id,
         "attempt": event.attempt,
         "model": event.model,

@@ -79,6 +79,7 @@ export type UsageEvent = {
   created_at: string;
   workflow: string;
   step: string;
+  call_site: string | null;
   run_id: string | null;
   attempt: number;
   model: string;

@@ -399,7 +399,13 @@ class TestCallSitesAreInstrumented:
             receipt_analyzer.estimate_ingredient_nutrition("banana", "1", "each")
 
         assert [event.step for event in sink.events] == ["unit_check", "pantry_match", "nutrition_estimate"]
-        assert all(event.workflow == WORKFLOW_INGREDIENT_NORMALIZE for event in sink.events)
+        assert [event.call_site for event in sink.events] == [
+            "receipt.unit_check", "receipt.pantry_match", "receipt.nutrition_estimate",
+        ]
+        # Label follows the call_site mapping, not the enclosing scope.
+        assert [event.workflow for event in sink.events] == [
+            WORKFLOW_RECEIPT_PARSE, WORKFLOW_INGREDIENT_NORMALIZE, WORKFLOW_RECEIPT_PARSE,
+        ]
         assert all(event.model == "claude-opus-5" for event in sink.events)
 
     @patch("app.services.receipt_analyzer.anthropic.Anthropic")

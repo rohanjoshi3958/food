@@ -63,6 +63,7 @@ class UsageEvent:
     model: str
     status: str
     latency_ms: int
+    call_site: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     run_id: str | None = None
     attempt: int = 1
@@ -492,6 +493,8 @@ def build_event(
     run: WorkflowRun | None = None,
     attempt: int = 1,
     route: str | None = None,
+    call_site: str | None = None,
+    workflow: str | None = None,
 ) -> UsageEvent:
     model = _as_str(request_kwargs.get("model")) or _as_str(_field(message, "model")) or "unknown"
     usage = (
@@ -508,11 +511,12 @@ def build_event(
     usage_obj = _field(message, "usage") if error is None else None
 
     return UsageEvent(
-        workflow=run.workflow if run else WORKFLOW_UNATTRIBUTED,
+        workflow=workflow or (run.workflow if run else WORKFLOW_UNATTRIBUTED),
         step=step,
         model=model,
         status="ok" if error is None else "error",
         latency_ms=latency_ms,
+        call_site=call_site,
         run_id=run.run_id if run else None,
         attempt=attempt,
         route=route or route_for_model(model),
@@ -550,6 +554,8 @@ def create_message(
     step: str,
     attempt: int = 1,
     route: str | None = None,
+    call_site: str | None = None,
+    workflow: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """``client.messages.create(**kwargs)`` plus usage/cost recording.
@@ -564,6 +570,13 @@ def create_message(
 
     ``route`` defaults to the model family (``opus`` / ``sonnet`` / ``haiku``);
     pass it explicitly when a call is part of a tiered pipeline.
+
+    ``call_site`` is the LLM platform's fine-grained id (stored verbatim) and
+    ``workflow`` the aggregate FOOD-54 label; when ``workflow`` is given it is
+    authoritative, otherwise the active ``workflow_scope`` (or
+    ``unattributed``) is used. Production code reaches this through
+    ``app.services.anthropic_cache.create_cached_message`` so caching and
+    metrics share one path.
     """
     run = current_run()
     if run is not None:
@@ -582,6 +595,8 @@ def create_message(
             run=run,
             attempt=attempt,
             route=route,
+            call_site=call_site,
+            workflow=workflow,
         )
         raise
 
@@ -595,6 +610,8 @@ def create_message(
         run=run,
         attempt=attempt,
         route=route,
+        call_site=call_site,
+        workflow=workflow,
     )
     return message
 
@@ -611,6 +628,8 @@ def record_pipeline_step(
     provider: str = PROVIDER_LOCAL,
     usage: TokenUsage | None = None,
     attempt: int = 1,
+    call_site: str | None = None,
+    workflow: str | None = None,
 ) -> UsageEvent | None:
     """Record a non-Claude pipeline step (OCR pass, cache hit, rules) as an event.
 
@@ -626,8 +645,9 @@ def record_pipeline_step(
         token_usage = usage or TokenUsage()
         cost = estimate_cost(model, token_usage) if model else None
         event = UsageEvent(
-            workflow=run.workflow if run else WORKFLOW_UNATTRIBUTED,
+            workflow=workflow or (run.workflow if run else WORKFLOW_UNATTRIBUTED),
             step=step,
+            call_site=call_site,
             model=model or (route or "none"),
             status="error" if error is not None else status,
             latency_ms=max(int(latency_ms), 0),

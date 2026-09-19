@@ -216,11 +216,24 @@ class TestPersistenceThroughProductFlows:
 
         events = test_db.query(LlmUsageEvent).order_by(LlmUsageEvent.created_at).all()
         assert [event.step for event in events] == ["unit_check", "nutrition_estimate", "pantry_match"]
-        assert all(event.workflow == "ingredient_normalize" for event in events)
+        assert [event.call_site for event in events] == [
+            "receipt.unit_check", "receipt.nutrition_estimate", "receipt.pantry_match",
+        ]
+        # call_site -> workflow_id mapping is authoritative for the aggregate label...
+        assert [event.workflow for event in events] == ["receipt_parse", "receipt_parse", "ingredient_normalize"]
         [run] = test_db.query(LlmWorkflowRun).all()
         assert run.workflow == "ingredient_normalize"
         assert run.status == "succeeded"
         assert run.user_id == test_user.id
+        # ...while every call in the run still counts toward the run's cost.
+        assert all(event.run_id == run.id for event in events)
+        summary = client.get("/api/metrics/llm/summary").json()
+        normalize = next(r for r in summary["workflows"] if r["workflow"] == "ingredient_normalize")
+        assert normalize["successful_runs"] == 1
+        assert normalize["cost_per_successful_run_usd"] == pytest.approx(
+            sum(event.estimated_cost_usd for event in events), abs=1e-9
+        )
+        assert normalize["calls"] == 1  # only pantry_match carries the normalize label
 
     @patch("app.services.receipt_analyzer._get_client")
     def test_live_unit_check_counts_spend_but_not_a_run(self, mock_get_client, client, test_db, auth_headers):
@@ -239,13 +252,14 @@ class TestPersistenceThroughProductFlows:
         assert response.json()["warning"] == "Use lb."
 
         [event] = test_db.query(LlmUsageEvent).all()
-        assert event.workflow == "ingredient_normalize"
+        assert event.call_site == "receipt.unit_check"
+        assert event.workflow == "receipt_parse"
         assert event.step == "unit_check"
         assert event.run_id is None
         assert test_db.query(LlmWorkflowRun).count() == 0
 
         summary = client.get("/api/metrics/llm/summary").json()
-        row = next(r for r in summary["workflows"] if r["workflow"] == "ingredient_normalize")
+        row = next(r for r in summary["workflows"] if r["workflow"] == "receipt_parse")
         assert row["calls"] == 1
         assert row["runs"] == 0
         assert row["cost_outside_runs_usd"] == pytest.approx(event.estimated_cost_usd, abs=1e-9)

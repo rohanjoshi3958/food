@@ -210,6 +210,9 @@ class LlmUsageEvent(Base):
     )
     workflow: Mapped[str] = mapped_column(String, nullable=False, index=True)
     step: Mapped[str] = mapped_column(String, nullable=False)
+    # LLM platform's fine-grained id (e.g. "receipt.unit_check"); workflow is
+    # the aggregate label derived from it (see anthropic_cache.CALL_SITE_WORKFLOWS).
+    call_site: Mapped[str | None] = mapped_column(String, nullable=True)
     run_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     provider: Mapped[str] = mapped_column(String, nullable=False, default="anthropic")

@@ -375,7 +375,7 @@ function EventsTable({ events }: { events: UsageEvent[] }) {
               <td className={td} title={event.created_at}>
                 {new Date(event.created_at).toLocaleTimeString()}
               </td>
-              <td className={td}>
+              <td className={td} title={event.call_site ?? undefined}>
                 <span className="font-medium">{workflowLabel(event.workflow)}</span>
                 <span className="text-stone-400"> / {event.step}</span>
                 {event.attempt > 1 ? (

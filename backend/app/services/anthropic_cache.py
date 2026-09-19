@@ -7,9 +7,12 @@ pantry snapshots, ingredient lists, images, conversation turns) stays in
 ``messages`` after the cache breakpoint.
 
 See ``backend/PROMPT_CACHING.md`` for what must never sit before the
-breakpoint. This module deliberately does not build a metrics/cost pipeline;
-it only logs the usage counters Anthropic returns so cache hits can be
-verified (FOOD-54 owns anything beyond that and can wrap this one call path).
+breakpoint. This module logs the raw usage counters Anthropic returns so
+cache hits can be verified (FOOD-56); the per-workflow token/cost events
+behind the ops dashboard (FOOD-54) are recorded by :mod:`app.llm_usage`,
+which wraps this one interactive call path so there is no parallel metrics
+pipeline. Batch construction (FOOD-57) uses :func:`build_cached_message_params`
+with ``cache_ttl="1h"`` instead of :func:`create_cached_message`.
 """
 
 from __future__ import annotations
@@ -17,7 +20,40 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.llm_usage import (
+    WORKFLOW_INGREDIENT_NORMALIZE,
+    WORKFLOW_MEAL_GEN,
+    WORKFLOW_RECEIPT_PARSE,
+    create_message,
+)
+
 logger = logging.getLogger(__name__)
+
+# call_site (fine-grained, owned by the LLM platform) → (workflow_id, step).
+#
+# ``workflow_id`` is the FOOD-54 aggregate label and is authoritative for a
+# known call_site regardless of which router scope is active, so "cost of a
+# receipt parse" always means the same set of call sites. The active
+# ``app.llm_usage.workflow_scope`` still supplies run attribution (run_id,
+# user / receipt / meal ids) so per-run costs include every call in the run.
+CALL_SITE_WORKFLOWS: dict[str, tuple[str, str]] = {
+    "receipt.analyze_image": (WORKFLOW_RECEIPT_PARSE, "receipt_scan"),
+    "receipt.nutrition_estimate": (WORKFLOW_RECEIPT_PARSE, "nutrition_estimate"),
+    "receipt.unit_check": (WORKFLOW_RECEIPT_PARSE, "unit_check"),
+    # FOOD-55 OCR-first: Haiku cleanup of OCR text (vision fallback reuses receipt.analyze_image).
+    "receipt.ocr_text_cleanup": (WORKFLOW_RECEIPT_PARSE, "ocr_text_cleanup"),
+    "receipt.pantry_match": (WORKFLOW_INGREDIENT_NORMALIZE, "pantry_match"),
+    "meal.generate": (WORKFLOW_MEAL_GEN, "meal_generate"),
+    "meal.image_prompt": (WORKFLOW_MEAL_GEN, "image_prompt"),
+}
+
+
+def workflow_for_call_site(call_site: str) -> tuple[str | None, str]:
+    """Return ``(workflow_id, step)``; unknown call sites keep their name as step."""
+    mapped = CALL_SITE_WORKFLOWS.get(call_site)
+    if mapped is None:
+        return None, call_site
+    return mapped
 
 # Only "ephemeral" exists today. Interactive receipt / meal flows omit ``ttl``
 # so Anthropic's default 5-minute window applies (bursts of per-line / retry
@@ -161,6 +197,8 @@ def create_cached_message(
     system_prefix: str,
     messages: list[dict[str, Any]],
     cache_ttl: str | None = None,
+    attempt: int = 1,
+    route: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """Call ``client.messages.create`` with ``system_prefix`` as the cached block.
@@ -170,8 +208,20 @@ def create_cached_message(
     Interactive callers leave ``cache_ttl`` unset (5-minute default). Batch
     construction goes through :func:`build_cached_message_params` with
     ``cache_ttl="1h"`` instead of this function.
+
+    ``attempt`` (2+ when re-trying the same step, e.g. the meal calorie loop)
+    and ``route`` (``haiku`` / ``sonnet`` / ``opus``; inferred from ``model``
+    when omitted) are recorded on the FOOD-54 usage event and not forwarded
+    to the API.
     """
-    message = client.messages.create(
+    workflow, step = workflow_for_call_site(call_site)
+    message = create_message(
+        client,
+        step=step,
+        call_site=call_site,
+        workflow=workflow,
+        attempt=attempt,
+        route=route,
         **build_cached_message_params(
             model=model,
             max_tokens=max_tokens,
@@ -179,7 +229,7 @@ def create_cached_message(
             messages=messages,
             cache_ttl=cache_ttl,
             **kwargs,
-        )
+        ),
     )
     log_cache_usage(message, call_site=call_site, model=model)
     return message
