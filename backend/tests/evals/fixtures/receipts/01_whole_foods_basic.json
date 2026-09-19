@@ -1,0 +1,40 @@
+{
+  "id": "whole_foods_basic",
+  "description": "Clean printed receipt, quantities and units on every food line, one tax line. Model output is exactly what the prompt asks for.",
+  "file_suffix": ".jpg",
+  "model_response": {
+    "wrapper": "plain",
+    "payload": {
+      "store_name": "Whole Foods Market",
+      "items": [
+        {"store_item_name": "ORGANIC BANANAS", "ingredient_name": "Organic Bananas", "is_food": true, "quantity": "2.5", "unit": "lb"},
+        {"store_item_name": "365 ALMOND BUTTER", "ingredient_name": "Almond Butter", "is_food": true, "quantity": "1", "unit": "each"},
+        {"store_item_name": "GREEK YOGURT PLAIN 32OZ", "ingredient_name": "Plain Greek Yogurt", "is_food": true, "quantity": "32", "unit": "oz"},
+        {"store_item_name": "CHKN BRST BNLS", "ingredient_name": "Boneless Chicken Breast", "is_food": true, "quantity": "1.8", "unit": "lb"},
+        {"store_item_name": "BROWN RICE 2LB", "ingredient_name": "Brown Rice", "is_food": true, "quantity": "2", "unit": "lb"},
+        {"store_item_name": "BABY SPINACH", "ingredient_name": "Baby Spinach", "is_food": true, "quantity": "1", "unit": "each"},
+        {"store_item_name": "SALES TAX", "ingredient_name": "Sales Tax", "is_food": false, "quantity": null, "unit": null}
+      ]
+    }
+  },
+  "nutrition_responses": {
+    "Organic Bananas": {"recognized": true, "serving_size": "1 medium (118g)", "servings_per_container": 3, "calories": 105, "protein_g": 1.3, "carbs_g": 27, "fat_g": 0.4, "fiber_g": 3.1, "sodium_mg": 1, "nutrition_notes": "USDA"},
+    "Almond Butter": {"recognized": true, "serving_size": "2 tbsp (32g)", "servings_per_container": 15, "calories": 190, "protein_g": 7, "carbs_g": 6, "fat_g": 18, "fiber_g": 3, "sodium_mg": 0, "nutrition_notes": "Typical jar"},
+    "Plain Greek Yogurt": {"recognized": true, "serving_size": "5.3 oz (150g)", "servings_per_container": 0.19, "calories": 100, "protein_g": 17, "carbs_g": 6, "fat_g": 0, "fiber_g": 0, "sodium_mg": 65, "nutrition_notes": "Non-fat"},
+    "Boneless Chicken Breast": {"recognized": true, "serving_size": "4 oz (112g)", "servings_per_container": 4, "calories": 120, "protein_g": 26, "carbs_g": 0, "fat_g": 1.5, "fiber_g": 0, "sodium_mg": 70, "nutrition_notes": "USDA"},
+    "Brown Rice": {"recognized": true, "serving_size": "1/4 cup dry (45g)", "servings_per_container": 10, "calories": 160, "protein_g": 3, "carbs_g": 34, "fat_g": 1, "fiber_g": 2, "sodium_mg": 0, "nutrition_notes": "USDA"},
+    "Baby Spinach": {"recognized": true, "serving_size": "3 cups (85g)", "servings_per_container": 3, "calories": 20, "protein_g": 2, "carbs_g": 3, "fat_g": 0, "fiber_g": 2, "sodium_mg": 65, "nutrition_notes": "USDA"}
+  },
+  "expected": {
+    "store_name": "Whole Foods Market",
+    "items": [
+      {"store_item_name": "ORGANIC BANANAS", "ingredient_name": "Organic Banana", "is_food": true, "quantity": "2.5", "unit": "lb"},
+      {"store_item_name": "365 ALMOND BUTTER", "ingredient_name": "Almond Butter", "is_food": true, "quantity": "1", "unit": "each"},
+      {"store_item_name": "GREEK YOGURT PLAIN 32OZ", "ingredient_name": "Plain Greek Yogurt", "is_food": true, "quantity": "32", "unit": "oz"},
+      {"store_item_name": "CHKN BRST BNLS", "ingredient_name": "Boneless Chicken Breast", "is_food": true, "quantity": "1.8", "unit": "lb"},
+      {"store_item_name": "BROWN RICE 2LB", "ingredient_name": "Brown Rice", "is_food": true, "quantity": "2", "unit": "lb"},
+      {"store_item_name": "BABY SPINACH", "ingredient_name": "Baby Spinach", "is_food": true, "quantity": "1", "unit": "each"},
+      {"store_item_name": "SALES TAX", "ingredient_name": "Sales Tax", "is_food": false}
+    ]
+  }
+}

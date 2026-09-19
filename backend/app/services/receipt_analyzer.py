@@ -8,8 +8,9 @@ from pathlib import Path
 import anthropic
 from pydantic import BaseModel, Field
 
-from app.config import RECEIPT_ANTHROPIC_MODEL, settings
+from app.config import settings
 from app.services.anthropic_cache import create_cached_message
+from app.services.model_router import RouteDecision, escalation_for, route_model
 
 
 def _anthropic_error_message(exc: Exception, model: str) -> str:
@@ -254,9 +255,24 @@ def _as_optional_float(value) -> float | None:
 
 
 def _unit_warning_from_payload(payload: dict) -> str | None:
+    warning, _low_confidence = _unit_check_from_payload(payload)
+    return warning
+
+
+def _unit_check_from_payload(payload: object) -> tuple[str | None, bool]:
+    """Return ``(warning, low_confidence)``.
+
+    Only a schema-valid ``unit_plausible: true`` is a confident accept.
+    A valid reject, a missing/non-bool ``unit_plausible``, or a non-object
+    payload is low confidence so a cheap tier can be confirmed on Opus.
+    """
+    if not isinstance(payload, dict):
+        return None, True
     if payload.get("unit_plausible") is True:
-        return None
-    return _as_optional_str(payload.get("unit_warning"))
+        return None, False
+    if payload.get("unit_plausible") is False:
+        return _as_optional_str(payload.get("unit_warning")), True
+    return None, True
 
 
 def check_ingredient_unit(
@@ -269,33 +285,46 @@ def check_ingredient_unit(
         return None
 
     client = _get_client()
-    message = create_cached_message(
-        client,
-        call_site="receipt.unit_check",
-        model=RECEIPT_ANTHROPIC_MODEL,
-        max_tokens=256,
-        system_prefix=UNIT_CHECK_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": UNIT_CHECK_USER_PROMPT.format(
-                    ingredient_name=name,
-                    unit=unit_label,
-                ),
-            }
-        ],
-    )
 
-    text_blocks = [block.text for block in message.content if block.type == "text"]
-    if not text_blocks:
-        return None
+    def ask(decision: RouteDecision) -> tuple[str | None, bool]:
+        message = create_cached_message(
+            client,
+            call_site="receipt.unit_check",
+            model=decision.model,
+            max_tokens=256,
+            system_prefix=UNIT_CHECK_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": UNIT_CHECK_USER_PROMPT.format(
+                        ingredient_name=name,
+                        unit=unit_label,
+                    ),
+                }
+            ],
+        )
 
-    try:
-        payload = _extract_json(text_blocks[-1])
-    except (json.JSONDecodeError, ValueError):
-        return None
+        text_blocks = [block.text for block in message.content if block.type == "text"]
+        if not text_blocks:
+            return None, True
 
-    return _unit_warning_from_payload(payload)
+        try:
+            payload = _extract_json(text_blocks[-1])
+        except (json.JSONDecodeError, ValueError):
+            return None, True
+
+        return _unit_check_from_payload(payload)
+
+    decision = route_model("receipt.unit_check")
+    warning, low_confidence = ask(decision)
+    # A rejection blocks the user, so a cheap tier's "implausible" or a
+    # malformed answer is treated as low confidence and confirmed on the
+    # escalation tier (routing on only).
+    if low_confidence:
+        escalated = escalation_for(decision)
+        if escalated is not None:
+            warning, _ = ask(escalated)
+    return warning
 
 
 class PantryMatchResult(BaseModel):
@@ -324,50 +353,78 @@ def match_ingredient_to_pantry(
     # Always ask the LLM for a canonical display name, even when the pantry is
     # empty. match_id must stay null when there are no candidates.
     client = _get_client()
-    message = create_cached_message(
-        client,
-        call_site="receipt.pantry_match",
-        model=RECEIPT_ANTHROPIC_MODEL,
-        max_tokens=256,
-        system_prefix=PANTRY_MATCH_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": PANTRY_MATCH_USER_PROMPT.format(
-                    ingredient_name=name,
-                    unit=unit_label,
-                    pantry_json=json.dumps(pantry_items, ensure_ascii=True),
-                ),
-            }
-        ],
-    )
 
-    text_blocks = [block.text for block in message.content if block.type == "text"]
-    if not text_blocks:
-        return PantryMatchResult()
+    def ask(decision: RouteDecision) -> tuple[PantryMatchResult, bool, bool]:
+        """Return ``(result, low_confidence, schema_invalid)``."""
+        message = create_cached_message(
+            client,
+            call_site="receipt.pantry_match",
+            model=decision.model,
+            max_tokens=256,
+            system_prefix=PANTRY_MATCH_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": PANTRY_MATCH_USER_PROMPT.format(
+                        ingredient_name=name,
+                        unit=unit_label,
+                        pantry_json=json.dumps(pantry_items, ensure_ascii=True),
+                    ),
+                }
+            ],
+        )
 
-    try:
-        payload = _extract_json(text_blocks[-1])
-    except (json.JSONDecodeError, ValueError):
-        return PantryMatchResult()
+        text_blocks = [block.text for block in message.content if block.type == "text"]
+        if not text_blocks:
+            return PantryMatchResult(), True, True
 
-    if not isinstance(payload, dict):
-        return PantryMatchResult()
+        try:
+            payload = _extract_json(text_blocks[-1])
+        except (json.JSONDecodeError, ValueError):
+            return PantryMatchResult(), True, True
 
-    match_id = _as_optional_str(payload.get("match_id"))
-    if not valid_ids or (match_id is not None and match_id not in valid_ids):
-        match_id = None
+        if not isinstance(payload, dict):
+            return PantryMatchResult(), True, True
 
-    ambiguous = payload.get("ambiguous") is True
-    if ambiguous:
-        match_id = None
+        # match_id may be null; the key itself must be present. ambiguous is
+        # required and must be a real bool — a missing field used to coerce
+        # to False and look like a confident "new item". canonical_name stays
+        # optional.
+        schema_invalid = "match_id" not in payload or not isinstance(
+            payload.get("ambiguous"), bool
+        )
+        match_id = _as_optional_str(payload.get("match_id"))
+        invented_id = match_id is not None and match_id not in valid_ids
+        if not valid_ids or invented_id:
+            match_id = None
 
-    canonical_name = _as_optional_str(payload.get("canonical_name"))
-    return PantryMatchResult(
-        match_id=match_id,
-        ambiguous=ambiguous,
-        canonical_name=canonical_name,
-    )
+        ambiguous = payload.get("ambiguous") is True
+        if ambiguous:
+            match_id = None
+
+        canonical_name = _as_optional_str(payload.get("canonical_name"))
+        result = PantryMatchResult(
+            match_id=match_id,
+            ambiguous=ambiguous,
+            canonical_name=canonical_name,
+        )
+        # Low confidence = the model could not commit (ambiguous), pointed at
+        # an id it was never offered, or failed the required JSON shape.
+        # Flag off: escalation_for() is None, so the returned result is
+        # unchanged (still a non-ambiguous new row, same as pre-FOOD-58).
+        return result, schema_invalid or ambiguous or invented_id, schema_invalid
+
+    decision = route_model("receipt.pantry_match")
+    result, low_confidence, _schema_invalid = ask(decision)
+    if low_confidence:
+        escalated = escalation_for(decision)
+        if escalated is not None:
+            escalated_result, _escalated_low, escalated_schema_invalid = ask(escalated)
+            # A malformed Opus answer must not wipe a valid first-pass
+            # ``ambiguous=True`` (defaults to False on PantryMatchResult).
+            if not escalated_schema_invalid:
+                result = escalated_result
+    return result
 
 
 def estimate_ingredient_nutrition(
@@ -382,7 +439,7 @@ def estimate_ingredient_nutrition(
     message = create_cached_message(
         client,
         call_site="receipt.nutrition_estimate",
-        model=RECEIPT_ANTHROPIC_MODEL,
+        model=route_model("receipt.nutrition_estimate").model,
         max_tokens=1024,
         system_prefix=NUTRITION_ESTIMATE_PROMPT,
         messages=[
@@ -537,9 +594,15 @@ def extract_receipt_vision(
     data: bytes,
     media_type: str,
     *,
-    model: str = RECEIPT_ANTHROPIC_MODEL,
+    model: str | None = None,
 ) -> ParsedReceipt:
-    """Vision extraction only (no nutrition enrichment, no food-count check)."""
+    """Vision extraction only (no nutrition enrichment, no food-count check).
+
+    When ``model`` is omitted the router picks the flag-off default (Opus)
+    so ``forced_model`` still applies to the eval harness. FOOD-55's Sonnet
+    vision fallback passes ``RECEIPT_OCR_VISION_FALLBACK_MODEL`` explicitly.
+    """
+    chosen = model if model is not None else route_model("receipt.analyze_image").model
     content_type = "document" if media_type == "application/pdf" else "image"
     encoded = base64.standard_b64encode(data).decode("utf-8")
     content_block = {
@@ -548,7 +611,7 @@ def extract_receipt_vision(
     }
     return _run_receipt_extraction(
         [content_block],
-        model=model,
+        model=chosen,
         call_site="receipt.analyze_image",
     )
 

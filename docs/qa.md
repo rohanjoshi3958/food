@@ -9,6 +9,10 @@ frontend (`src/`), FastAPI backend (`backend/app/`), Postgres 16 in Docker
 (port 5433), Anthropic Claude for receipts and meals, OpenAI `gpt-image-1`
 for meal photos. `next.config.ts` proxies `/api/*` to FastAPI on :8000.
 
+FOOD-58 Claude tier routing (policy, eval gates, flag rollout, when not to
+downgrade): **[`backend/MODEL_ROUTING.md`](../backend/MODEL_ROUTING.md)**.
+`MODEL_ROUTING_ENABLED` defaults **off**; do not flip it from this checklist.
+
 ---
 
 ## 1. How to run
@@ -200,7 +204,7 @@ prompt string.
 | **FOOD-55** OCR-first receipt pipeline + LLM fallback | Replaces/precedes the vision scan; adds image downsampling, confidence gates, Haiku/Sonnet fallback, upload hashing | Receipt eval (P0) on labelled set: recall/precision/unit accuracy within tolerance vs `main`; report % receipts completing without vision-LLM. Smoke: `EXPECTED_UPLOAD_CALLS` must drop or stay, never rise; draft item shape unchanged; non-food filtering still works; duplicate upload of the same file makes 0 scan calls. Add e2e tests for (a) OCR success path, (b) low-confidence fallback path, (c) OCR failure → LLM. Status lifecycle (`processing → pending_review`) unchanged so the UI review screen still appears. Migrate ordered mocks first (P1). |
 | **FOOD-56** Prompt caching (PR #12) | Moves stable prompt text into `system=[{cache_control: ephemeral}]`; variable content stays in `messages` | Smoke passes unchanged (the fake routes on `system` + user text). Assert exactly one cached system block per call and **no** `cache_control` inside `messages`; assert variable content (pantry list, item name, image) is in the user turn — `test_meal_generator.py::test_in_range_meal_uses_exactly_one_call` checks this for meals. Prefix must be byte-stable: no timestamps/ids/user data before the breakpoint. Real-key check: second identical call shows `cache_read_input_tokens > 0`. Nutrition/pantry-match outputs unchanged on the manual checklist (moving instructions to `system` can change model behaviour). |
 | **FOOD-57** Batch API for offline reprocess / nightly regen | New batch submit/poll path for non-interactive work; interactive paths stay sync | Smoke unchanged (interactive path must not go through Batch). New tests: batch request payload per item, result-to-row mapping by `custom_id`, partial failure/retry, 1h TTL cache blocks only on the batch path. Latency budget for steps 2–3 in §2 unchanged. Any regenerated meal that reaches the cookbook must still satisfy the meal eval thresholds. |
-| **FOOD-58** Model routing policy + eval harness | Cheaper models for classify/extract; escalation on low confidence; evals in CI/scheduled | Written policy in repo linked from this doc. Smoke: assert the **model per call site** matches the policy table (replace the single-constant assertion with a per-prompt-type map). Eval harness runs on the PR (mocked) and on a schedule (real key) with thresholds: receipt recall/precision, ingredient match rate, meal acceptability, escalation rate. Canary/shadow results attached before full cutover. Document "when not to downgrade" (ambiguous pantry matches, constrained meal plans). |
+| **FOOD-58** Model routing policy + eval harness | Cheaper models for classify/extract; escalation on low confidence; evals in CI/scheduled | Written policy: [`backend/MODEL_ROUTING.md`](../backend/MODEL_ROUTING.md) (tiers, per-call-site table, when not to downgrade, flag rollout). Smoke: assert the **model per call site** matches the policy table (replace the single-constant assertion with a per-prompt-type map; flag off = today's Opus/Sonnet defaults). Eval harness runs on the PR (mocked) and on a schedule (real key) with thresholds: receipt recall/precision, ingredient match rate, meal acceptability, escalation rate. Canary/shadow results attached before full cutover. Do not enable `MODEL_ROUTING_ENABLED` until the live eval table is pasted. |
 
 ### Suggested labels / automation
 

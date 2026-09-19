@@ -1,0 +1,42 @@
+{
+  "id": "target_mixed_nonfood",
+  "description": "Mixed grocery + household basket. The model misclassifies the reusable bag as food and misses the store name even though it is printed at the top. Bottle deposit is correctly non-food.",
+  "file_suffix": ".png",
+  "model_response": {
+    "wrapper": "plain",
+    "payload": {
+      "store_name": null,
+      "items": [
+        {"store_item_name": "GG WHOLE MILK GAL", "ingredient_name": "Whole Milk", "is_food": true, "quantity": "1", "unit": "gallon"},
+        {"store_item_name": "MARKET PANTRY PASTA", "ingredient_name": "Pasta", "is_food": true, "quantity": "16", "unit": "oz"},
+        {"store_item_name": "GG MARINARA SAUCE", "ingredient_name": "Marinara Sauce", "is_food": true, "quantity": "24", "unit": "oz"},
+        {"store_item_name": "ROMA TOMATOES", "ingredient_name": "Roma Tomatoes", "is_food": true, "quantity": "1.2", "unit": "lb"},
+        {"store_item_name": "REUSABLE BAG", "ingredient_name": "Reusable Bag", "is_food": true, "quantity": "1", "unit": "each"},
+        {"store_item_name": "TIDE PODS 42CT", "ingredient_name": "Tide Pods", "is_food": false, "quantity": "1", "unit": "each"},
+        {"store_item_name": "SPARKLING WATER 12PK", "ingredient_name": "Sparkling Water", "is_food": true, "quantity": "12", "unit": "can"},
+        {"store_item_name": "BOTTLE DEPOSIT", "ingredient_name": "Bottle Deposit", "is_food": false, "quantity": null, "unit": null}
+      ]
+    }
+  },
+  "nutrition_responses": {
+    "Whole Milk": {"recognized": true, "serving_size": "1 cup (240ml)", "servings_per_container": 16, "calories": 150, "protein_g": 8, "carbs_g": 12, "fat_g": 8, "fiber_g": 0, "sodium_mg": 105, "nutrition_notes": "USDA"},
+    "Pasta": {"recognized": true, "serving_size": "2 oz dry (56g)", "servings_per_container": 0.5, "calories": 200, "protein_g": 7, "carbs_g": 42, "fat_g": 1, "fiber_g": 2, "sodium_mg": 0, "nutrition_notes": "Label"},
+    "Marinara Sauce": {"recognized": true, "serving_size": "1/2 cup (125g)", "servings_per_container": 0.23, "calories": 70, "protein_g": 2, "carbs_g": 10, "fat_g": 2.5, "fiber_g": 2, "sodium_mg": 480, "nutrition_notes": "Label"},
+    "Roma Tomatoes": {"recognized": true, "serving_size": "1 medium (62g)", "servings_per_container": 7, "calories": 11, "protein_g": 0.5, "carbs_g": 2.4, "fat_g": 0.1, "fiber_g": 0.7, "sodium_mg": 3, "nutrition_notes": "USDA"},
+    "Reusable Bag": {"recognized": false, "serving_size": null, "servings_per_container": null, "calories": null, "protein_g": null, "carbs_g": null, "fat_g": null, "fiber_g": null, "sodium_mg": null, "nutrition_notes": "Not a food item"},
+    "Sparkling Water": {"recognized": true, "serving_size": "12 fl oz (355ml)", "servings_per_container": 1, "calories": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0, "fiber_g": 0, "sodium_mg": 0, "nutrition_notes": "Label"}
+  },
+  "expected": {
+    "store_name": "Target",
+    "items": [
+      {"store_item_name": "GG WHOLE MILK GAL", "ingredient_name": "Whole Milk", "is_food": true, "quantity": "1", "unit": "gallon"},
+      {"store_item_name": "MARKET PANTRY PASTA", "ingredient_name": "Pasta", "is_food": true, "quantity": "16", "unit": "oz"},
+      {"store_item_name": "GG MARINARA SAUCE", "ingredient_name": "Marinara Sauce", "is_food": true, "quantity": "24", "unit": "oz"},
+      {"store_item_name": "ROMA TOMATOES", "ingredient_name": "Roma Tomato", "is_food": true, "quantity": "1.2", "unit": "lb"},
+      {"store_item_name": "REUSABLE BAG", "ingredient_name": "Reusable Bag", "is_food": false},
+      {"store_item_name": "TIDE PODS 42CT", "ingredient_name": "Tide Pods", "is_food": false},
+      {"store_item_name": "SPARKLING WATER 12PK", "ingredient_name": "Sparkling Water", "is_food": true, "quantity": "12", "unit": "can"},
+      {"store_item_name": "BOTTLE DEPOSIT", "ingredient_name": "Bottle Deposit", "is_food": false}
+    ]
+  }
+}

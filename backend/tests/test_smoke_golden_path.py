@@ -25,6 +25,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from app.config import MEAL_ANTHROPIC_MODEL, RECEIPT_ANTHROPIC_MODEL
+from app.services.model_router import routing_enabled
 
 from tests.conftest import create_mock_anthropic_response
 
@@ -123,6 +124,18 @@ EXPECTED_CONFIRM_CALLS = GOLDEN_FOOD_ITEM_COUNT + 3 * GOLDEN_FOOD_ITEM_COUNT
 EXPECTED_GENERATE_CALLS = 1
 EXPECTED_COMPLETE_CALLS = 0  # skip_photo=true must not call Claude or OpenAI
 
+# FOOD-58 extra gate (docs/qa.md): pin the model per call site, not a single
+# constant for the whole stage. Flag off = today's Opus/Sonnet pipeline
+# defaults. If MODEL_ROUTING_ENABLED is accidentally true, unit_check /
+# pantry_match would move off these ids and this map fails.
+EXPECTED_MODEL_BY_CALL_SITE = {
+    "receipt.analyze_image": RECEIPT_ANTHROPIC_MODEL,
+    "receipt.nutrition_estimate": RECEIPT_ANTHROPIC_MODEL,
+    "receipt.unit_check": RECEIPT_ANTHROPIC_MODEL,
+    "receipt.pantry_match": RECEIPT_ANTHROPIC_MODEL,
+    "meal.generate": MEAL_ANTHROPIC_MODEL,
+}
+
 
 # ---------------------------------------------------------------------------
 # Prompt-routed fake Anthropic client
@@ -130,20 +143,33 @@ EXPECTED_COMPLETE_CALLS = 0  # skip_photo=true must not call Claude or OpenAI
 
 
 def _content_text(content) -> str:
+    """Flatten a Messages API ``system`` or ``content`` value to text.
+
+    After FOOD-56, stable instructions live in a cached ``system`` list
+    (``[{"type": "text", "text": ...}]``) and the per-request tail is in the
+    user turn. Both shapes must contribute to routing needles.
+    """
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return " ".join(
-            block.get("text", "") for block in content if block.get("type") == "text"
-        )
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and (
+                block.get("type") == "text" or "text" in block
+            ):
+                parts.append(str(block.get("text") or ""))
+        return " ".join(part for part in parts if part)
     return ""
 
 
 def _prompt_text(kwargs: dict) -> str:
-    """System prompt (if any) plus the last user message, as text.
+    """Cached ``system`` prefix (if any) plus the last user message, as text.
 
-    Routing on both keeps the fake valid whether prompt instructions live in
-    the user turn (today) or in a cached ``system`` prefix (FOOD-56).
+    Routing on both keeps the fake valid for FOOD-56 cached prefixes and for
+    any leftover user-turn-only prompts. Unit-check / nutrition / pantry
+    needles must match this combined string, not the user turn alone.
     """
     parts = [_content_text(kwargs.get("system", ""))]
     messages = kwargs.get("messages") or []
@@ -160,6 +186,33 @@ def _has_image_block(kwargs: dict) -> bool:
     return isinstance(content, list) and any(
         block.get("type") in {"image", "document"} for block in content
     )
+
+
+def _call_site(kwargs: dict) -> str:
+    """Classify a FakeClaude call the same way the fake routes it."""
+    text = _prompt_text(kwargs)
+    if _has_image_block(kwargs) or "Analyze this grocery store receipt" in text:
+        return "receipt.analyze_image"
+    if "Estimate nutritional facts" in text:
+        return "receipt.nutrition_estimate"
+    if "Assess whether the grocery purchase unit" in text:
+        return "receipt.unit_check"
+    if "Match an incoming grocery item" in text:
+        return "receipt.pantry_match"
+    if "helpful home chef" in text or "Propose a" in text or "Suggest a" in text:
+        return "meal.generate"
+    raise AssertionError(f"Unrecognized Claude prompt:\n{text[:400]}")
+
+
+def _assert_models_match_flag_off_policy(calls: list[dict]) -> None:
+    """Every call uses the flag-off default for its prompt type."""
+    assert routing_enabled() is False
+    for call in calls:
+        site = _call_site(call)
+        expected = EXPECTED_MODEL_BY_CALL_SITE[site]
+        assert call["model"] == expected, (
+            f"{site} used {call['model']!r}, expected flag-off default {expected!r}"
+        )
 
 
 class FakeClaude:
@@ -193,8 +246,10 @@ class FakeClaude:
                     )
             raise AssertionError(f"No golden nutrition for prompt:\n{text}")
 
-        # Wording-tolerant: FOOD-56 moved "this" -> "the ... given in the user message".
-        if "grocery purchase unit" in text and "plausible" in text:
+        # FOOD-56 UNIT_CHECK_PROMPT lives in cached system: "Assess whether
+        # the grocery purchase unit given in the user message…". The pre-
+        # FOOD-56 needle ("this grocery purchase unit") no longer matches.
+        if "Assess whether the grocery purchase unit" in text:
             return create_mock_anthropic_response(
                 json.dumps({"unit_plausible": True, "unit_warning": None})
             )
@@ -281,7 +336,7 @@ class TestGoldenPathSmoke:
         assert drafts["White Rice"]["serving_size"] == "2 oz (56g)"
 
         assert len(upload_calls) == EXPECTED_UPLOAD_CALLS
-        assert {c["model"] for c in upload_calls} == {RECEIPT_ANTHROPIC_MODEL}
+        _assert_models_match_flag_off_policy(upload_calls)
 
         # --- Stage 3: confirm → pantry ----------------------------------
         confirm_start = len(fake_claude.calls)
@@ -305,7 +360,7 @@ class TestGoldenPathSmoke:
         assert pantry["White Rice"]["servings_per_container"] == 8
 
         assert len(confirm_calls) == EXPECTED_CONFIRM_CALLS
-        assert {c["model"] for c in confirm_calls} == {RECEIPT_ANTHROPIC_MODEL}
+        _assert_models_match_flag_off_policy(confirm_calls)
 
         # --- Stage 4: generate meal --------------------------------------
         generate_start = len(fake_claude.calls)
@@ -326,7 +381,7 @@ class TestGoldenPathSmoke:
         assert len(meal["instructions"].splitlines()) == 3
 
         assert len(generate_calls) == EXPECTED_GENERATE_CALLS
-        assert {c["model"] for c in generate_calls} == {MEAL_ANTHROPIC_MODEL}
+        _assert_models_match_flag_off_policy(generate_calls)
         # Pantry maximums must reach the prompt so the model can respect them.
         prompt = _prompt_text(generate_calls[0])
         assert "maximum available: 2 lb (do not exceed)" in prompt
