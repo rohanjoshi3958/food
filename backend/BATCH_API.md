@@ -16,7 +16,7 @@ Prompt caching (FOOD-56) still applies. Interactive calls keep the default
 | Meal generate ("try another") | Sync `messages.create` | 5m | `POST /api/meals/generate` → `generate_meal_from_ingredients` |
 | Meal image prompt | Sync `messages.create` | 5m | `POST /api/meals/{id}/complete` → `meal_image` |
 | Historical receipt reprocess | **Batch** `messages.batches` | **1h** | `python -m app.jobs.reprocess_receipts` |
-| Nightly first-turn meal regen | **Batch** `messages.batches` | **1h** | `python -m app.jobs.regen_meals` |
+| Nightly meal regen (one request per pantry) | **Batch** `messages.batches` | **1h** | `python -m app.jobs.regen_meals` |
 
 Interactive routers and `app/services/{receipt_analyzer,meal_generator,meal_image}.py`
 must not import `app.services.anthropic_batch` or `app.jobs`. Do not move a
@@ -44,19 +44,26 @@ Same `call_site` strings and `route_model()` decisions as the sync path
    - `expired` (24h window elapsed before the request ran)
    - `canceled`
    - `errored` whose `error_type` is **not** `invalid_request_error`,
-     `authentication_error`, `permission_error`, or `not_found_error`
+     `authentication_error`, `billing_error`, `permission_error`, or
+     `not_found_error`. Nested Anthropic envelopes
+     (`{type: "error", error: {type, message}}`) are unwrapped first.
    - a `custom_id` missing from the results file
-6. Never retry `succeeded` or a validation / auth error — those need a code
-   or config fix, not another submit.
+6. Never retry `succeeded` or a validation / auth / billing error — those
+   need a code or config fix, not another submit.
 
 A poll timeout raises `BatchTimeoutError` with the Anthropic batch id. The
 batch keeps running on Anthropic's side; resume with
 `poll_message_batch` + `collect_batch_results` using that id. Do not submit a
 duplicate batch for the same items unless you intend to pay twice.
 
+If a later chunk raises after earlier chunks succeeded,
+`BatchRunInterrupted` carries the partial `outcome` (successes + submitted
+ids). Jobs record that work, apply what they can, and exit non-zero.
+
 Per-item failures in a mixed batch do not fail siblings. Jobs report
-`vision_failed` / `nutrition_failed` / `failed` in the JSON summary and leave
-successful rows eligible for `--apply`.
+`vision_failed` / `nutrition_failed` / `failed` / `apply_failed` in the JSON
+summary and leave successful rows eligible for `--apply`. The CLI exits `1`
+when any of those collections is non-empty.
 
 Unbilled Anthropic outcomes (`errored`, `canceled`, `expired`) are the ones
 we retry. A succeeded parse that then fails local JSON validation is a
@@ -72,8 +79,9 @@ are **dry-run** until `--apply`.
 # --apply writes receipts.analysis_result only (not pantry, not draft_items).
 python -m app.jobs.reprocess_receipts --receipt-id <uuid> --apply
 
-# First-turn meal.generate per user pantry. Calorie retries stay on the
-# sync generate path. --apply replaces that user's meals row.
+# One meal.generate request per user pantry (no calorie-retry loop).
+# If the user already has a meal, it is passed as the previous turn so
+# the model proposes a different dish. --apply replaces that meals row.
 python -m app.jobs.regen_meals --user-id <uuid> --apply
 ```
 

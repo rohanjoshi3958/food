@@ -137,7 +137,7 @@ sites.
 - Interactive paths (receipt scan, per-item enrichment, meal generation,
   image prompt) stay on the synchronous Messages API. Do not move them to
   the Batch API for cost reasons; caching is the cost lever here.
-- Offline jobs (historical receipt reprocess, nightly first-turn meal regen)
+- Offline jobs (historical receipt reprocess, nightly meal regen)
   use the Message Batches API with **`ttl: "1h"`** on the same cached
   prefix. See `backend/BATCH_API.md`.
 - `tests/test_prompt_caching.py` asserts breakpoint placement for every

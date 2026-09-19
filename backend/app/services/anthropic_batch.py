@@ -44,6 +44,7 @@ NON_RETRYABLE_ERROR_TYPES = frozenset(
     {
         "invalid_request_error",
         "authentication_error",
+        "billing_error",
         "permission_error",
         "not_found_error",
     }
@@ -67,6 +68,21 @@ class BatchTimeoutError(BatchError):
         super().__init__(
             f"Timed out waiting for batch {batch_id} "
             f"(last status={last_status!r}). Resume with this id."
+        )
+
+
+class BatchRunInterrupted(BatchError):
+    """A later chunk failed after earlier chunks already produced results.
+
+    ``outcome`` holds successes, failures, and ``submitted_batch_ids`` collected
+    so far so callers can apply or report that work instead of resubmitting it.
+    """
+
+    def __init__(self, outcome: BatchRunResult, cause: BaseException):
+        self.outcome = outcome
+        super().__init__(
+            f"Message Batch interrupted after {len(outcome.submitted_batch_ids)} "
+            f"submit(s); {len(outcome.succeeded)} succeeded so far. {cause}"
         )
 
 
@@ -139,7 +155,9 @@ class BatchItemResult:
         error_type = _attr(error, "type")
         error_message = _attr(error, "message")
         nested = _attr(error, "error")
-        if error_type is None and nested is not None:
+        # Anthropic's envelope is often {type: "error", error: {type, message}}.
+        # The inner type is the one that decides retry vs give up.
+        if nested is not None and error_type in {None, "error"}:
             error_type = _attr(nested, "type")
             error_message = _attr(nested, "message")
         return cls(
@@ -308,7 +326,7 @@ def run_message_batch(
 
     * ``expired`` / ``canceled`` — always retried.
     * ``errored`` — retried unless ``error_type`` is a non-retryable client
-      error (invalid request, auth, permission, not found).
+      error (invalid request, auth, billing, permission, not found).
     * Missing ``custom_id`` in the results file — retried.
     * ``succeeded`` — never retried.
     * ``invalid_request_error`` — never retried; the params must be fixed.
@@ -328,20 +346,25 @@ def run_message_batch(
     while pending:
         next_pending: list[BatchMessageRequest] = []
         for chunk in _chunks(pending, chunk_size):
-            submitted = submit_message_batch(client, chunk, cache_ttl=cache_ttl)
-            batch_id = str(_attr(submitted, "id") or "")
-            if not batch_id:
-                raise BatchSubmitError("batch create response is missing id")
-            outcome.submitted_batch_ids.append(batch_id)
-            poll_message_batch(
-                client,
-                batch_id,
-                interval=poll_interval,
-                timeout=poll_timeout,
-                sleep=sleep,
-                clock=clock,
-            )
-            results = collect_batch_results(client, batch_id)
+            try:
+                submitted = submit_message_batch(client, chunk, cache_ttl=cache_ttl)
+                batch_id = str(_attr(submitted, "id") or "")
+                if not batch_id:
+                    raise BatchSubmitError("batch create response is missing id")
+                outcome.submitted_batch_ids.append(batch_id)
+                poll_message_batch(
+                    client,
+                    batch_id,
+                    interval=poll_interval,
+                    timeout=poll_timeout,
+                    sleep=sleep,
+                    clock=clock,
+                )
+                results = collect_batch_results(client, batch_id)
+            except BatchRunInterrupted:
+                raise
+            except Exception as exc:
+                raise BatchRunInterrupted(outcome, exc) from exc
             for request in chunk:
                 item = results.get(request.custom_id) or _missing_result(
                     request.custom_id

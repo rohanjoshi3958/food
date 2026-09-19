@@ -88,7 +88,7 @@ The path that produced each receipt is stored in `receipts.analysis_path`. Per-u
 
 ### Offline Claude batches (FOOD-57)
 
-Interactive upload / generate / image-prompt stay on the sync Messages API. Historical receipt reprocess and nightly first-turn meal regen go through Anthropic Message Batches (~50% off, 1-hour prompt-cache TTL). Dry-run unless you pass `--apply`:
+Interactive upload / generate / image-prompt stay on the sync Messages API. Historical receipt reprocess and nightly meal regen go through Anthropic Message Batches (~50% off, 1-hour prompt-cache TTL). Dry-run unless you pass `--apply`:
 
 ```bash
 cd backend

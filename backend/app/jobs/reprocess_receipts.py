@@ -34,6 +34,7 @@ from app.database import SessionLocal
 from app.models import Receipt
 from app.services.anthropic_batch import (
     BatchMessageRequest,
+    BatchRunInterrupted,
     BatchRunResult,
     run_message_batch,
 )
@@ -73,7 +74,9 @@ class ReprocessReport:
     skipped_missing_file: list[str] = field(default_factory=list)
     nutrition_failed: dict[str, str] = field(default_factory=dict)
     applied: list[str] = field(default_factory=list)
+    apply_failed: dict[str, str] = field(default_factory=dict)
     batch_ids: list[str] = field(default_factory=list)
+    interrupted: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -82,8 +85,20 @@ class ReprocessReport:
             "skipped_missing_file": self.skipped_missing_file,
             "nutrition_failed": self.nutrition_failed,
             "applied": self.applied,
+            "apply_failed": self.apply_failed,
             "batch_ids": self.batch_ids,
+            "interrupted": self.interrupted,
         }
+
+    def exit_status(self) -> int:
+        if (
+            self.vision_failed
+            or self.nutrition_failed
+            or self.apply_failed
+            or self.interrupted
+        ):
+            return 1
+        return 0
 
 
 def _require_api_key() -> None:
@@ -252,17 +267,23 @@ def reprocess_receipts(
             continue
         vision_requests.append(request)
 
+    vision_interrupted = False
     if vision_requests:
-        vision = run_message_batch(
-            client,
-            vision_requests,
-            chunk_size=VISION_CHUNK_SIZE,
-            **run_kw,
-        )
+        try:
+            vision = run_message_batch(
+                client,
+                vision_requests,
+                chunk_size=VISION_CHUNK_SIZE,
+                **run_kw,
+            )
+        except BatchRunInterrupted as exc:
+            vision = exc.outcome
+            vision_interrupted = True
+            report.interrupted = str(exc)
         report.batch_ids.extend(vision.submitted_batch_ids)
         _record_vision(vision, report)
 
-    if skip_nutrition or not report.vision_ok:
+    if vision_interrupted or skip_nutrition or not report.vision_ok:
         _maybe_apply(db, report, apply)
         return report
 
@@ -274,12 +295,16 @@ def reprocess_receipts(
         _maybe_apply(db, report, apply)
         return report
 
-    nutrition = run_message_batch(
-        client,
-        [build_nutrition_request(item) for item in nutrition_work],
-        chunk_size=NUTRITION_CHUNK_SIZE,
-        **run_kw,
-    )
+    try:
+        nutrition = run_message_batch(
+            client,
+            [build_nutrition_request(item) for item in nutrition_work],
+            chunk_size=NUTRITION_CHUNK_SIZE,
+            **run_kw,
+        )
+    except BatchRunInterrupted as exc:
+        nutrition = exc.outcome
+        report.interrupted = str(exc)
     report.batch_ids.extend(nutrition.submitted_batch_ids)
     _apply_nutrition(nutrition, nutrition_work, report)
     _maybe_apply(db, report, apply)
@@ -334,8 +359,13 @@ def _maybe_apply(db: Session, report: ReprocessReport, apply: bool) -> None:
     if not apply:
         return
     for receipt_id, parsed in report.vision_ok.items():
-        apply_parsed_receipt(db, receipt_id, parsed)
-        report.applied.append(receipt_id)
+        try:
+            apply_parsed_receipt(db, receipt_id, parsed)
+            report.applied.append(receipt_id)
+        except Exception as exc:
+            db.rollback()
+            logger.exception("Failed to persist analysis_result for %s", receipt_id)
+            report.apply_failed[receipt_id] = str(exc)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -412,7 +442,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             **_run_kwargs(args),
         )
         print(json.dumps(report.to_json(), indent=2))
-        return 1 if report.vision_failed else 0
+        return report.exit_status()
     finally:
         db.close()
 

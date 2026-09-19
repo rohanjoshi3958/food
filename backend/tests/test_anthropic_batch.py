@@ -22,6 +22,7 @@ from app.jobs.regen_meals import (
     regen_meals,
 )
 from app.jobs.reprocess_receipts import (
+    ReprocessReport,
     apply_parsed_receipt,
     build_nutrition_request,
     build_nutrition_work,
@@ -35,6 +36,7 @@ from app.services.anthropic_batch import (
     CUSTOM_ID_RE,
     BatchItemResult,
     BatchMessageRequest,
+    BatchRunInterrupted,
     BatchSubmitError,
     BatchTimeoutError,
     collect_batch_results,
@@ -54,6 +56,8 @@ from app.services.receipt_analyzer import (
     RECEIPT_ANALYSIS_PROMPT,
     ParsedReceipt,
     ParsedReceiptItem,
+    ReceiptAnalysisError,
+    parse_nutrition_message,
 )
 from tests.conftest import create_mock_anthropic_response
 
@@ -297,6 +301,76 @@ class TestRunMessageBatchRetry:
         assert item.error_type == "overloaded_error"
         assert item.error_message == "busy"
 
+    def test_nested_error_envelope_invalid_request_is_not_retried(self):
+        row = {
+            "custom_id": "x",
+            "result": {
+                "type": "errored",
+                "error": {
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": "bad params",
+                    },
+                },
+            },
+        }
+        item = BatchItemResult.from_sdk(row)
+        assert item.error_type == "invalid_request_error"
+        assert item.retryable is False
+
+        client, batches = _client([[row]])
+        outcome = run_message_batch(
+            client, [_request("x")], max_retries=1, sleep=lambda _: None
+        )
+        assert set(outcome.failed) == {"x"}
+        assert outcome.failed["x"].error_type == "invalid_request_error"
+        assert len(batches.creates) == 1
+
+    def test_billing_error_is_not_retried(self):
+        row = {
+            "custom_id": "bill",
+            "result": {
+                "type": "errored",
+                "error": {"type": "billing_error", "message": "payment"},
+            },
+        }
+        assert BatchItemResult.from_sdk(row).retryable is False
+        client, batches = _client([[row]])
+        outcome = run_message_batch(
+            client, [_request("bill")], max_retries=1, sleep=lambda _: None
+        )
+        assert "bill" in outcome.failed
+        assert len(batches.creates) == 1
+
+    def test_later_chunk_failure_preserves_earlier_successes(self):
+        class BoomAfterFirst:
+            def __init__(self):
+                self.creates: list = []
+
+            def create(self, requests):
+                if self.creates:
+                    raise RuntimeError("chunk 2 exploded")
+                self.creates.append(list(requests))
+                return SimpleNamespace(id="msgbatch_0")
+
+            def retrieve(self, batch_id):
+                return SimpleNamespace(id=batch_id, processing_status="ended")
+
+            def results(self, _batch_id):
+                return [_succeeded("a", "ok-a")]
+
+        client = SimpleNamespace(messages=SimpleNamespace(batches=BoomAfterFirst()))
+        with pytest.raises(BatchRunInterrupted) as exc:
+            run_message_batch(
+                client,
+                [_request("a"), _request("b")],
+                chunk_size=1,
+                sleep=lambda _: None,
+            )
+        assert set(exc.value.outcome.succeeded) == {"a"}
+        assert exc.value.outcome.submitted_batch_ids == ["msgbatch_0"]
+
 
 class TestInteractivePathsUnchanged:
     def test_interactive_modules_do_not_import_batch_or_jobs(self):
@@ -481,6 +555,66 @@ class TestReceiptReprocessJob:
         test_db.refresh(receipt)
         assert receipt.analysis_result["store_name"] == "X"
 
+    def test_exit_status_includes_nutrition_and_apply_failures(self):
+        assert ReprocessReport().exit_status() == 0
+        assert ReprocessReport(nutrition_failed={"n": "boom"}).exit_status() == 1
+        assert ReprocessReport(vision_failed={"v": "no"}).exit_status() == 1
+        assert ReprocessReport(apply_failed={"a": "db"}).exit_status() == 1
+        assert ReprocessReport(interrupted="chunk 2").exit_status() == 1
+
+    def test_apply_continues_after_one_persist_failure(
+        self, test_db, test_user, tmp_path, monkeypatch
+    ):
+        first = self._receipt(test_db, test_user, tmp_path, "rec-one")
+        second = self._receipt(test_db, test_user, tmp_path, "rec-two")
+        vision_json = json.dumps(
+            {
+                "store_name": "Shop",
+                "items": [
+                    {
+                        "store_item_name": "OATS",
+                        "ingredient_name": "Oats",
+                        "is_food": True,
+                    }
+                ],
+            }
+        )
+        real_apply = apply_parsed_receipt
+
+        def flaky(db, receipt_id, parsed):
+            if receipt_id == first.id:
+                raise RuntimeError("db down")
+            return real_apply(db, receipt_id, parsed)
+
+        monkeypatch.setattr(
+            "app.jobs.reprocess_receipts.apply_parsed_receipt", flaky
+        )
+        client, _batches = _client(
+            [[_succeeded(first.id, vision_json), _succeeded(second.id, vision_json)]]
+        )
+        report = reprocess_receipts(
+            test_db,
+            client,
+            [first, second],
+            apply=True,
+            skip_nutrition=True,
+            sleep=lambda _: None,
+        )
+        assert first.id in report.apply_failed
+        assert second.id in report.applied
+        assert report.exit_status() == 1
+        test_db.refresh(second)
+        assert second.analysis_result["store_name"] == "Shop"
+
+    def test_nutrition_non_object_payload_is_analysis_error(self):
+        with pytest.raises(ReceiptAnalysisError):
+            parse_nutrition_message(
+                create_mock_anthropic_response("[1, 2]"),
+                ingredient_name="Oats",
+                quantity="1",
+                unit="each",
+            )
+
 
 class TestMealRegenJob:
     def test_first_turn_payload_keeps_pantry_after_breakpoint(self):
@@ -586,3 +720,71 @@ class TestMealRegenJob:
         )
         names = [row.name for row in test_db.query(Meal).all()]
         assert names == ["New"]
+
+    def test_apply_continues_after_one_user_persist_failure(
+        self, test_db, test_user, monkeypatch
+    ):
+        from app.auth_utils import hash_password
+        from app.models import User
+
+        other = User(
+            email="other-batch@example.com",
+            name="Other",
+            password=hash_password("pw12345678"),
+        )
+        test_db.add(other)
+        test_db.commit()
+        test_db.refresh(other)
+
+        for user in (test_user, other):
+            test_db.add(
+                Ingredient(
+                    user_id=user.id,
+                    name="Oats",
+                    quantity="500",
+                    unit="g",
+                    calories=150,
+                )
+            )
+        test_db.commit()
+
+        meal_json = json.dumps(
+            {
+                "name": "Batch Oats",
+                "description": "Overnight oats.",
+                "ingredients_used": [{"name": "Oats", "amount": "100 g"}],
+                "instructions": ["Stir."],
+            }
+        )
+        real = persist_generated_meal
+
+        def flaky(db, user_id, suggestion):
+            if user_id == test_user.id:
+                raise RuntimeError("persist failed")
+            return real(db, user_id, suggestion)
+
+        monkeypatch.setattr("app.jobs.regen_meals.persist_generated_meal", flaky)
+        client, _batches = _client(
+            [[_succeeded(test_user.id, meal_json), _succeeded(other.id, meal_json)]]
+        )
+        oats = {
+            user.id: test_db.query(Ingredient).filter(Ingredient.user_id == user.id).all()
+            for user in (test_user, other)
+        }
+        report = regen_meals(
+            test_db,
+            client,
+            [
+                MealWork(
+                    custom_id=test_user.id,
+                    user_id=test_user.id,
+                    pantry=oats[test_user.id],
+                ),
+                MealWork(custom_id=other.id, user_id=other.id, pantry=oats[other.id]),
+            ],
+            apply=True,
+            sleep=lambda _: None,
+        )
+        assert test_user.id in report.apply_failed
+        assert other.id in report.applied
+        assert report.exit_status() == 1

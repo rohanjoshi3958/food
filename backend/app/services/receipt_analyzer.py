@@ -633,6 +633,8 @@ def parse_nutrition_message(
 
     try:
         payload = _extract_json(text_blocks[-1])
+        if not isinstance(payload, dict):
+            raise ValueError("nutrition response must be a JSON object")
         guessed_quantity = quantity or _as_optional_str(payload.get("quantity")) or "1"
         guessed_unit = unit or _as_optional_str(payload.get("unit")) or "each"
 

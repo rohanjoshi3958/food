@@ -1,14 +1,15 @@
-"""Nightly first-turn meal regeneration via Message Batches (FOOD-57).
+"""Nightly meal regeneration via Message Batches (FOOD-57).
 
 Interactive ``POST /api/meals/generate`` stays on the sync Messages API and
-keeps its calorie / similarity retry loop. This CLI submits the *first*
-``meal.generate`` turn per user pantry as a batch (50% off, 1h cache TTL).
+keeps its calorie / similarity retry loop. This CLI submits **one**
+``meal.generate`` request per user pantry as a batch (50% off, 1h cache TTL).
 
-Calorie retries are intentionally not in this job: they are conversation
-turns that depend on the previous assistant JSON. Out-of-range first turns
-are finalized the same way a single successful sync attempt is (clamp +
-one-person scale). Use the interactive path when you need the 4-attempt
-loop.
+Calorie retries are intentionally not in this job: they are extra conversation
+turns that depend on the previous assistant JSON. If the user already has a
+meal, that JSON is included so the model proposes a different dish (same as
+interactive "try another") — still a single batch item, not a retry loop.
+Out-of-range answers are finalized the same way a single successful sync
+attempt is (clamp + one-person scale).
 
 By default nothing is written. Pass ``--apply`` to replace that user's
 current ``meals`` row the same way the generate endpoint does.
@@ -34,7 +35,11 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import SessionLocal
 from app.models import Ingredient, Meal, User
-from app.services.anthropic_batch import BatchMessageRequest, run_message_batch
+from app.services.anthropic_batch import (
+    BatchMessageRequest,
+    BatchRunInterrupted,
+    run_message_batch,
+)
 from app.services.anthropic_cache import message_text_blocks
 from app.services.ingredient_deduction import serialize_meal_ingredients
 from app.services.meal_generator import (
@@ -74,7 +79,9 @@ class RegenReport:
     failed: dict[str, str] = field(default_factory=dict)
     skipped_empty_pantry: list[str] = field(default_factory=list)
     applied: list[str] = field(default_factory=list)
+    apply_failed: dict[str, str] = field(default_factory=dict)
     batch_ids: list[str] = field(default_factory=list)
+    interrupted: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -82,8 +89,15 @@ class RegenReport:
             "failed": self.failed,
             "skipped_empty_pantry": self.skipped_empty_pantry,
             "applied": self.applied,
+            "apply_failed": self.apply_failed,
             "batch_ids": self.batch_ids,
+            "interrupted": self.interrupted,
         }
+
+    def exit_status(self) -> int:
+        if self.failed or self.apply_failed or self.interrupted:
+            return 1
+        return 0
 
 
 def _require_api_key() -> None:
@@ -246,6 +260,8 @@ def regen_meals(
         if not item.pantry:
             report.skipped_empty_pantry.append(item.user_id)
             continue
+        # Include the current meal when present so nightly regen asks for a
+        # different dish. Still one batch request — not the calorie-retry loop.
         requests.append(
             build_meal_request(
                 item.user_id,
@@ -268,7 +284,11 @@ def regen_meals(
     if clock is not None:
         run_kw["clock"] = clock
 
-    outcome = run_message_batch(client, requests, **run_kw)
+    try:
+        outcome = run_message_batch(client, requests, **run_kw)
+    except BatchRunInterrupted as exc:
+        outcome = exc.outcome
+        report.interrupted = str(exc)
     report.batch_ids.extend(outcome.submitted_batch_ids)
 
     for custom_id, item in outcome.succeeded.items():
@@ -282,8 +302,13 @@ def regen_meals(
             continue
         report.ok[custom_id] = parsed.name
         if apply:
-            persist_generated_meal(db, custom_id, parsed)
-            report.applied.append(custom_id)
+            try:
+                persist_generated_meal(db, custom_id, parsed)
+                report.applied.append(custom_id)
+            except Exception as exc:
+                db.rollback()
+                logger.exception("Failed to persist meal for user %s", custom_id)
+                report.apply_failed[custom_id] = str(exc)
 
     for custom_id, item in outcome.failed.items():
         report.failed[custom_id] = item.error_message or item.error_type or item.type
@@ -294,7 +319,7 @@ def regen_meals(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Regenerate first-turn meals through Anthropic Message Batches. "
+            "Regenerate one meal per pantry through Anthropic Message Batches. "
             "Interactive generate stays on the sync Messages API."
         )
     )
@@ -339,7 +364,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_retries=args.max_retries,
         )
         print(json.dumps(report.to_json(), indent=2))
-        return 1 if report.failed else 0
+        return report.exit_status()
     finally:
         db.close()
 
