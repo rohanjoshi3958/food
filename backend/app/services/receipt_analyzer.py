@@ -1,4 +1,5 @@
 import base64
+import contextvars
 import json
 import mimetypes
 import re
@@ -11,6 +12,11 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.services.anthropic_cache import create_cached_message, message_text_blocks
 from app.services.model_router import RouteDecision, escalation_for, route_model
+
+# Non-Claude receipt steps (OCR pass, cache hit, rule-based parse — FOOD-55)
+# should report through app.llm_usage.pipeline_step(step, route=ROUTE_OCR|
+# ROUTE_CACHE) inside the same receipt_parse workflow scope so they land in
+# the same table and dashboard rather than in parallel counters.
 
 
 def _anthropic_error_message(exc: Exception, model: str) -> str:
@@ -514,8 +520,13 @@ def _enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
     enriched_items = list(parsed.items)
 
     with ThreadPoolExecutor(max_workers=min(6, len(food_indexes))) as executor:
+        # Copy the context so worker threads inherit the LLM workflow scope.
         futures = {
-            executor.submit(_enrich_item_with_nutrition, parsed.items[index]): index
+            executor.submit(
+                contextvars.copy_context().run,
+                _enrich_item_with_nutrition,
+                parsed.items[index],
+            ): index
             for index in food_indexes
         }
         for future in as_completed(futures):

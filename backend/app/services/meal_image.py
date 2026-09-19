@@ -11,6 +11,8 @@ from app.services.model_router import route_model
 PROMPT_SYSTEM = """You write short prompts for photorealistic food photography.
 Respond with ONLY the image prompt text — no quotes, labels, or explanation."""
 
+STEP_IMAGE_PROMPT = "image_prompt"
+
 
 class MealImageError(Exception):
     pass

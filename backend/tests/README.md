@@ -16,6 +16,7 @@ This directory contains automated backend tests for:
 - **Model routing** policy, flag-off guarantee, and escalation wiring (`test_model_router.py`)
 - **Quality evals (FOOD-58)** — receipt accuracy, ingredient match rate, meal-plan acceptability against documented baselines (`tests/evals/`, see `tests/evals/README.md`)
 - **OCR-first receipt eval scaffold (FOOD-55)** — labelled cases and scoring under `evals/receipts/` (see `evals/receipts/README.md`)
+- **Claude usage instrumentation** — cost math and vision tokens (`test_llm_pricing.py`), recording hooks and workflow attribution with a mocked Anthropic client (`test_llm_usage.py`), and the metrics API: persistence through product flows, 7-day aggregates, access control, Admin API reconciliation (`test_llm_metrics_api.py`)
 
 ## Running Tests
 
