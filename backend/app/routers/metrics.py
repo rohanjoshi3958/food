@@ -5,8 +5,10 @@ Not part of the consumer product. Access is granted to:
 - requests carrying ``Authorization: Bearer <METRICS_API_TOKEN>``, or
 - signed-in users whose email is listed in ``ADMIN_EMAILS``.
 
-Outside production, when neither setting is configured, any signed-in user
-may view the dashboard so QA and developers can verify numbers locally.
+In known local environments (``ENVIRONMENT`` of development / dev / local /
+test), when neither setting is configured, any signed-in user may view the
+dashboard so QA and developers can verify numbers locally. Any other or unset
+value fails closed.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ from app.models import User
 from app.sessions import get_active_session
 
 router = APIRouter(prefix="/metrics/llm", tags=["metrics"])
+
+KNOWN_DEV_ENVIRONMENTS = frozenset({"development", "dev", "local", "test"})
 
 
 def _bearer_token(request: Request) -> str | None:
@@ -70,8 +74,10 @@ def require_metrics_access(
     if user is not None and user.email.lower() in admin_emails:
         return f"admin:{user.id}"
 
-    is_production = (settings.environment or "").lower() == "production"
-    dev_open = not is_production and not admin_emails and not configured_token
+    # Fail closed: only well-known local environments are open by default, so an
+    # unset or misspelled ENVIRONMENT never exposes metrics to every user.
+    known_dev = (settings.environment or "").lower() in KNOWN_DEV_ENVIRONMENTS
+    dev_open = known_dev and not admin_emails and not configured_token
     if user is not None and dev_open:
         return f"dev:{user.id}"
 

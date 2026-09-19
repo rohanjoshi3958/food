@@ -288,7 +288,6 @@ function Reconciliation({
               <th className={`${th} text-right`}>Cache write 5m / 1h</th>
               <th className={`${th} text-right`}>Cache read</th>
               <th className={`${th} text-right`}>Output</th>
-              <th className={`${th} text-right`}>Billed $</th>
             </tr>
           </thead>
           <tbody>
@@ -303,11 +302,42 @@ function Reconciliation({
                 </td>
                 <td className={tdNum}>{formatCount(row.cache_read_tokens)}</td>
                 <td className={tdNum}>{formatCount(row.output_tokens)}</td>
-                <td className={tdNum}>{formatUsd(data.cost.by_model[row.model], 2)}</td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+            Billed by model / description
+          </p>
+          <table className="w-full">
+            <tbody>
+              {Object.entries(data.cost.by_model).map(([key, usd]) => (
+                <tr key={key} className="border-t border-stone-100">
+                  <td className={td}>{key}</td>
+                  <td className={tdNum}>{formatUsd(usd, 2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">
+            Billed by token type
+          </p>
+          <table className="w-full">
+            <tbody>
+              {Object.entries(data.cost.by_token_type).map(([key, usd]) => (
+                <tr key={key} className="border-t border-stone-100">
+                  <td className={td}>{key}</td>
+                  <td className={tdNum}>{formatUsd(usd, 2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
       <p className="text-xs text-stone-500">
         Org cache read rate: {formatPct(data.usage.cache_read_pct)}. Fetched{" "}

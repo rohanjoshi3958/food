@@ -157,6 +157,46 @@ class TestPersistenceThroughProductFlows:
         assert run.error_type == "ReceiptAnalysisError"
         assert test_db.query(LlmUsageEvent).count() == 1
 
+    @patch("app.services.receipt_analyzer.anthropic.Anthropic")
+    @patch("app.services.receipt_analyzer.settings.anthropic_api_key", "test-api-key")
+    @patch("app.config.settings.anthropic_api_key", "test-api-key")
+    def test_scan_with_no_usable_draft_items_is_a_failed_run(
+        self, mock_anthropic, client, test_db, auth_headers, mock_receipt_image, tmp_path
+    ):
+        """The scan call succeeds but the merged draft is empty → 422, run must not count as a success."""
+        scan = {
+            "store_name": "Shop",
+            "items": [
+                {"store_item_name": "BANANA", "ingredient_name": "Banana", "is_food": True, "quantity": "1", "unit": "each"},
+            ],
+        }
+        mock_client = Mock()
+        mock_client.messages.create.side_effect = [
+            _response(json.dumps(scan), input_tokens=1000, output_tokens=50),
+            _response(json.dumps({"recognized": True, "quantity": "1", "unit": "each"}), input_tokens=300, output_tokens=40),
+        ]
+        mock_anthropic.return_value = mock_client
+        with patch.object(settings, "upload_dir", str(tmp_path / "uploads")), patch(
+            "app.routers.receipts._draft_from_parsed_items", return_value=[]
+        ):
+            with open(mock_receipt_image, "rb") as handle:
+                response = client.post(
+                    "/api/receipts/upload",
+                    files={"file": ("receipt.jpg", handle, "image/jpeg")},
+                    data={"manual_items": "[]"},
+                    headers=auth_headers,
+                )
+        assert response.status_code == 422
+        assert "No ingredients found" in response.json()["detail"]
+
+        [run] = test_db.query(LlmWorkflowRun).all()
+        assert run.status == "failed"
+        assert run.error_type == "ReceiptAnalysisError"
+        summary = client.get("/api/metrics/llm/summary", headers=auth_headers).json()
+        receipt = next(row for row in summary["workflows"] if row["workflow"] == "receipt_parse")
+        assert receipt["successful_runs"] == 0
+        assert receipt["failed_runs"] == 1
+
     @patch("app.services.receipt_analyzer._get_client")
     def test_manual_ingredient_is_one_normalize_run(self, mock_get_client, client, test_db, test_user, auth_headers):
         mock_client = Mock()
@@ -231,18 +271,20 @@ class TestSevenDayAggregates:
         )
         # Stale event outside the window must be ignored.
         _seed_event(test_db, created_at=datetime.now(UTC) - timedelta(days=10), estimated_cost_usd=99.0)
+        # In-window event on an earlier day pins the daily grouping key (run-less meal_gen spend).
+        _seed_event(test_db, created_at=datetime.now(UTC) - timedelta(days=2), estimated_cost_usd=0.005)
 
         summary = client.get("/api/metrics/llm/summary?days=7", headers=auth_headers).json()
 
         assert summary["window"]["days"] == 7
         totals = summary["totals"]
-        assert totals["calls"] == 5
-        assert totals["estimated_cost_usd"] == pytest.approx(0.043)
+        assert totals["calls"] == 6
+        assert totals["estimated_cost_usd"] == pytest.approx(0.048)
         assert totals["tokens"]["cache_read"] == 1000
-        assert totals["tokens"]["total_input"] == 2000 + 2500 + 200 + 2000
-        assert totals["cache_read_pct"] == pytest.approx(100 * 1000 / 6700, abs=0.01)
+        assert totals["tokens"]["total_input"] == 2000 + 2500 + 200 + 2000 + 1000
+        assert totals["cache_read_pct"] == pytest.approx(100 * 1000 / 7700, abs=0.01)
         assert totals["vision"]["approx_visual_tokens"] == 1500
-        assert totals["vision"]["vision_share_pct"] == pytest.approx(100 * 1500 / 6700, abs=0.01)
+        assert totals["vision"]["vision_share_pct"] == pytest.approx(100 * 1500 / 7700, abs=0.01)
 
         by_workflow = {row["workflow"]: row for row in summary["workflows"]}
         assert [row["workflow"] for row in summary["workflows"]][:3] == ["receipt_parse", "ingredient_normalize", "meal_gen"]
@@ -255,7 +297,7 @@ class TestSevenDayAggregates:
         assert meal["cost_per_successful_run_usd"] == pytest.approx(0.022)
         assert meal["input_tokens_per_successful_run"] == 4500
         assert meal["output_tokens_per_successful_run"] == 1300
-        assert meal["cost_outside_runs_usd"] == pytest.approx(0.001)
+        assert meal["cost_outside_runs_usd"] == pytest.approx(0.001 + 0.005)
         assert meal["retry_rate_pct"] == 50.0
         assert meal["escalation_rate_pct"] == 0.0
         assert meal["error_calls"] == 1
@@ -273,13 +315,20 @@ class TestSevenDayAggregates:
 
         models = {row["model"]: row for row in summary["models"]}
         assert set(models) == {"claude-sonnet-5", "claude-opus-5"}
-        assert models["claude-opus-5"]["share_of_cost_pct"] == pytest.approx(100 * 0.02 / 0.043, abs=0.01)
+        assert models["claude-opus-5"]["share_of_cost_pct"] == pytest.approx(100 * 0.02 / 0.048, abs=0.01)
 
-        assert len(summary["daily"]) in (7, 8)
+        # A 7-day trailing window spans 8 calendar dates (partial first and last day).
+        assert len(summary["daily"]) == 8
         today = datetime.now(UTC).date().isoformat()
+        earlier = (datetime.now(UTC) - timedelta(days=2)).date().isoformat()
         today_row = next(row for row in summary["daily"] if row["date"] == today)
         assert today_row["calls"] == 5
         assert today_row["by_workflow"]["receipt_parse"] == pytest.approx(0.02)
+        earlier_row = next(row for row in summary["daily"] if row["date"] == earlier)
+        assert earlier_row["calls"] == 1
+        assert earlier_row["estimated_cost_usd"] == pytest.approx(0.005)
+        assert earlier_row["by_workflow"] == {"meal_gen": pytest.approx(0.005)}
+        assert sum(row["calls"] for row in summary["daily"]) == 6
 
     def test_route_share_and_confidence_are_exposed(self, client, test_db, auth_headers):
         """FOOD-55 schema: ocr/cache steps sit next to Claude calls in the same run."""
@@ -352,9 +401,15 @@ class TestAccessControl:
         with patch.object(settings, "environment", "development"), patch.object(settings, "admin_emails", ""), patch.object(settings, "metrics_api_token", ""):
             assert client.get("/api/metrics/llm/summary", headers=auth_headers).status_code == 200
 
-    def test_production_without_allowlist_is_403(self, client, auth_headers):
-        with patch.object(settings, "environment", "production"), patch.object(settings, "admin_emails", ""), patch.object(settings, "metrics_api_token", ""):
+    @pytest.mark.parametrize("environment", ["production", "prod", "staging", "", "Development-ish"])
+    def test_non_dev_environment_without_allowlist_fails_closed(self, client, auth_headers, environment):
+        with patch.object(settings, "environment", environment), patch.object(settings, "admin_emails", ""), patch.object(settings, "metrics_api_token", ""):
             assert client.get("/api/metrics/llm/summary", headers=auth_headers).status_code == 403
+
+    @pytest.mark.parametrize("environment", ["development", "DEVELOPMENT", "dev", "local", "test"])
+    def test_known_dev_environments_are_open_when_unconfigured(self, client, auth_headers, environment):
+        with patch.object(settings, "environment", environment), patch.object(settings, "admin_emails", ""), patch.object(settings, "metrics_api_token", ""):
+            assert client.get("/api/metrics/llm/summary", headers=auth_headers).status_code == 200
 
     def test_admin_email_allowlist(self, client, test_db, auth_headers):
         with patch.object(settings, "environment", "production"), patch.object(settings, "admin_emails", "ops@example.com"):

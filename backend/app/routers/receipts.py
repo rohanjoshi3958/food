@@ -268,6 +268,8 @@ async def upload_receipt(
     db.refresh(receipt)
 
     try:
+        # The run covers the empty-draft check too, so a parse that yields no
+        # usable items is a failed run, not a "successful receipt" on the dashboard.
         with workflow_scope(
             WORKFLOW_RECEIPT_PARSE,
             user_id=current_user.id,
@@ -281,20 +283,18 @@ async def upload_receipt(
                 receipt_id=receipt.id,
             )
             parsed = outcome.parsed
-
-        receipt.store_name = parsed.store_name
-        receipt.analysis_status = "pending_review"
-        receipt.analysis_error = None
-        receipt.analysis_path = outcome.path
-        receipt.analysis_result = parsed.model_dump()
-        receipt.draft_items = merge_draft_items(
-            pre_manual_items + _draft_from_parsed_items(parsed.items)
-        )
-
-        if not receipt.draft_items:
-            raise ReceiptAnalysisError(
-                "No ingredients found. Add items manually or try a clearer receipt photo."
+            receipt.store_name = parsed.store_name
+            receipt.analysis_status = "pending_review"
+            receipt.analysis_error = None
+            receipt.analysis_path = outcome.path
+            receipt.analysis_result = parsed.model_dump()
+            receipt.draft_items = merge_draft_items(
+                pre_manual_items + _draft_from_parsed_items(parsed.items)
             )
+            if not receipt.draft_items:
+                raise ReceiptAnalysisError(
+                    "No ingredients found. Add items manually or try a clearer receipt photo."
+                )
 
         db.commit()
         db.refresh(receipt)
