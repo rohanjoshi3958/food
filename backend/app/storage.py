@@ -364,9 +364,9 @@ def delete_quietly(key: str | None) -> None:
 def serve_object(key: str, *, not_found_detail: str = "File not found.") -> Response:
     """Serve an object to the browser.
 
-    S3: redirect to a short-lived presigned GET URL so bytes never pass through
-    the API (unless ``UPLOADS_SIGNED_URL_TTL_SECONDS`` is 0, in which case the
-    object is streamed). Local: plain ``FileResponse``.
+    S3: stream object bytes through the API by default
+    (``UPLOADS_SIGNED_URL_TTL_SECONDS`` is 0). When TTL is >0, redirect to a
+    short-lived presigned GET URL instead. Local: plain ``FileResponse``.
     """
     storage = get_storage()
     try:

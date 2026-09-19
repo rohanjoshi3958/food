@@ -346,8 +346,7 @@ class TestServeObject:
         assert "X-Amz-Expires=120" in location
         assert response.headers["cache-control"] == "private, no-store"
 
-    def test_s3_streams_bytes_when_signed_urls_disabled(self, fake_s3, monkeypatch):
-        monkeypatch.setenv("UPLOADS_SIGNED_URL_TTL_SECONDS", "0")
+    def test_s3_streams_bytes_when_signed_urls_disabled(self, fake_s3):
         key = f"meals/{USER}/x_dinner.png"
         get_storage().put(key, b"png-bytes")
 

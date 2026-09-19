@@ -159,7 +159,15 @@ class TestS3Mode:
         listing = client.get("/api/cookbook", headers=auth_headers).json()
         assert listing[0]["photo_url"] == f"/api/cookbook/{entry.id}/photo"
 
-        # ...which redirects to a short-lived presigned S3 URL.
+        # Default TTL is 0: the API streams bytes (no 307 → presigned S3).
+        streamed = client.get(listing[0]["photo_url"], headers=auth_headers, follow_redirects=False)
+        assert streamed.status_code == 200
+        assert streamed.content == PHOTO_BYTES
+        assert streamed.headers["content-type"].startswith("image/png")
+        assert streamed.headers["cache-control"] == "private, no-store"
+
+        # Operators can still enable short-lived presigned redirects.
+        monkeypatch.setenv("UPLOADS_SIGNED_URL_TTL_SECONDS", "300")
         photo = client.get(listing[0]["photo_url"], headers=auth_headers, follow_redirects=False)
         assert photo.status_code == 307
         assert photo.headers["location"].startswith(
@@ -167,13 +175,6 @@ class TestS3Mode:
         )
         assert "X-Amz-Expires=300" in photo.headers["location"]
         assert photo.headers["cache-control"] == "private, no-store"
-
-        # With redirects disabled the API streams the bytes itself.
-        monkeypatch.setenv("UPLOADS_SIGNED_URL_TTL_SECONDS", "0")
-        streamed = client.get(listing[0]["photo_url"], headers=auth_headers, follow_redirects=False)
-        assert streamed.status_code == 200
-        assert streamed.content == PHOTO_BYTES
-        assert streamed.headers["content-type"].startswith("image/png")
 
         # Deleting the entry deletes the object.
         assert client.delete(f"/api/cookbook/{entry.id}", headers=auth_headers).status_code == 204
@@ -207,8 +208,8 @@ class TestS3Mode:
         response = client.get(
             f"/api/cookbook/{entry.id}/photo", headers=auth_headers, follow_redirects=False
         )
-        assert response.status_code == 307
-        assert legacy_key in response.headers["location"]
+        assert response.status_code == 200
+        assert response.content == b"old"
 
         assert client.delete(f"/api/cookbook/{entry.id}", headers=auth_headers).status_code == 204
         assert legacy_key not in fake_s3.keys(FAKE_BUCKET)

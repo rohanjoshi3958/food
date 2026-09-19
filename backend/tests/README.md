@@ -8,7 +8,7 @@ This directory contains automated backend tests for:
 - **Receipt → inventory E2E flow** (`test_receipt_to_inventory_e2e.py`)
 - **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
 - **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
-- **Upload storage** — object keys, local + S3 backends, presigned-URL serving (`test_storage.py`) and the receipt / meal → cookbook flows in S3 mode and the local fallback (`test_uploads_flow.py`). S3 is exercised through `FakeS3Client` in `conftest.py` (patched `boto3.client`), so no AWS credentials or network are needed.
+- **Upload storage** — object keys, local + S3 backends, API streaming (default TTL 0) and optional presigned-URL redirects (`test_storage.py`) and the receipt / meal → cookbook flows in S3 mode and the local fallback (`test_uploads_flow.py`). S3 is exercised through `FakeS3Client` in `conftest.py` (patched `boto3.client`), so no AWS credentials or network are needed.
 
 ## Running Tests
 

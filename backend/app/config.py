@@ -28,9 +28,10 @@ class Settings(BaseSettings):
     # chain (instance role in prod). Region is AWS_REGION / AWS_DEFAULT_REGION,
     # passed through to boto3 as region_name — not a custom Terraform variable.
     uploads_bucket: str = ""
-    # Lifetime of presigned GET URLs handed to the browser. 0 disables redirects
-    # and streams object bytes through the API instead.
-    uploads_signed_url_ttl_seconds: int = 300
+    # Lifetime of presigned GET URLs handed to the browser. Default 0 streams
+    # object bytes through the API (avoids Amplify 307 → S3 CORS issues until
+    # redirect behavior is proven in prod). Set >0 to enable presigned redirects.
+    uploads_signed_url_ttl_seconds: int = 0
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
