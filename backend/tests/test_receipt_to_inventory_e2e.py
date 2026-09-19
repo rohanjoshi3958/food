@@ -533,12 +533,16 @@ class TestAsyncReceiptAnalysis:
         ) as run_analysis:
             accepted = upload_receipt(client, mock_receipt_image)
 
-            # The job was handed to the background runner with the receipt id as job id.
+            # The job was handed to the background runner with the receipt id as job id
+            # and an UploadStorage object key (not a raw local path).
             run_analysis.assert_called_once()
-            job_receipt_id, job_file, job_manual_items = run_analysis.call_args.args
+            job_receipt_id, job_key, job_manual_items = run_analysis.call_args.args
             assert job_receipt_id == accepted["id"]
-            assert job_file.startswith(str(upload_dir / test_user.id))
+            assert job_key.startswith(f"receipts/{test_user.id}/")
+            assert job_key == accepted["filename"]
             assert job_manual_items == []
+            stored = upload_dir / test_user.id / job_key.rsplit("/", 1)[-1]
+            assert stored.is_file()
 
             # Nothing ran, so the poll still reports processing (not an error).
             polled = client.get(f"/api/receipts/{accepted['id']}")
@@ -639,7 +643,8 @@ class TestAsyncReceiptAnalysis:
             test_db.expire_all()
             db_receipt = test_db.get(Receipt, accepted["id"])
             assert db_receipt is not None
-            assert not Path(db_receipt.filename).exists()
+            stored = Path(settings.upload_dir) / test_user.id / db_receipt.filename.rsplit("/", 1)[-1]
+            assert not stored.exists()
 
             listed = client.get("/api/receipts")
             assert listed.status_code == 200

@@ -18,9 +18,20 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     session_ttl_days: int = 7
     password_reset_ttl_minutes: int = 10
+    # Local-disk fallback (used when UPLOADS_BUCKET is unset). One directory per
+    # object-key prefix; see app/storage.py.
     upload_dir: str = "uploads/receipts"
     meal_upload_dir: str = "uploads/meals"
     cookbook_upload_dir: str = "uploads/cookbook"
+    # S3 mode: name of the private uploads bucket (Terraform output, injected by
+    # App Runner as UPLOADS_BUCKET). Credentials come from the default AWS SDK
+    # chain (instance role in prod). Region is AWS_REGION / AWS_DEFAULT_REGION,
+    # passed through to boto3 as region_name — not a custom Terraform variable.
+    uploads_bucket: str = ""
+    # Lifetime of presigned GET URLs handed to the browser. Default 0 streams
+    # object bytes through the API (avoids Amplify 307 → S3 CORS issues until
+    # redirect behavior is proven in prod). Set >0 to enable presigned redirects.
+    uploads_signed_url_ttl_seconds: int = 0
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
@@ -37,6 +48,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def uploads_use_s3(self) -> bool:
+        return bool(self.uploads_bucket.strip())
 
     @property
     def session_cookie_secure(self) -> bool:

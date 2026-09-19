@@ -37,8 +37,10 @@ WORKDIR /app/backend
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app app ./app
 
-# Upload directories are relative to the working directory (see app/config.py)
-# and must be writable by the non-root user.
+# Local-disk upload fallback (used only when UPLOADS_BUCKET is unset, see
+# app/storage.py) is relative to the working directory and must be writable
+# by the non-root user. In production UPLOADS_BUCKET is set and this directory
+# stays empty.
 RUN mkdir -p uploads && chown -R app:app /app
 
 USER app

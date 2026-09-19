@@ -1,7 +1,6 @@
 import json
-import uuid
+import logging
 from datetime import UTC, datetime
-from pathlib import Path
 
 from fastapi import (
     APIRouter,
@@ -14,9 +13,9 @@ from fastapi import (
     UploadFile,
     status,
 )
+from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, ProgrammingError
 from sqlalchemy.orm import Session, joinedload
 
-from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import Receipt, User
@@ -37,13 +36,54 @@ from app.services.receipt_jobs import (
     ANALYSIS_TIMEOUT,
     ANALYSIS_TIMEOUT_MESSAGE,
     MAX_RECEIPTS_PER_USER,
-    delete_receipt_file,
+    delete_stored_upload,
     prune_old_receipts,
     run_receipt_analysis,
 )
+from app.storage import (
+    RECEIPTS_PREFIX,
+    StorageError,
+    build_object_key,
+    delete_quietly,
+    get_storage,
+    safe_filename,
+)
 from app.validation import validate_ingredient_input
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/receipts", tags=["receipts"])
+
+
+# Failures where SQLAlchemy has not committed the transaction. Ambiguous
+# errors (timeouts, dropped connections) may have committed; those need a
+# follow-up existence check before deleting the uploaded object.
+_DEFINITE_RECEIPT_COMMIT_FAILURES = (
+    DataError,
+    IntegrityError,
+    InvalidRequestError,
+    ProgrammingError,
+)
+
+
+def _receipt_row_exists(db: Session, receipt_id: str) -> bool:
+    return (
+        db.query(Receipt.id).filter(Receipt.id == receipt_id).first() is not None
+    )
+
+
+def _cleanup_upload_after_failed_receipt_commit(
+    db: Session,
+    *,
+    receipt_id: str,
+    object_key: str,
+    exc: BaseException,
+) -> None:
+    db.rollback()
+    if isinstance(exc, _DEFINITE_RECEIPT_COMMIT_FAILURES) or not _receipt_row_exists(
+        db, receipt_id
+    ):
+        delete_quietly(object_key)
 
 
 def _discard_receipts_with_statuses(
@@ -60,12 +100,14 @@ def _discard_receipts_with_statuses(
         .all()
     )
 
+    stored = [receipt.filename for receipt in receipts]
     for receipt in receipts:
-        delete_receipt_file(receipt)
         db.delete(receipt)
 
     if receipts:
         db.commit()
+    for filename in stored:
+        delete_stored_upload(filename)
 
 
 def _validate_draft_item(item: DraftIngredientItem) -> None:
@@ -211,33 +253,69 @@ async def upload_receipt(
             detail="A file is required.",
         )
 
-    pre_manual_items = _parse_manual_items(manual_items)
-
-    upload_root = Path(settings.upload_dir) / current_user.id
-    upload_root.mkdir(parents=True, exist_ok=True)
-
-    safe_name = Path(file.filename).name
-    stored_name = f"{uuid.uuid4().hex}_{safe_name}"
-    destination = upload_root / stored_name
+    safe_name = safe_filename(file.filename)
+    object_key = build_object_key(RECEIPTS_PREFIX, current_user.id, safe_name)
 
     contents = await file.read()
-    destination.write_bytes(contents)
+    if not contents:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload a valid receipt file.",
+        )
+
+    pre_manual_items = _parse_manual_items(manual_items)
+
+    try:
+        get_storage().put(object_key, contents, content_type=file.content_type)
+    except StorageError as exc:
+        logger.exception("Failed to store receipt upload %s", object_key)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to store the receipt right now. Please try again.",
+        ) from exc
 
     receipt = Receipt(
         user_id=current_user.id,
-        filename=str(destination),
+        filename=object_key,
         original_name=safe_name,
         analysis_status="processing",
         analysis_stage=STAGE_QUEUED,
     )
     db.add(receipt)
-    db.commit()
-    db.refresh(receipt)
+    try:
+        db.commit()
+    except Exception as exc:
+        _cleanup_upload_after_failed_receipt_commit(
+            db,
+            receipt_id=receipt.id,
+            object_key=object_key,
+            exc=exc,
+        )
+        logger.exception("Failed to persist receipt %s", object_key)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to store the receipt right now. Please try again.",
+        ) from exc
+
+    try:
+        db.refresh(receipt)
+    except Exception:
+        # The row and object are already committed. Reconcile without deleting.
+        logger.exception("Failed to refresh receipt %s after commit", receipt.id)
+        db.rollback()
+        persisted = (
+            db.query(Receipt)
+            .options(joinedload(Receipt.ingredients))
+            .filter(Receipt.id == receipt.id)
+            .first()
+        )
+        if persisted is not None:
+            receipt = persisted
 
     background_tasks.add_task(
         run_receipt_analysis,
         receipt.id,
-        str(destination),
+        object_key,
         pre_manual_items,
     )
     return _receipt_response(receipt)
@@ -276,12 +354,13 @@ def get_receipt(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found.")
 
     if receipt.analysis_status == "processing" and _analysis_timed_out(receipt):
-        delete_receipt_file(receipt)
+        stored = receipt.filename
         receipt.analysis_status = "failed"
         receipt.analysis_stage = None
         receipt.analysis_error = ANALYSIS_TIMEOUT_MESSAGE
         receipt.draft_items = None
         db.commit()
+        delete_stored_upload(stored)
         db.refresh(receipt)
 
     return _receipt_response(receipt)

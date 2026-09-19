@@ -206,12 +206,13 @@ STAGE_ESTIMATING_NUTRITION = "estimating_nutrition"
 ProgressCallback = Callable[[str], None]
 
 
-def _media_type_for_path(path: Path) -> tuple[str, str]:
-    suffix = path.suffix.lower()
+def _media_type_for_filename(filename: str) -> tuple[str, str]:
+    name = Path(filename).name
+    suffix = Path(name).suffix.lower()
     media_type = SUPPORTED_MEDIA_TYPES.get(suffix)
 
     if not media_type:
-        guessed, _ = mimetypes.guess_type(path.name)
+        guessed, _ = mimetypes.guess_type(name)
         media_type = guessed
 
     if not media_type or media_type not in SUPPORTED_MEDIA_TYPES.values():
@@ -488,9 +489,11 @@ def _enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
 
 
 def analyze_receipt_image(
-    file_path: Path,
+    contents: bytes,
+    filename: str,
     on_progress: ProgressCallback | None = None,
 ) -> ParsedReceipt:
+    """Analyze receipt bytes; ``filename`` is only used to infer the media type."""
     if not settings.anthropic_api_key:
         raise ReceiptAnalysisError(
             "Anthropic API key is not configured. Add ANTHROPIC_API_KEY to your .env file."
@@ -500,8 +503,8 @@ def analyze_receipt_image(
         if on_progress is not None:
             on_progress(stage)
 
-    media_type, content_type = _media_type_for_path(file_path)
-    encoded = base64.standard_b64encode(file_path.read_bytes()).decode("utf-8")
+    media_type, content_type = _media_type_for_filename(filename)
+    encoded = base64.standard_b64encode(contents).decode("utf-8")
 
     client = _get_client()
     report(STAGE_READING_RECEIPT)
