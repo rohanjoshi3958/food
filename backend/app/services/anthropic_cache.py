@@ -19,10 +19,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Only "ephemeral" exists today; it defaults to a 5-minute TTL, which suits
-# the interactive receipt / meal flows where the same user issues bursts of
-# calls (one per receipt line, one per meal retry).
+# Only "ephemeral" exists today. Interactive receipt / meal flows omit ``ttl``
+# so Anthropic's default 5-minute window applies (bursts of per-line / retry
+# calls). Batch jobs (FOOD-57) pass ``ttl="1h"`` because most batches take
+# longer than five minutes; see backend/BATCH_API.md.
+CACHE_TTL_5M = "5m"
+CACHE_TTL_1H = "1h"
+VALID_CACHE_TTLS = frozenset({CACHE_TTL_5M, CACHE_TTL_1H})
 EPHEMERAL_CACHE_CONTROL: dict[str, str] = {"type": "ephemeral"}
+EPHEMERAL_1H_CACHE_CONTROL: dict[str, str] = {"type": "ephemeral", "ttl": CACHE_TTL_1H}
 
 USAGE_FIELDS: tuple[str, ...] = (
     "input_tokens",
@@ -32,23 +37,79 @@ USAGE_FIELDS: tuple[str, ...] = (
 )
 
 
-def cached_text_block(text: str) -> dict[str, Any]:
-    """Return a text content block that ends a cacheable prefix."""
+def cached_text_block(text: str, *, ttl: str | None = None) -> dict[str, Any]:
+    """Return a text content block that ends a cacheable prefix.
+
+    ``ttl`` is omitted on the interactive path (Anthropic default: 5 minutes).
+    Batch jobs pass :data:`CACHE_TTL_1H`.
+    """
+    control = dict(EPHEMERAL_CACHE_CONTROL)
+    if ttl is not None:
+        if ttl not in VALID_CACHE_TTLS:
+            raise ValueError(
+                f"cache ttl must be one of {sorted(VALID_CACHE_TTLS)}, got {ttl!r}"
+            )
+        control["ttl"] = ttl
     return {
         "type": "text",
         "text": text,
-        "cache_control": dict(EPHEMERAL_CACHE_CONTROL),
+        "cache_control": control,
     }
 
 
-def cached_system_prompt(prefix: str) -> list[dict[str, Any]]:
+def cached_system_prompt(
+    prefix: str, *, ttl: str | None = None
+) -> list[dict[str, Any]]:
     """Build the ``system`` parameter for a byte-stable prompt prefix.
 
     ``prefix`` must be fully determined by deployed code (constants,
     calorie bands, JSON schemas). Anything derived from the request breaks
     the cache for every caller.
     """
-    return [cached_text_block(prefix)]
+    return [cached_text_block(prefix, ttl=ttl)]
+
+
+def build_cached_message_params(
+    *,
+    model: str,
+    max_tokens: int,
+    system_prefix: str,
+    messages: list[dict[str, Any]],
+    cache_ttl: str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Kwargs shared by the sync Messages API and a Batch ``params`` object."""
+    return {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": cached_system_prompt(system_prefix, ttl=cache_ttl),
+        "messages": messages,
+        **kwargs,
+    }
+
+
+def message_text_blocks(message: Any) -> list[str]:
+    """Collect text blocks from a Messages API or Batch result message.
+
+    Accepts SDK objects and plain dicts so batch result rows can be parsed
+    without a second conversion step.
+    """
+    content = getattr(message, "content", None)
+    if content is None and isinstance(message, dict):
+        content = message.get("content")
+    texts: list[str] = []
+    for block in content or []:
+        if isinstance(block, dict):
+            if block.get("type") != "text":
+                continue
+            text = block.get("text")
+        else:
+            if getattr(block, "type", None) != "text":
+                continue
+            text = getattr(block, "text", None)
+        if text:
+            texts.append(text)
+    return texts
 
 
 def _usage_int(usage: Any, field: str) -> int | None:
@@ -99,19 +160,26 @@ def create_cached_message(
     max_tokens: int,
     system_prefix: str,
     messages: list[dict[str, Any]],
+    cache_ttl: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """Call ``client.messages.create`` with ``system_prefix`` as the cached block.
 
     ``messages`` is sent verbatim after the breakpoint; callers own its
     ordering (images, per-item fields, multi-turn history all belong here).
+    Interactive callers leave ``cache_ttl`` unset (5-minute default). Batch
+    construction goes through :func:`build_cached_message_params` with
+    ``cache_ttl="1h"`` instead of this function.
     """
     message = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        system=cached_system_prompt(system_prefix),
-        messages=messages,
-        **kwargs,
+        **build_cached_message_params(
+            model=model,
+            max_tokens=max_tokens,
+            system_prefix=system_prefix,
+            messages=messages,
+            cache_ttl=cache_ttl,
+            **kwargs,
+        )
     )
     log_cache_usage(message, call_site=call_site, model=model)
     return message
