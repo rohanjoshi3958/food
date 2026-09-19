@@ -432,3 +432,238 @@ class TestStorageCompensation:
         cookbook_keys = {key for key in fake_s3.keys(FAKE_BUCKET) if key.startswith("cookbook/")}
         assert cookbook_keys == {old_photo}
         assert fake_s3.objects[(FAKE_BUCKET, old_photo)]["Body"] == b"first"
+
+    def test_receipt_upload_keeps_object_when_refresh_fails_after_commit(
+        self, fake_s3, client, test_db: Session, test_user: User, auth_headers
+    ):
+        with (
+            patch.object(test_db, "refresh", side_effect=Exception("refresh failed")),
+            patch("app.routers.receipts.run_receipt_analysis"),
+        ):
+            response = client.post(
+                "/api/receipts/upload",
+                files={"file": ("receipt.jpg", b"fake image data", "image/jpeg")},
+                data={"manual_items": "[]"},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 202, response.text
+        receipts = test_db.query(Receipt).all()
+        assert len(receipts) == 1
+        assert receipts[0].filename in fake_s3.keys(FAKE_BUCKET)
+        assert receipts[0].filename.startswith(f"receipts/{test_user.id}/")
+        assert receipts[0].analysis_status == "processing"
+
+    def test_discard_pending_keeps_object_when_row_commit_fails(
+        self, fake_s3, client, test_db: Session, test_user: User, auth_headers
+    ):
+        from app.storage import get_storage
+
+        key = f"receipts/{test_user.id}/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_receipt.jpg"
+        get_storage().put(key, b"data", content_type="image/jpeg")
+        receipt = Receipt(
+            user_id=test_user.id,
+            filename=key,
+            original_name="receipt.jpg",
+            analysis_status="processing",
+        )
+        test_db.add(receipt)
+        test_db.commit()
+
+        with patch.object(test_db, "commit", side_effect=Exception("discard commit failed")):
+            response = client.post("/api/receipts/discard-pending", headers=auth_headers)
+
+        assert response.status_code == 500
+        test_db.rollback()
+        assert test_db.query(Receipt).filter(Receipt.id == receipt.id).one()
+        assert key in fake_s3.keys(FAKE_BUCKET)
+
+    def test_prune_old_receipts_commits_before_deleting_objects(
+        self, fake_s3, test_db: Session, test_user: User
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        from app.services.receipt_jobs import prune_old_receipts
+        from app.storage import get_storage
+
+        keys = []
+        now = datetime.now(UTC)
+        for index in range(4):
+            key = f"receipts/{test_user.id}/{index:032x}_receipt.jpg"
+            get_storage().put(key, b"data", content_type="image/jpeg")
+            test_db.add(
+                Receipt(
+                    user_id=test_user.id,
+                    filename=key,
+                    original_name=f"receipt-{index}.jpg",
+                    analysis_status="completed",
+                    uploaded_at=now - timedelta(minutes=index),
+                )
+            )
+            keys.append(key)
+        test_db.commit()
+
+        order: list[str] = []
+        original_commit = test_db.commit
+
+        def tracking_commit():
+            order.append("commit")
+            original_commit()
+
+        def tracking_delete(stored):
+            order.append(f"delete:{stored}")
+
+        with (
+            patch.object(test_db, "commit", side_effect=tracking_commit),
+            patch(
+                "app.services.receipt_jobs.delete_stored_upload",
+                side_effect=tracking_delete,
+            ),
+        ):
+            prune_old_receipts(test_db, test_user.id)
+
+        assert order[0] == "commit"
+        assert order[1] == f"delete:{keys[-1]}"
+        assert test_db.query(Receipt).count() == 3
+
+    def test_prune_old_receipts_keeps_objects_when_commit_fails(
+        self, fake_s3, test_db: Session, test_user: User
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        from app.services.receipt_jobs import prune_old_receipts
+        from app.storage import get_storage
+
+        keys = []
+        now = datetime.now(UTC)
+        for index in range(4):
+            key = f"receipts/{test_user.id}/{index:032x}_receipt.jpg"
+            get_storage().put(key, b"data", content_type="image/jpeg")
+            test_db.add(
+                Receipt(
+                    user_id=test_user.id,
+                    filename=key,
+                    original_name=f"receipt-{index}.jpg",
+                    analysis_status="completed",
+                    uploaded_at=now - timedelta(minutes=index),
+                )
+            )
+            keys.append(key)
+        test_db.commit()
+
+        with patch.object(test_db, "commit", side_effect=Exception("prune failed")):
+            with pytest.raises(Exception, match="prune failed"):
+                prune_old_receipts(test_db, test_user.id)
+
+        test_db.rollback()
+        assert test_db.query(Receipt).count() == 4
+        assert set(keys) <= fake_s3.keys(FAKE_BUCKET)
+
+    def test_mark_failed_commits_before_deleting_object(
+        self, fake_s3, test_db: Session, test_user: User
+    ):
+        from app.services import receipt_jobs
+        from app.storage import get_storage
+
+        key = f"receipts/{test_user.id}/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_receipt.jpg"
+        get_storage().put(key, b"data", content_type="image/jpeg")
+        receipt = Receipt(
+            user_id=test_user.id,
+            filename=key,
+            original_name="receipt.jpg",
+            analysis_status="processing",
+        )
+        test_db.add(receipt)
+        test_db.commit()
+
+        order: list[str] = []
+        original_commit = test_db.commit
+
+        def tracking_commit():
+            order.append("commit")
+            original_commit()
+
+        def tracking_delete(stored):
+            order.append(f"delete:{stored}")
+
+        with (
+            patch.object(test_db, "commit", side_effect=tracking_commit),
+            patch.object(receipt_jobs, "delete_stored_upload", side_effect=tracking_delete),
+        ):
+            receipt_jobs._mark_failed(test_db, receipt.id, "boom")
+
+        assert order == ["commit", f"delete:{key}"]
+        test_db.refresh(receipt)
+        assert receipt.analysis_status == "failed"
+        assert key in fake_s3.keys(FAKE_BUCKET)
+
+    def test_timeout_keeps_object_when_failed_status_commit_fails(
+        self, fake_s3, client, test_db: Session, test_user: User, auth_headers
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        from app.storage import get_storage
+
+        key = f"receipts/{test_user.id}/cccccccccccccccccccccccccccccccc_stale.jpg"
+        get_storage().put(key, b"data", content_type="image/jpeg")
+        receipt = Receipt(
+            user_id=test_user.id,
+            filename=key,
+            original_name="stale.jpg",
+            analysis_status="processing",
+            analysis_stage="reading_receipt",
+            uploaded_at=datetime.now(UTC) - timedelta(minutes=11),
+        )
+        test_db.add(receipt)
+        test_db.commit()
+
+        with patch.object(test_db, "commit", side_effect=Exception("timeout commit failed")):
+            response = client.get(f"/api/receipts/{receipt.id}", headers=auth_headers)
+
+        assert response.status_code == 500
+        test_db.rollback()
+        remaining = test_db.query(Receipt).filter(Receipt.id == receipt.id).one()
+        assert remaining.analysis_status == "processing"
+        assert key in fake_s3.keys(FAKE_BUCKET)
+
+    def test_timeout_commits_failed_status_before_deleting_object(
+        self, fake_s3, client, test_db: Session, test_user: User, auth_headers
+    ):
+        from datetime import UTC, datetime, timedelta
+
+        from app.routers import receipts as receipts_router
+        from app.storage import get_storage
+
+        key = f"receipts/{test_user.id}/dddddddddddddddddddddddddddddddd_stale.jpg"
+        get_storage().put(key, b"data", content_type="image/jpeg")
+        receipt = Receipt(
+            user_id=test_user.id,
+            filename=key,
+            original_name="stale.jpg",
+            analysis_status="processing",
+            analysis_stage="reading_receipt",
+            uploaded_at=datetime.now(UTC) - timedelta(minutes=11),
+        )
+        test_db.add(receipt)
+        test_db.commit()
+
+        order: list[str] = []
+        original_commit = test_db.commit
+
+        def tracking_commit():
+            order.append("commit")
+            original_commit()
+
+        def tracking_delete(stored):
+            order.append(f"delete:{stored}")
+
+        with (
+            patch.object(test_db, "commit", side_effect=tracking_commit),
+            patch.object(receipts_router, "delete_stored_upload", side_effect=tracking_delete),
+        ):
+            response = client.get(f"/api/receipts/{receipt.id}", headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["analysis_status"] == "failed"
+        assert order == ["commit", f"delete:{key}"]
+        assert key in fake_s3.keys(FAKE_BUCKET)

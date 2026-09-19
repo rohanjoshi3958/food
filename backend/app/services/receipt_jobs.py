@@ -47,18 +47,23 @@ NO_INGREDIENTS_MESSAGE = (
 )
 
 
-def delete_receipt_file(receipt: Receipt) -> None:
-    if not receipt.filename:
+def delete_stored_upload(stored: str | None) -> None:
+    """Remove an upload by object key or legacy local path. Idempotent."""
+    if not stored:
         return
     try:
-        validate_object_key(receipt.filename)
+        validate_object_key(stored)
     except InvalidObjectKey:
         # Rows written before object keys existed hold a local filesystem path.
-        legacy = Path(receipt.filename)
+        legacy = Path(stored)
         if legacy.is_file():
             legacy.unlink()
         return
-    delete_quietly(receipt.filename)
+    delete_quietly(stored)
+
+
+def delete_receipt_file(receipt: Receipt) -> None:
+    delete_stored_upload(receipt.filename)
 
 
 def _read_receipt_bytes(stored: str) -> tuple[bytes, str]:
@@ -86,11 +91,14 @@ def prune_old_receipts(db: Session, user_id: str) -> None:
         .order_by(Receipt.uploaded_at.desc())
         .all()
     )
-    for receipt in receipts[MAX_RECEIPTS_PER_USER:]:
-        delete_receipt_file(receipt)
+    stale = receipts[MAX_RECEIPTS_PER_USER:]
+    stored = [receipt.filename for receipt in stale]
+    for receipt in stale:
         db.delete(receipt)
-    if len(receipts) > MAX_RECEIPTS_PER_USER:
+    if stale:
         db.commit()
+    for filename in stored:
+        delete_stored_upload(filename)
 
 
 def draft_items_from_parsed(items: list[ParsedReceiptItem]) -> list[dict]:
@@ -149,12 +157,13 @@ def _mark_failed(db: Session, receipt_id: str, message: str) -> None:
         return
     # The record is kept so the poll can report the error; the upload itself
     # is no longer needed. Failed receipts are purged on the next list/discard.
-    delete_receipt_file(receipt)
+    stored = receipt.filename
     receipt.analysis_status = "failed"
     receipt.analysis_stage = None
     receipt.analysis_error = message
     receipt.draft_items = None
     db.commit()
+    delete_stored_upload(stored)
 
 
 def run_receipt_analysis(

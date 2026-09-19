@@ -36,7 +36,7 @@ from app.services.receipt_jobs import (
     ANALYSIS_TIMEOUT,
     ANALYSIS_TIMEOUT_MESSAGE,
     MAX_RECEIPTS_PER_USER,
-    delete_receipt_file,
+    delete_stored_upload,
     prune_old_receipts,
     run_receipt_analysis,
 )
@@ -100,12 +100,14 @@ def _discard_receipts_with_statuses(
         .all()
     )
 
+    stored = [receipt.filename for receipt in receipts]
     for receipt in receipts:
-        delete_receipt_file(receipt)
         db.delete(receipt)
 
     if receipts:
         db.commit()
+    for filename in stored:
+        delete_stored_upload(filename)
 
 
 def _validate_draft_item(item: DraftIngredientItem) -> None:
@@ -282,7 +284,6 @@ async def upload_receipt(
     db.add(receipt)
     try:
         db.commit()
-        db.refresh(receipt)
     except Exception as exc:
         _cleanup_upload_after_failed_receipt_commit(
             db,
@@ -295,6 +296,21 @@ async def upload_receipt(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Unable to store the receipt right now. Please try again.",
         ) from exc
+
+    try:
+        db.refresh(receipt)
+    except Exception:
+        # The row and object are already committed. Reconcile without deleting.
+        logger.exception("Failed to refresh receipt %s after commit", receipt.id)
+        db.rollback()
+        persisted = (
+            db.query(Receipt)
+            .options(joinedload(Receipt.ingredients))
+            .filter(Receipt.id == receipt.id)
+            .first()
+        )
+        if persisted is not None:
+            receipt = persisted
 
     background_tasks.add_task(
         run_receipt_analysis,
@@ -338,12 +354,13 @@ def get_receipt(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Receipt not found.")
 
     if receipt.analysis_status == "processing" and _analysis_timed_out(receipt):
-        delete_receipt_file(receipt)
+        stored = receipt.filename
         receipt.analysis_status = "failed"
         receipt.analysis_stage = None
         receipt.analysis_error = ANALYSIS_TIMEOUT_MESSAGE
         receipt.draft_items = None
         db.commit()
+        delete_stored_upload(stored)
         db.refresh(receipt)
 
     return _receipt_response(receipt)
