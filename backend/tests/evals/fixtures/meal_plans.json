@@ -1,0 +1,221 @@
+{
+  "_comment": [
+    "Meal-plan acceptability corpus. Each case gives a pantry (Ingredient rows with",
+    "label nutrition), the ordered meal responses the generation call site returns",
+    "(the last one repeats if the retry loop asks for more), and the outcome a",
+    "reviewer labelled. Calories are NOT mocked: the harness runs the real",
+    "clamp -> scale -> calculate_meal_macros path, so a meal is acceptable only",
+    "when the pipeline's own estimate lands in MEAL_CALORIE_MIN..MAX, the schema is",
+    "valid, instructions are present, and every ingredient used exists in the pantry."
+  ],
+  "pantries": {
+    "oats_pantry": [
+      {"id": "oats", "name": "Rolled Oats", "quantity": "1000", "unit": "g", "serving_size": "40 g", "servings_per_container": 0.025, "calories": 150, "protein_g": 5, "carbs_g": 27, "fat_g": 3, "fiber_g": 4, "sodium_mg": 0},
+      {"id": "pb", "name": "Peanut Butter", "quantity": "1", "unit": "each", "serving_size": "2 tbsp (32g)", "servings_per_container": 15, "calories": 190, "protein_g": 7, "carbs_g": 6, "fat_g": 16, "fiber_g": 2, "sodium_mg": 140},
+      {"id": "banana", "name": "Banana", "quantity": "6", "unit": "each", "serving_size": "1 each (118g)", "servings_per_container": 1, "calories": 105, "protein_g": 1.3, "carbs_g": 27, "fat_g": 0.4, "fiber_g": 3.1, "sodium_mg": 1},
+      {"id": "milk", "name": "Whole Milk", "quantity": "64", "unit": "fl oz", "serving_size": "1 cup (240ml)", "servings_per_container": 0.125, "calories": 150, "protein_g": 8, "carbs_g": 12, "fat_g": 8, "fiber_g": 0, "sodium_mg": 105},
+      {"id": "honey", "name": "Honey", "quantity": "12", "unit": "oz", "serving_size": "1 tbsp (21g)", "servings_per_container": 1.35, "calories": 64, "protein_g": 0, "carbs_g": 17, "fat_g": 0, "fiber_g": 0, "sodium_mg": 1}
+    ]
+  },
+  "cases": [
+    {
+      "id": "in_band_first_try",
+      "pantry": "oats_pantry",
+      "model_responses": [
+        {
+          "name": "Peanut Butter Banana Oats",
+          "description": "Creamy oats topped with peanut butter and sliced banana for one.",
+          "ingredients_used": [
+            {"name": "Rolled Oats", "amount": "80 g"},
+            {"name": "Peanut Butter", "amount": "2 tbsp"},
+            {"name": "Banana", "amount": "1 each"}
+          ],
+          "instructions": [
+            "Simmer the oats in water for five minutes until creamy.",
+            "Stir in the peanut butter until melted through.",
+            "Slice the banana over the top and serve warm."
+          ]
+        }
+      ],
+      "expected": {"acceptable": true, "calls": 1, "calories": 595}
+    },
+    {
+      "id": "too_light_then_retry_in_band",
+      "pantry": "oats_pantry",
+      "model_responses": [
+        {
+          "name": "Light Banana Oats",
+          "description": "A small bowl of oats with banana.",
+          "ingredients_used": [
+            {"name": "Rolled Oats", "amount": "40 g"},
+            {"name": "Banana", "amount": "1 each"}
+          ],
+          "instructions": ["Cook the oats.", "Top with banana."]
+        },
+        {
+          "name": "Hearty Peanut Butter Banana Oats",
+          "description": "A filling bowl of oats with peanut butter and banana.",
+          "ingredients_used": [
+            {"name": "Rolled Oats", "amount": "80 g"},
+            {"name": "Peanut Butter", "amount": "2 tbsp"},
+            {"name": "Banana", "amount": "1 each"}
+          ],
+          "instructions": [
+            "Simmer the oats in water for five minutes.",
+            "Stir in the peanut butter.",
+            "Top with sliced banana."
+          ]
+        }
+      ],
+      "expected": {"acceptable": true, "calls": 2, "calories": 595}
+    },
+    {
+      "id": "family_batch_scaled_to_one_plate",
+      "pantry": "oats_pantry",
+      "model_responses": [
+        {
+          "name": "Creamy Milk Porridge",
+          "description": "Oats cooked in whole milk.",
+          "ingredients_used": [
+            {"name": "Rolled Oats", "amount": "300 g"},
+            {"name": "Whole Milk", "amount": "1 cup"}
+          ],
+          "instructions": [
+            "Bring the milk to a gentle simmer.",
+            "Add the oats and cook, stirring, until thick.",
+            "Rest for two minutes and serve."
+          ]
+        }
+      ],
+      "expected": {"acceptable": true, "calls": 1, "calories": 750}
+    },
+    {
+      "id": "chatty_preamble_then_valid_json",
+      "pantry": "oats_pantry",
+      "model_responses": [
+        {
+          "wrapper": "prose",
+          "payload": {
+            "name": "Peanut Butter Oats",
+            "description": "Oats with peanut butter.",
+            "ingredients_used": [
+              {"name": "Rolled Oats", "amount": "80 g"},
+              {"name": "Peanut Butter", "amount": "2 tbsp"}
+            ],
+            "instructions": ["Cook oats.", "Stir in peanut butter."]
+          }
+        },
+        {
+          "name": "Peanut Butter Banana Oats",
+          "description": "Creamy oats topped with peanut butter and banana.",
+          "ingredients_used": [
+            {"name": "Rolled Oats", "amount": "80 g"},
+            {"name": "Peanut Butter", "amount": "2 tbsp"},
+            {"name": "Banana", "amount": "1 each"}
+          ],
+          "instructions": [
+            "Simmer the oats in water for five minutes.",
+            "Stir in the peanut butter.",
+            "Top with sliced banana."
+          ]
+        }
+      ],
+      "expected": {"acceptable": true, "calls": 2, "calories": 595}
+    },
+    {
+      "id": "hallucinated_ingredient_not_in_pantry",
+      "pantry": "oats_pantry",
+      "model_responses": [
+        {
+          "name": "Chicken and Oat Bowl",
+          "description": "Savory oats with seared chicken.",
+          "ingredients_used": [
+            {"name": "Chicken Breast", "amount": "150 g"},
+            {"name": "Rolled Oats", "amount": "120 g"},
+            {"name": "Peanut Butter", "amount": "2 tbsp"}
+          ],
+          "instructions": [
+            "Sear the chicken until cooked through.",
+            "Cook the oats and stir in peanut butter.",
+            "Slice the chicken over the oats."
+          ]
+        }
+      ],
+      "expected": {"acceptable": false, "calls": 1, "calories": 640, "reason": "uses an ingredient the pantry does not have"}
+    },
+    {
+      "id": "follow_up_avoids_repeating_previous_meal",
+      "pantry": "oats_pantry",
+      "previous_meal": {
+        "name": "Peanut Butter Banana Oats",
+        "description": "Creamy oats topped with peanut butter and sliced banana for one.",
+        "ingredients_used": "- Rolled Oats: 80 g\n- Peanut Butter: 2 tbsp\n- Banana: 1 each",
+        "instructions": "1. Simmer the oats.\n2. Stir in peanut butter.\n3. Top with banana."
+      },
+      "model_responses": [
+        {
+          "name": "Peanut Butter Banana Oats",
+          "description": "The same bowl again.",
+          "ingredients_used": [
+            {"name": "Rolled Oats", "amount": "80 g"},
+            {"name": "Peanut Butter", "amount": "2 tbsp"},
+            {"name": "Banana", "amount": "1 each"}
+          ],
+          "instructions": ["Cook oats.", "Add peanut butter and banana."]
+        },
+        {
+          "name": "Honey Milk Porridge",
+          "description": "Oats simmered in milk and finished with honey.",
+          "ingredients_used": [
+            {"name": "Rolled Oats", "amount": "100 g"},
+            {"name": "Whole Milk", "amount": "1 cup"},
+            {"name": "Honey", "amount": "2 tbsp"}
+          ],
+          "instructions": [
+            "Warm the milk in a small pot.",
+            "Add the oats and simmer until thick.",
+            "Drizzle with honey and serve."
+          ]
+        }
+      ],
+      "expected": {"acceptable": true, "calls": 2, "calories": 653}
+    },
+    {
+      "id": "whole_jar_rewritten_to_one_serving",
+      "pantry": "oats_pantry",
+      "model_responses": [
+        {
+          "name": "Peanut Butter Banana Oats",
+          "description": "Oats with peanut butter and banana.",
+          "ingredients_used": [
+            {"name": "Peanut Butter", "amount": "1 each"},
+            {"name": "Rolled Oats", "amount": "80 g"},
+            {"name": "Banana", "amount": "1 each"}
+          ],
+          "instructions": [
+            "Cook the oats in water until creamy.",
+            "Stir in peanut butter and top with banana."
+          ]
+        }
+      ],
+      "expected": {"acceptable": true, "calls": 1, "calories": 595}
+    },
+    {
+      "id": "instructions_as_single_numbered_string",
+      "pantry": "oats_pantry",
+      "model_responses": [
+        {
+          "name": "Banana Honey Oats",
+          "description": "Oats with banana and honey.",
+          "ingredients_used": [
+            {"name": "Rolled Oats", "amount": "100 g"},
+            {"name": "Banana", "amount": "1 each"},
+            {"name": "Honey", "amount": "2 tbsp"}
+          ],
+          "instructions": "1. Simmer the oats in water for five minutes. 2. Slice the banana over the oats. 3. Drizzle with honey and serve."
+        }
+      ],
+      "expected": {"acceptable": true, "calls": 1, "calories": 608}
+    }
+  ]
+}

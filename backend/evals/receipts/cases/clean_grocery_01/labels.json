@@ -1,0 +1,13 @@
+{
+  "case_id": "clean_grocery_01",
+  "store_name": "Whole Foods Market",
+  "items": [
+    { "store_item_name": "ORG BNNAS", "ingredient_name": "Organic Bananas", "quantity": "2.14", "unit": "lb", "is_food": true },
+    { "store_item_name": "ALMOND BUTTER 16 OZ", "ingredient_name": "Almond Butter", "quantity": "16", "unit": "oz", "is_food": true },
+    { "store_item_name": "GRK YOGURT 32OZ", "ingredient_name": "Greek Yogurt", "quantity": "32", "unit": "oz", "is_food": true },
+    { "store_item_name": "CHKN BRST BNLS", "ingredient_name": "Boneless Chicken Breast", "quantity": "1.52", "unit": "lb", "is_food": true },
+    { "store_item_name": "PAPER BAG", "ingredient_name": "Paper Bag", "quantity": "1", "unit": "each", "is_food": false }
+  ],
+  "totals": { "subtotal": 27.68, "tax": 0.0, "total": 27.68 },
+  "labeler_notes": "PLACEHOLDER labels derived from ocr_text.txt. Re-label from the real image once receipt.jpg is added."
+}

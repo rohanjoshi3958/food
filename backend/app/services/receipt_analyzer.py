@@ -1,4 +1,5 @@
 import base64
+import contextvars
 import json
 import mimetypes
 import re
@@ -8,10 +9,17 @@ from pathlib import Path
 import anthropic
 from pydantic import BaseModel, Field
 
-from app.config import RECEIPT_ANTHROPIC_MODEL, settings
+from app.config import settings
+from app.services.anthropic_cache import create_cached_message, message_text_blocks
+from app.services.model_router import RouteDecision, escalation_for, route_model
+
+# Non-Claude receipt steps (OCR pass, cache hit, rule-based parse — FOOD-55)
+# should report through app.llm_usage.pipeline_step(step, route=ROUTE_OCR|
+# ROUTE_CACHE) inside the same receipt_parse workflow scope so they land in
+# the same table and dashboard rather than in parallel counters.
 
 
-def _anthropic_error_message(exc: Exception) -> str:
+def _anthropic_error_message(exc: Exception, model: str) -> str:
     response = getattr(exc, "response", None)
     if response is not None:
         try:
@@ -26,7 +34,7 @@ def _anthropic_error_message(exc: Exception) -> str:
     message = str(exc)
     if "not_found_error" in message or "model:" in message:
         return (
-            f"The Anthropic model ({RECEIPT_ANTHROPIC_MODEL}) is unavailable. "
+            f"The Anthropic model ({model}) is unavailable. "
             "Receipt analysis failed."
         )
 
@@ -77,10 +85,12 @@ Respond with ONLY valid JSON in this exact shape:
 Include non-food receipt lines (tax, bags, coupons, etc.) with is_food set to false.
 Prefer accurate extraction from the receipt; only guess quantity/unit when they are not printed."""
 
-NUTRITION_ESTIMATE_PROMPT = """Estimate nutritional facts per standard serving for this grocery item:
-- Item: {ingredient_name}
-- Quantity purchased: {quantity}
-- Unit: {unit}
+# Prompt layout for caching: each *_PROMPT below is a byte-stable prefix
+# (task framing + rules + JSON response shape) sent as a cached system block.
+# The matching *_USER_PROMPT carries only per-request values and is sent in
+# the user turn, after the cache breakpoint. See backend/PROMPT_CACHING.md.
+
+NUTRITION_ESTIMATE_PROMPT = """Estimate nutritional facts per standard serving for the grocery item described in the user message (item name, quantity purchased, and unit).
 
 If quantity or unit is missing/unknown, guess a typical grocery purchase quantity and unit for this item
 (e.g. almond butter jar → quantity "1", unit "each"; bananas → quantity "1", unit "lb" or "each").
@@ -99,7 +109,7 @@ not food, or cannot be matched to a plausible grocery product (e.g. "po", "food"
 When recognized is false, set every nutrition field to null and explain briefly in nutrition_notes.
 
 Respond with ONLY valid JSON:
-{{
+{
   "recognized": true,
   "quantity": "1",
   "unit": "each",
@@ -112,15 +122,16 @@ Respond with ONLY valid JSON:
   "fiber_g": 2,
   "sodium_mg": 150,
   "nutrition_notes": "Brief note on data source"
-}}
+}
 
 For quantity and unit: echo the provided values when known; otherwise fill in your educated guess.
 Use null for unknown nutrition values. Base estimates on standard USDA or nutrition database / typical package sizes."""
 
-UNIT_CHECK_PROMPT = """Assess whether this grocery purchase unit is plausible for the item.
+NUTRITION_ESTIMATE_USER_PROMPT = """- Item: {ingredient_name}
+- Quantity purchased: {quantity}
+- Unit: {unit}"""
 
-- Item: {ingredient_name}
-- Unit: {unit}
+UNIT_CHECK_PROMPT = """Assess whether the grocery purchase unit given in the user message is plausible for the item.
 
 Set "unit_plausible" to true when the unit fits how this is normally bought or measured.
 Set "unit_plausible" to false when the unit is a poor fit (e.g. whole produce in gallon, dry spice in ml).
@@ -128,19 +139,17 @@ When false, set "unit_warning" to one short sentence suggesting better units; ot
 The app rejects ingredients that fail this check.
 
 Respond with ONLY valid JSON:
-{{
+{
   "unit_plausible": true,
   "unit_warning": null
-}}"""
+}"""
+
+UNIT_CHECK_USER_PROMPT = """- Item: {ingredient_name}
+- Unit: {unit}"""
 
 PANTRY_MATCH_PROMPT = """Match an incoming grocery item to the user's existing pantry.
 
-Incoming item:
-- name: {ingredient_name}
-- unit: {unit}
-
-Existing pantry items (JSON):
-{pantry_json}
+The user message provides the incoming item (name and unit) and the existing pantry items as JSON.
 
 Rules:
 - Expand receipt abbreviations when interpreting the incoming name
@@ -157,16 +166,23 @@ Rules:
   (e.g. "Rice" vs both "Brown Rice" and "White Rice"), or when the match is only partial.
   When ambiguous, match_id must be null.
 - Set match_id to null when nothing clearly matches.
-- Never invent pantry ids; only use ids from the list above.
+- Never invent pantry ids; only use ids from the existing pantry items list.
 - canonical_name should be a clear plain-English display name for the incoming item
   (expanded abbreviations, sensible singular/plural, title-friendly).
 
 Respond with ONLY valid JSON:
-{{
+{
   "match_id": null,
   "ambiguous": false,
   "canonical_name": "Chicken Breast"
-}}"""
+}"""
+
+PANTRY_MATCH_USER_PROMPT = """Incoming item:
+- name: {ingredient_name}
+- unit: {unit}
+
+Existing pantry items (JSON):
+{pantry_json}"""
 
 
 class ParsedReceiptItem(BaseModel):
@@ -245,9 +261,24 @@ def _as_optional_float(value) -> float | None:
 
 
 def _unit_warning_from_payload(payload: dict) -> str | None:
+    warning, _low_confidence = _unit_check_from_payload(payload)
+    return warning
+
+
+def _unit_check_from_payload(payload: object) -> tuple[str | None, bool]:
+    """Return ``(warning, low_confidence)``.
+
+    Only a schema-valid ``unit_plausible: true`` is a confident accept.
+    A valid reject, a missing/non-bool ``unit_plausible``, or a non-object
+    payload is low confidence so a cheap tier can be confirmed on Opus.
+    """
+    if not isinstance(payload, dict):
+        return None, True
     if payload.get("unit_plausible") is True:
-        return None
-    return _as_optional_str(payload.get("unit_warning"))
+        return None, False
+    if payload.get("unit_plausible") is False:
+        return _as_optional_str(payload.get("unit_warning")), True
+    return None, True
 
 
 def check_ingredient_unit(
@@ -260,30 +291,46 @@ def check_ingredient_unit(
         return None
 
     client = _get_client()
-    message = client.messages.create(
-        model=RECEIPT_ANTHROPIC_MODEL,
-        max_tokens=256,
-        messages=[
-            {
-                "role": "user",
-                "content": UNIT_CHECK_PROMPT.format(
-                    ingredient_name=name,
-                    unit=unit_label,
-                ),
-            }
-        ],
-    )
 
-    text_blocks = [block.text for block in message.content if block.type == "text"]
-    if not text_blocks:
-        return None
+    def ask(decision: RouteDecision) -> tuple[str | None, bool]:
+        message = create_cached_message(
+            client,
+            call_site="receipt.unit_check",
+            model=decision.model,
+            max_tokens=256,
+            system_prefix=UNIT_CHECK_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": UNIT_CHECK_USER_PROMPT.format(
+                        ingredient_name=name,
+                        unit=unit_label,
+                    ),
+                }
+            ],
+        )
 
-    try:
-        payload = _extract_json(text_blocks[-1])
-    except (json.JSONDecodeError, ValueError):
-        return None
+        text_blocks = message_text_blocks(message)
+        if not text_blocks:
+            return None, True
 
-    return _unit_warning_from_payload(payload)
+        try:
+            payload = _extract_json(text_blocks[-1])
+        except (json.JSONDecodeError, ValueError):
+            return None, True
+
+        return _unit_check_from_payload(payload)
+
+    decision = route_model("receipt.unit_check")
+    warning, low_confidence = ask(decision)
+    # A rejection blocks the user, so a cheap tier's "implausible" or a
+    # malformed answer is treated as low confidence and confirmed on the
+    # escalation tier (routing on only).
+    if low_confidence:
+        escalated = escalation_for(decision)
+        if escalated is not None:
+            warning, _ = ask(escalated)
+    return warning
 
 
 class PantryMatchResult(BaseModel):
@@ -312,47 +359,78 @@ def match_ingredient_to_pantry(
     # Always ask the LLM for a canonical display name, even when the pantry is
     # empty. match_id must stay null when there are no candidates.
     client = _get_client()
-    message = client.messages.create(
-        model=RECEIPT_ANTHROPIC_MODEL,
-        max_tokens=256,
-        messages=[
-            {
-                "role": "user",
-                "content": PANTRY_MATCH_PROMPT.format(
-                    ingredient_name=name,
-                    unit=unit_label,
-                    pantry_json=json.dumps(pantry_items, ensure_ascii=True),
-                ),
-            }
-        ],
-    )
 
-    text_blocks = [block.text for block in message.content if block.type == "text"]
-    if not text_blocks:
-        return PantryMatchResult()
+    def ask(decision: RouteDecision) -> tuple[PantryMatchResult, bool, bool]:
+        """Return ``(result, low_confidence, schema_invalid)``."""
+        message = create_cached_message(
+            client,
+            call_site="receipt.pantry_match",
+            model=decision.model,
+            max_tokens=256,
+            system_prefix=PANTRY_MATCH_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": PANTRY_MATCH_USER_PROMPT.format(
+                        ingredient_name=name,
+                        unit=unit_label,
+                        pantry_json=json.dumps(pantry_items, ensure_ascii=True),
+                    ),
+                }
+            ],
+        )
 
-    try:
-        payload = _extract_json(text_blocks[-1])
-    except (json.JSONDecodeError, ValueError):
-        return PantryMatchResult()
+        text_blocks = message_text_blocks(message)
+        if not text_blocks:
+            return PantryMatchResult(), True, True
 
-    if not isinstance(payload, dict):
-        return PantryMatchResult()
+        try:
+            payload = _extract_json(text_blocks[-1])
+        except (json.JSONDecodeError, ValueError):
+            return PantryMatchResult(), True, True
 
-    match_id = _as_optional_str(payload.get("match_id"))
-    if not valid_ids or (match_id is not None and match_id not in valid_ids):
-        match_id = None
+        if not isinstance(payload, dict):
+            return PantryMatchResult(), True, True
 
-    ambiguous = payload.get("ambiguous") is True
-    if ambiguous:
-        match_id = None
+        # match_id may be null; the key itself must be present. ambiguous is
+        # required and must be a real bool — a missing field used to coerce
+        # to False and look like a confident "new item". canonical_name stays
+        # optional.
+        schema_invalid = "match_id" not in payload or not isinstance(
+            payload.get("ambiguous"), bool
+        )
+        match_id = _as_optional_str(payload.get("match_id"))
+        invented_id = match_id is not None and match_id not in valid_ids
+        if not valid_ids or invented_id:
+            match_id = None
 
-    canonical_name = _as_optional_str(payload.get("canonical_name"))
-    return PantryMatchResult(
-        match_id=match_id,
-        ambiguous=ambiguous,
-        canonical_name=canonical_name,
-    )
+        ambiguous = payload.get("ambiguous") is True
+        if ambiguous:
+            match_id = None
+
+        canonical_name = _as_optional_str(payload.get("canonical_name"))
+        result = PantryMatchResult(
+            match_id=match_id,
+            ambiguous=ambiguous,
+            canonical_name=canonical_name,
+        )
+        # Low confidence = the model could not commit (ambiguous), pointed at
+        # an id it was never offered, or failed the required JSON shape.
+        # Flag off: escalation_for() is None, so the returned result is
+        # unchanged (still a non-ambiguous new row, same as pre-FOOD-58).
+        return result, schema_invalid or ambiguous or invented_id, schema_invalid
+
+    decision = route_model("receipt.pantry_match")
+    result, low_confidence, _schema_invalid = ask(decision)
+    if low_confidence:
+        escalated = escalation_for(decision)
+        if escalated is not None:
+            escalated_result, _escalated_low, escalated_schema_invalid = ask(escalated)
+            # A malformed Opus answer must not wipe a valid first-pass
+            # ``ambiguous=True`` (defaults to False on PantryMatchResult).
+            if not escalated_schema_invalid:
+                result = escalated_result
+    return result
 
 
 def estimate_ingredient_nutrition(
@@ -364,13 +442,16 @@ def estimate_ingredient_nutrition(
     qty = (quantity or "").strip() or "unknown"
     unit_label = (unit or "").strip() or "unknown"
 
-    message = client.messages.create(
-        model=RECEIPT_ANTHROPIC_MODEL,
+    message = create_cached_message(
+        client,
+        call_site="receipt.nutrition_estimate",
+        model=route_model("receipt.nutrition_estimate").model,
         max_tokens=1024,
+        system_prefix=NUTRITION_ESTIMATE_PROMPT,
         messages=[
             {
                 "role": "user",
-                "content": NUTRITION_ESTIMATE_PROMPT.format(
+                "content": NUTRITION_ESTIMATE_USER_PROMPT.format(
                     ingredient_name=ingredient_name,
                     quantity=qty,
                     unit=unit_label,
@@ -379,39 +460,12 @@ def estimate_ingredient_nutrition(
         ],
     )
 
-    text_blocks = [block.text for block in message.content if block.type == "text"]
-    if not text_blocks:
-        raise ReceiptAnalysisError(
-            f"Could not estimate nutrition for {ingredient_name}."
-        )
-
-    try:
-        payload = _extract_json(text_blocks[-1])
-        guessed_quantity = quantity or _as_optional_str(payload.get("quantity")) or "1"
-        guessed_unit = unit or _as_optional_str(payload.get("unit")) or "each"
-
-        return ParsedReceiptItem(
-            store_item_name=ingredient_name,
-            ingredient_name=ingredient_name,
-            recognized=payload.get("recognized") is True,
-            quantity=guessed_quantity,
-            unit=guessed_unit,
-            serving_size=payload.get("serving_size"),
-            servings_per_container=_as_optional_float(
-                payload.get("servings_per_container")
-            ),
-            calories=payload.get("calories"),
-            protein_g=payload.get("protein_g"),
-            carbs_g=payload.get("carbs_g"),
-            fat_g=payload.get("fat_g"),
-            fiber_g=payload.get("fiber_g"),
-            sodium_mg=payload.get("sodium_mg"),
-            nutrition_notes=payload.get("nutrition_notes"),
-        )
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise ReceiptAnalysisError(
-            f"Could not parse nutrition estimate for {ingredient_name}."
-        ) from exc
+    return parse_nutrition_message(
+        message,
+        ingredient_name=ingredient_name,
+        quantity=quantity,
+        unit=unit,
+    )
 
 
 def _as_optional_str(value) -> str | None:
@@ -466,8 +520,13 @@ def _enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
     enriched_items = list(parsed.items)
 
     with ThreadPoolExecutor(max_workers=min(6, len(food_indexes))) as executor:
+        # Copy the context so worker threads inherit the LLM workflow scope.
         futures = {
-            executor.submit(_enrich_item_with_nutrition, parsed.items[index]): index
+            executor.submit(
+                contextvars.copy_context().run,
+                _enrich_item_with_nutrition,
+                parsed.items[index],
+            ): index
             for index in food_indexes
         }
         for future in as_completed(futures):
@@ -477,59 +536,163 @@ def _enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
     return ParsedReceipt(store_name=parsed.store_name, items=enriched_items)
 
 
-def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
-    if not settings.anthropic_api_key:
-        raise ReceiptAnalysisError(
-            "Anthropic API key is not configured. Add ANTHROPIC_API_KEY to your .env file."
-        )
+def _run_receipt_extraction(
+    user_content: list[dict],
+    *,
+    model: str,
+    call_site: str,
+) -> ParsedReceipt:
+    """One extraction call: cached RECEIPT_ANALYSIS_PROMPT prefix + per-request tail.
 
-    media_type, content_type = _media_type_for_path(file_path)
-    encoded = base64.standard_b64encode(file_path.read_bytes()).decode("utf-8")
-
+    The receipt image/PDF or OCR text is unique per request, so it stays in
+    the user turn after the cache breakpoint (see backend/PROMPT_CACHING.md).
+    """
     client = _get_client()
 
-    content_block = {
-        "type": content_type,
-        "source": {
-            "type": "base64",
-            "media_type": media_type,
-            "data": encoded,
-        },
-    }
-
     try:
-        message = client.messages.create(
-            model=RECEIPT_ANTHROPIC_MODEL,
+        message = create_cached_message(
+            client,
+            call_site=call_site,
+            model=model,
             max_tokens=4096,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        content_block,
-                        {"type": "text", "text": RECEIPT_ANALYSIS_PROMPT},
-                    ],
-                }
-            ],
+            system_prefix=RECEIPT_ANALYSIS_PROMPT,
+            messages=[{"role": "user", "content": user_content}],
         )
     except anthropic.APIError as exc:
-        raise ReceiptAnalysisError(_anthropic_error_message(exc)) from exc
+        raise ReceiptAnalysisError(_anthropic_error_message(exc, model)) from exc
 
-    text_blocks = [block.text for block in message.content if block.type == "text"]
+    return parse_receipt_message(message)
+
+
+def extract_receipt_vision(
+    data: bytes,
+    media_type: str,
+    *,
+    model: str | None = None,
+) -> ParsedReceipt:
+    """Vision extraction only (no nutrition enrichment, no food-count check).
+
+    When ``model`` is omitted the router picks the flag-off default (Opus)
+    so ``forced_model`` still applies to the eval harness. FOOD-55's Sonnet
+    vision fallback passes ``RECEIPT_OCR_VISION_FALLBACK_MODEL`` explicitly.
+    """
+    chosen = model if model is not None else route_model("receipt.analyze_image").model
+    content_type = "document" if media_type == "application/pdf" else "image"
+    encoded = base64.standard_b64encode(data).decode("utf-8")
+    content_block = {
+        "type": content_type,
+        "source": {"type": "base64", "media_type": media_type, "data": encoded},
+    }
+    return _run_receipt_extraction(
+        [content_block],
+        model=chosen,
+        call_site="receipt.analyze_image",
+    )
+
+
+# User-turn framing for the OCR-text rung. The instructions themselves stay in
+# the shared cached RECEIPT_ANALYSIS_PROMPT prefix.
+RECEIPT_TEXT_ANALYSIS_PREAMBLE = (
+    "The following is OCR text from a grocery store receipt. Treat it exactly like "
+    "the receipt image described in the instructions; OCR may have garbled some "
+    "characters.\n\n--- OCR TEXT START ---\n"
+)
+
+
+def build_receipt_text_prompt(ocr_text: str) -> str:
+    # Plain concatenation: no str.format, the surrounding prompts contain JSON braces.
+    return RECEIPT_TEXT_ANALYSIS_PREAMBLE + ocr_text.strip() + "\n--- OCR TEXT END ---"
+
+
+def extract_receipt_text(ocr_text: str, *, model: str) -> ParsedReceipt:
+    """Text-only extraction from OCR output (soft fallback rung, RECEIPT_OCR_CLEANUP_MODEL)."""
+    return _run_receipt_extraction(
+        [{"type": "text", "text": build_receipt_text_prompt(ocr_text)}],
+        model=model,
+        call_site="receipt.ocr_text_cleanup",
+    )
+
+
+def parse_receipt_message(message) -> ParsedReceipt:
+    """Parse a vision / OCR-cleanup Messages (or Batch) response into items."""
+    text_blocks = message_text_blocks(message)
     if not text_blocks:
         raise ReceiptAnalysisError("Anthropic returned an empty response.")
 
     try:
         payload = _extract_json(text_blocks[-1])
-        parsed = ParsedReceipt.model_validate(payload)
+        return ParsedReceipt.model_validate(payload)
     except (json.JSONDecodeError, ValueError) as exc:
         raise ReceiptAnalysisError(
             "Could not parse ingredient data from the receipt analysis."
         ) from exc
 
-    food_items = [item for item in parsed.items if item.is_food]
-    if not food_items:
+
+def parse_nutrition_message(
+    message,
+    *,
+    ingredient_name: str,
+    quantity: str | None,
+    unit: str | None,
+) -> ParsedReceiptItem:
+    """Parse a nutrition-estimate Messages (or Batch) response."""
+    text_blocks = message_text_blocks(message)
+    if not text_blocks:
+        raise ReceiptAnalysisError(
+            f"Could not estimate nutrition for {ingredient_name}."
+        )
+
+    try:
+        payload = _extract_json(text_blocks[-1])
+        if not isinstance(payload, dict):
+            raise ValueError("nutrition response must be a JSON object")
+        guessed_quantity = quantity or _as_optional_str(payload.get("quantity")) or "1"
+        guessed_unit = unit or _as_optional_str(payload.get("unit")) or "each"
+
+        return ParsedReceiptItem(
+            store_item_name=ingredient_name,
+            ingredient_name=ingredient_name,
+            recognized=payload.get("recognized") is True,
+            quantity=guessed_quantity,
+            unit=guessed_unit,
+            serving_size=payload.get("serving_size"),
+            servings_per_container=_as_optional_float(
+                payload.get("servings_per_container")
+            ),
+            calories=payload.get("calories"),
+            protein_g=payload.get("protein_g"),
+            carbs_g=payload.get("carbs_g"),
+            fat_g=payload.get("fat_g"),
+            fiber_g=payload.get("fiber_g"),
+            sodium_mg=payload.get("sodium_mg"),
+            nutrition_notes=payload.get("nutrition_notes"),
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ReceiptAnalysisError(
+            f"Could not parse nutrition estimate for {ingredient_name}."
+        ) from exc
+
+
+def require_food_items(parsed: ParsedReceipt) -> ParsedReceipt:
+    if not any(item.is_food for item in parsed.items):
         raise ReceiptAnalysisError(
             "No food items were found on this receipt. Try a clearer photo."
         )
+    return parsed
 
+
+def enrich_receipt_nutrition(parsed: ParsedReceipt) -> ParsedReceipt:
+    """Public wrapper so the OCR-first pipeline reuses the same enrichment step."""
     return _enrich_receipt_nutrition(parsed)
+
+
+def analyze_receipt_image(file_path: Path) -> ParsedReceipt:
+    """Baseline path: vision Opus on the original upload, then nutrition enrichment."""
+    if not settings.anthropic_api_key:
+        raise ReceiptAnalysisError(
+            "Anthropic API key is not configured. Add ANTHROPIC_API_KEY to your .env file."
+        )
+
+    media_type, _content_type = _media_type_for_path(file_path)
+    parsed = extract_receipt_vision(file_path.read_bytes(), media_type)
+    return _enrich_receipt_nutrition(require_food_items(parsed))

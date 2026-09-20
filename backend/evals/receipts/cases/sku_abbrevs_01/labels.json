@@ -1,0 +1,13 @@
+{
+  "case_id": "sku_abbrevs_01",
+  "store_name": "Walmart",
+  "items": [
+    { "store_item_name": "GV WHL MLK 1 GAL", "ingredient_name": "Whole Milk", "quantity": "1", "unit": "gallon", "is_food": true },
+    { "store_item_name": "BANANAS", "ingredient_name": "Bananas", "quantity": "2.31", "unit": "lb", "is_food": true },
+    { "store_item_name": "GRND BF 80/20", "ingredient_name": "Ground Beef 80/20", "quantity": "1", "unit": "each", "is_food": true },
+    { "store_item_name": "KIND BAR", "ingredient_name": "Kind Bar", "quantity": "2", "unit": "each", "is_food": true },
+    { "store_item_name": "STRWBRY 16OZ", "ingredient_name": "Strawberries", "quantity": "16", "unit": "oz", "is_food": true }
+  ],
+  "totals": { "subtotal": 19.74, "tax": 0.0, "total": 19.74 },
+  "labeler_notes": "PLACEHOLDER labels derived from ocr_text.txt. Store-brand prefixes (GV) are dropped from ingredient_name by convention."
+}

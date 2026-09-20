@@ -63,4 +63,11 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run tests
-        run: pytest
+        run: pytest --ignore=tests/evals
+
+      # FOOD-58: fixture-driven quality gates (receipt accuracy, ingredient
+      # match rate, meal-plan acceptability) against tests/evals/baselines.json.
+      # Fully mocked; live (paid) evals are opt-in via FOOD_EVAL_LIVE and
+      # never run here. The metrics table is appended to the step summary.
+      - name: Quality evals (mocked)
+        run: pytest tests/evals

@@ -8,6 +8,11 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.llm_usage import (
+    WORKFLOW_INGREDIENT_NORMALIZE,
+    WORKFLOW_RECEIPT_PARSE,
+    workflow_scope,
+)
 from app.models import Receipt, User
 from app.schemas import (
     ConfirmReceiptRequest,
@@ -21,10 +26,9 @@ from app.services.ingredients import (
     create_ingredient,
 )
 from app.services.ingredient_merge import merge_draft_items
-from app.services.receipt_analyzer import (
-    ReceiptAnalysisError,
-    analyze_receipt_image,
-)
+from app.services.receipt_analyzer import ReceiptAnalysisError
+from app.services.receipt_pipeline import analyze_receipt
+from app.services.receipt_preprocess import content_hash
 from app.validation import validate_ingredient_input
 
 router = APIRouter(prefix="/receipts", tags=["receipts"])
@@ -257,25 +261,40 @@ async def upload_receipt(
         filename=str(destination),
         original_name=safe_name,
         analysis_status="processing",
+        content_hash=content_hash(contents),
     )
     db.add(receipt)
     db.commit()
     db.refresh(receipt)
 
     try:
-        parsed = analyze_receipt_image(destination)
-
-        receipt.store_name = parsed.store_name
-        receipt.analysis_status = "pending_review"
-        receipt.analysis_error = None
-        receipt.draft_items = merge_draft_items(
-            pre_manual_items + _draft_from_parsed_items(parsed.items)
-        )
-
-        if not receipt.draft_items:
-            raise ReceiptAnalysisError(
-                "No ingredients found. Add items manually or try a clearer receipt photo."
+        # The run covers the empty-draft check too, so a parse that yields no
+        # usable items is a failed run, not a "successful receipt" on the dashboard.
+        with workflow_scope(
+            WORKFLOW_RECEIPT_PARSE,
+            user_id=current_user.id,
+            receipt_id=receipt.id,
+        ):
+            outcome = analyze_receipt(
+                destination,
+                contents,
+                db=db,
+                user_id=current_user.id,
+                receipt_id=receipt.id,
             )
+            parsed = outcome.parsed
+            receipt.store_name = parsed.store_name
+            receipt.analysis_status = "pending_review"
+            receipt.analysis_error = None
+            receipt.analysis_path = outcome.path
+            receipt.analysis_result = parsed.model_dump()
+            receipt.draft_items = merge_draft_items(
+                pre_manual_items + _draft_from_parsed_items(parsed.items)
+            )
+            if not receipt.draft_items:
+                raise ReceiptAnalysisError(
+                    "No ingredients found. Add items manually or try a clearer receipt photo."
+                )
 
         db.commit()
         db.refresh(receipt)
@@ -288,6 +307,8 @@ async def upload_receipt(
         )
         return _receipt_response(receipt)
     except ReceiptAnalysisError as exc:
+        # TODO(FOOD-54): record the failed analysis (status=error, last rung
+        # attempted) via the metrics helper in this branch and the one below.
         _delete_receipt(db, receipt)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -403,7 +424,15 @@ def confirm_receipt(
         item.model_dump() for item in payload.items if item.is_food
     ]
     # Canonicalize names before merge so abbreviation/plural variants collapse.
-    canonicalized_payloads = canonicalize_draft_items(db, current_user, food_payloads)
+    # Tagged as normalize spend without opening a run; create_ingredient below
+    # records one run per ingredient, which is the unit "cost per normalize" uses.
+    with workflow_scope(
+        WORKFLOW_INGREDIENT_NORMALIZE,
+        user_id=current_user.id,
+        receipt_id=receipt.id,
+        record_run=False,
+    ):
+        canonicalized_payloads = canonicalize_draft_items(db, current_user, food_payloads)
     merged_items = [
         DraftIngredientItem.model_validate(item)
         for item in merge_draft_items(canonicalized_payloads)

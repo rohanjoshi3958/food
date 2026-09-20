@@ -64,6 +64,40 @@ FRONTEND_URL="http://localhost:3000"
 
 Receipt analysis uses Claude Opus; meal generation uses Claude Sonnet 5; meal images use OpenAI `gpt-image-1`.
 
+### Receipt pipeline flags (FOOD-55, default off)
+
+By default every receipt upload goes to vision Claude Opus exactly as before. Two opt-in flags change that:
+
+| Env var | Default | Effect |
+| --- | --- | --- |
+| `RECEIPT_ANALYSIS_CACHE` | `0` | Re-uploading byte-identical receipt bytes (same user) reuses the prior parse, skipping OCR/LLM calls. Path `cache`. |
+| `RECEIPT_OCR_FIRST` | `0` | Run in-process Tesseract + a deterministic parser first; only escalate to an LLM when a confidence gate fails. Paths `ocr` → `haiku` (`RECEIPT_OCR_CLEANUP_MODEL` on the OCR text) → `sonnet` (`RECEIPT_OCR_VISION_FALLBACK_MODEL` on a downsampled image). With the flag off the path is `opus_baseline` (`RECEIPT_ANTHROPIC_MODEL`). |
+
+`RECEIPT_OCR_FIRST=1` needs the Tesseract binary on the API host:
+
+```bash
+# Debian/Ubuntu
+sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
+# macOS
+brew install tesseract
+```
+
+If the binary is missing the OCR rung reports `ocr_unavailable` and the upload falls through to the Sonnet vision rung, so nothing breaks — it just isn't cheaper. Model IDs are fixed constants in `backend/app/config.py`, not env vars. Optional gate tuning (`RECEIPT_OCR_*` settings): `RECEIPT_OCR_MIN_CONFIDENCE` (default 60), `RECEIPT_OCR_MAX_MISSING_QTY_UNIT_RATIO` (0.5), `RECEIPT_OCR_TOTALS_TOLERANCE` (0.02), `RECEIPT_OCR_TESSERACT_CMD` (binary path override), `RECEIPT_VISION_LONG_EDGE` (1600). Nutrition, pantry-match and unit-check calls stay on `RECEIPT_ANTHROPIC_MODEL` regardless of the flag (FOOD-58 will add routing).
+
+The path that produced each receipt is stored in `receipts.analysis_path`. Per-upload metrics (path, tokens, confidence, latency) are not emitted yet; FOOD-54 will wire its helper at the marked call site in `backend/app/routers/receipts.py`. The labeled eval set that gates flipping the default lives in `backend/evals/receipts/`.
+
+### Offline Claude batches (FOOD-57)
+
+Interactive upload / generate / image-prompt stay on the sync Messages API. Historical receipt reprocess and nightly meal regen go through Anthropic Message Batches (~50% off, 1-hour prompt-cache TTL). Dry-run unless you pass `--apply`:
+
+```bash
+cd backend
+python -m app.jobs.reprocess_receipts --receipt-id <uuid> --apply
+python -m app.jobs.regen_meals --user-id <uuid> --apply
+```
+
+See `backend/BATCH_API.md` for retry/failure and the interactive vs batch split.
+
 ## Run locally
 
 From the project root:
@@ -118,6 +152,27 @@ pytest
 ```
 
 See `backend/tests/README.md` for more on the test suite.
+
+## Claude usage & cost dashboard (internal)
+
+Every Claude call is instrumented (see `backend/app/llm_usage/`). Each call records the workflow (`receipt_parse`, `ingredient_normalize`, `meal_gen`), step, model, uncached / cache-write (5m and 1h) / cache-read / output tokens, image count and approximate visual tokens, stop reason, latency, and an estimated USD cost from Anthropic list prices. Events are stored in Postgres (`llm_usage_events`, plus one `llm_workflow_runs` row per workflow run) and also emitted as JSON lines on the API's stdout. Instrumentation is observe-only: it never changes prompts, validation, or responses, and a failure to record is logged and ignored.
+
+Each event also carries an optional `route` (`cache` | `ocr` | `haiku` | `sonnet` | `opus`; inferred from the model for Claude calls) and `confidence`. Non-Claude steps such as an OCR pass or cache hit report through `app.llm_usage.pipeline_step(step, route=...)` inside the same workflow scope, so tiered pipelines share one table and dashboard.
+
+Open the ops dashboard at [http://localhost:3000/admin/llm-usage](http://localhost:3000/admin/llm-usage) (it is not linked from the consumer UI). It shows $ and tokens per successful receipt parse / ingredient normalize / meal plan, cache read %, vision vs text share, model mix, retry and escalation rates, daily spend, the raw per-call log, and Anthropic billing reconciliation. The same data is available from `GET /api/metrics/llm/summary?days=7`, `/events`, `/anthropic`, and `/pricing`.
+
+Optional settings in `.env`:
+
+```env
+# Who may open the dashboard. Outside production, any signed-in user may view it when both are unset.
+ADMIN_EMAILS="you@example.com,ops@example.com"
+METRICS_API_TOKEN="long-random-string"        # Authorization: Bearer <token> for scripts
+# Anthropic Admin API key (sk-ant-admin...) to compare estimates with actual billing.
+ANTHROPIC_ADMIN_API_KEY=""
+# Override list prices (USD per MTok) without a deploy.
+LLM_PRICING_JSON='{"claude-sonnet-5":{"input":2,"output":10,"cache_write_5m":2.5,"cache_write_1h":4,"cache_read":0.2}}'
+LLM_USAGE_LOG_ENABLED=true
+```
 
 ## Notes
 

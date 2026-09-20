@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.llm_usage import WORKFLOW_MEAL_GEN, bind_run_ids, workflow_scope
 from app.models import Ingredient, Meal, User
 from app.schemas import GenerateMealRequest, MealResponse, meal_response
 from app.services.cookbook import add_meal_to_cookbook
@@ -125,39 +126,41 @@ def generate_meal(
             instructions=payload.previous_meal.instructions,
         )
 
-    try:
-        suggestion = generate_meal_from_ingredients(
-            ingredients,
-            previous_meal=previous,
+    with workflow_scope(WORKFLOW_MEAL_GEN, user_id=current_user.id):
+        try:
+            suggestion = generate_meal_from_ingredients(
+                ingredients,
+                previous_meal=previous,
+            )
+        except MealGenerationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Meal generation failed. Please try again.",
+            ) from exc
+
+        db.query(Meal).filter(Meal.user_id == current_user.id).delete()
+
+        used_data = serialize_meal_ingredients(suggestion.ingredients_used)
+        macros = calculate_meal_macros(ingredients, used_data)
+
+        meal = Meal(
+            user_id=current_user.id,
+            name=suggestion.name.strip(),
+            description=suggestion.description.strip(),
+            ingredients_used=format_ingredients_used(suggestion.ingredients_used),
+            ingredients_used_data=used_data,
+            instructions=suggestion.instructions.strip(),
+            **macros.as_dict(),
         )
-    except MealGenerationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Meal generation failed. Please try again.",
-        ) from exc
-
-    db.query(Meal).filter(Meal.user_id == current_user.id).delete()
-
-    used_data = serialize_meal_ingredients(suggestion.ingredients_used)
-    macros = calculate_meal_macros(ingredients, used_data)
-
-    meal = Meal(
-        user_id=current_user.id,
-        name=suggestion.name.strip(),
-        description=suggestion.description.strip(),
-        ingredients_used=format_ingredients_used(suggestion.ingredients_used),
-        ingredients_used_data=used_data,
-        instructions=suggestion.instructions.strip(),
-        **macros.as_dict(),
-    )
-    db.add(meal)
-    db.commit()
-    db.refresh(meal)
+        db.add(meal)
+        db.commit()
+        db.refresh(meal)
+        bind_run_ids(meal_id=meal.id)
 
     return meal_response(meal)
 
@@ -197,7 +200,15 @@ async def complete_meal(
         _store_meal_photo_bytes(current_user, meal, contents, file.filename)
     elif not skip_photo:
         try:
-            image_bytes = generate_meal_image(meal)
+            # The Claude image-prompt call is meal_gen spend (step image_prompt)
+            # but not a meal-plan run, so it never inflates $/successful meal.
+            with workflow_scope(
+                WORKFLOW_MEAL_GEN,
+                user_id=current_user.id,
+                meal_id=meal.id,
+                record_run=False,
+            ):
+                image_bytes = generate_meal_image(meal)
         except MealImageError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
