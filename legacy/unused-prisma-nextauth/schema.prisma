@@ -1,3 +1,7 @@
+// UNUSED / LEGACY — quarantined NextAuth-era Prisma schema (FOOD-52).
+// Not loaded by the app. Runtime DB is SQLAlchemy. Do not run prisma migrate.
+// See README.md in this folder.
+
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"

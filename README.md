@@ -62,7 +62,21 @@ FRONTEND_URL="http://localhost:3000"
 
 `RESEND_API_KEY` is used to email password-reset links. For local development you can use Resend’s `onboarding@resend.dev` sender (`EMAIL_FROM`); messages only deliver to addresses verified in your Resend account. If `RESEND_API_KEY` is unset, the reset URL is logged in the API console instead of being emailed.
 
+`BACKEND_URL` (optional) is the base URL that Next.js proxies `/api/*` to (see `next.config.ts`). It defaults to `http://localhost:8000`, the local FastAPI dev server, so you do not need to set it for local development. In production the Amplify branch sets it to the App Runner (or custom API domain) URL provisioned by Terraform in `infra/`. It is read at build/server start, not in the browser, so it must not be prefixed with `NEXT_PUBLIC_`.
+
 Receipt analysis uses Claude Opus; meal generation uses Claude Sonnet 5; meal images use OpenAI `gpt-image-1`.
+
+### Upload storage (receipts, meal photos, cookbook photos)
+
+Uploads go to **S3 when `UPLOADS_BUCKET` is set** and to **local disk otherwise**, so nothing extra is needed for local development:
+
+| Env var | Default | Notes |
+| --- | --- | --- |
+| `UPLOADS_BUCKET` | unset | Name of the private S3 bucket. When set, objects are written under `receipts/`, `meals/` and `cookbook/` and the container filesystem is never used for uploads. In production this is set by Terraform and the App Runner instance role provides credentials; region comes from the standard `AWS_REGION` (no app-specific region setting). |
+| `UPLOADS_SIGNED_URL_TTL_SECONDS` | `0` | Default `0` streams photo bytes through the API (`/api/meals/{id}/photo`, `/api/cookbook/{id}/photo`) so the browser keeps a credentialed same-origin fetch and does not follow a 307 to S3 (Amplify can leave a residual redirect that then hits CORS). Set to a positive number (e.g. `300`) to redirect to a short-lived presigned S3 URL once that path is proven in production. |
+| `UPLOAD_DIR`, `MEAL_UPLOAD_DIR`, `COOKBOOK_UPLOAD_DIR` | `uploads/receipts`, `uploads/meals`, `uploads/cookbook` | Local-disk fallback directories (relative to `backend/`), only used when `UPLOADS_BUCKET` is unset. |
+
+The database stores stable object keys (`<prefix>/<user id>/<uuid>_<filename>`) in both modes. To exercise S3 mode locally, export `UPLOADS_BUCKET` plus normal AWS credentials (`AWS_PROFILE` or `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) and `AWS_REGION`; the SDK's default resolution is used as-is.
 
 ## Run locally
 
@@ -121,6 +135,7 @@ See `backend/tests/README.md` for more on the test suite.
 
 ## Notes
 
+- Leftover Prisma/NextAuth models (`User` / `Account` / `Session` / `VerificationToken`) are **not used at runtime**. They live under `legacy/unused-prisma-nextauth/` so they are not mistaken for the live schema. Auth and the database are FastAPI + SQLAlchemy.
 - Receipt upload is **U.S.-only** for now. Non-U.S. receipts (for example EU metric pack sizes embedded in product names) may parse incorrectly.
 - Receipt analysis can take up to a minute; wait for Claude to finish before expecting the review screen.
 - Meal generation only uses food already in **View ingredients**, and never asks for more than you have on hand.

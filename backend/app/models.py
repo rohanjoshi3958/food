@@ -78,6 +78,7 @@ class Receipt(Base):
     original_name: Mapped[str] = mapped_column(String, nullable=False)
     store_name: Mapped[str | None] = mapped_column(String, nullable=True)
     analysis_status: Mapped[str] = mapped_column(String, default="pending", nullable=False)
+    analysis_stage: Mapped[str | None] = mapped_column(String, nullable=True)
     analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     draft_items: Mapped[list | None] = mapped_column(JSON, nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(

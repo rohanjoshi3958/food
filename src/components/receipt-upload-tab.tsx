@@ -34,11 +34,124 @@ type Receipt = {
   original_name: string;
   store_name: string | null;
   analysis_status: string;
+  analysis_stage: string | null;
   analysis_error: string | null;
   uploaded_at: string;
   ingredients: Ingredient[];
   draft_items: DraftItem[];
 };
+
+// Upload returns 202 with `processing`; analysis runs server-side and we poll
+// GET /api/receipts/{id} so no single request has to outlive the proxies.
+const POLL_INTERVAL_MS = 2000;
+const MAX_CONSECUTIVE_POLL_ERRORS = 3;
+
+const STAGE_COPY: Record<string, { title: string; detail: string }> = {
+  queued: {
+    title: "Receipt uploaded",
+    detail: "Waiting for analysis to start.",
+  },
+  reading_receipt: {
+    title: "Reading your receipt…",
+    detail: "Claude is extracting the store and line items.",
+  },
+  estimating_nutrition: {
+    title: "Estimating nutrition…",
+    detail: "Looking up serving sizes and nutrition for each item.",
+  },
+};
+
+const DEFAULT_STAGE_COPY = {
+  title: "Analyzing your receipt…",
+  detail: "This usually takes under a minute. You can keep this tab open.",
+};
+
+function abortError() {
+  return new DOMException("Receipt polling aborted", "AbortError");
+}
+
+function sleep(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(abortError());
+      return;
+    }
+
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function pollReceiptAnalysis(
+  receiptId: string,
+  signal: AbortSignal,
+  onUpdate: (receipt: Receipt) => void,
+): Promise<Receipt> {
+  let consecutiveErrors = 0;
+
+  function recordTransientError() {
+    consecutiveErrors += 1;
+    if (consecutiveErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+      throw new Error(
+        "Lost connection while checking on your receipt. Please try again.",
+      );
+    }
+  }
+
+  for (;;) {
+    let response: Response | null = null;
+    try {
+      response = await apiFetch(`/api/receipts/${receiptId}`, { signal });
+    } catch (networkError) {
+      if (signal.aborted) {
+        throw networkError;
+      }
+      recordTransientError();
+    }
+
+    if (response) {
+      let data: Receipt | undefined;
+      try {
+        data = await readJsonResponse<Receipt>(response);
+      } catch (readError) {
+        if (signal.aborted) {
+          throw readError;
+        }
+        // 2xx parse failures and 5xx bodies are retryable; 4xx stays terminal.
+        if (response.ok || response.status >= 500) {
+          recordTransientError();
+        } else {
+          throw new Error("Unable to check receipt status.");
+        }
+      }
+
+      if (data !== undefined) {
+        if (response.status >= 500) {
+          recordTransientError();
+        } else if (!response.ok) {
+          throw new Error(
+            errorDetailFromBody(data, "Unable to check receipt status."),
+          );
+        } else {
+          consecutiveErrors = 0;
+          onUpdate(data);
+          if (data.analysis_status !== "processing") {
+            return data;
+          }
+        }
+      }
+    }
+
+    await sleep(POLL_INTERVAL_MS, signal);
+  }
+}
 
 function ReceiptStatusPill({ status }: { status: string }) {
   if (status === "completed") {
@@ -307,14 +420,17 @@ export function ReceiptUploadTab({
   const [reviewReceipt, setReviewReceipt] = useState<Receipt | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [processingReceipt, setProcessingReceipt] = useState<Receipt | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [showIngredientsLink, setShowIngredientsLink] = useState(false);
-  const reviewReceiptRef = useRef<Receipt | null>(null);
+  // A receipt that is mid-analysis or mid-review is discarded if the user leaves.
+  const activeReceiptRef = useRef<Receipt | null>(null);
+  const pollAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    reviewReceiptRef.current = reviewReceipt;
-  }, [reviewReceipt]);
+    activeReceiptRef.current = reviewReceipt ?? processingReceipt;
+  }, [reviewReceipt, processingReceipt]);
 
   useEffect(() => {
     if (!file || !file.type.startsWith("image/")) {
@@ -369,7 +485,7 @@ export function ReceiptUploadTab({
     init();
 
     function handlePageHide() {
-      if (reviewReceiptRef.current) {
+      if (activeReceiptRef.current) {
         discardPendingReceiptsKeepalive();
       }
     }
@@ -377,7 +493,8 @@ export function ReceiptUploadTab({
     window.addEventListener("pagehide", handlePageHide);
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
-      if (reviewReceiptRef.current) {
+      pollAbortRef.current?.abort();
+      if (activeReceiptRef.current) {
         discardPendingReceiptsKeepalive();
       }
     };
@@ -394,6 +511,11 @@ export function ReceiptUploadTab({
     setMessage("");
     setShowIngredientsLink(false);
     setReviewReceipt(null);
+    setProcessingReceipt(null);
+
+    pollAbortRef.current?.abort();
+    const controller = new AbortController();
+    pollAbortRef.current = controller;
 
     try {
       const formData = new FormData();
@@ -403,27 +525,61 @@ export function ReceiptUploadTab({
       const response = await apiFetch("/api/receipts/upload", {
         method: "POST",
         body: formData,
+        signal: controller.signal,
       });
 
-      const data = await readJsonResponse<Receipt>(response);
+      const accepted = await readJsonResponse<Receipt>(response);
 
       if (!response.ok) {
-        throw new Error(errorDetailFromBody(data, "Upload failed."));
+        throw new Error(errorDetailFromBody(accepted, "Upload failed."));
       }
 
       setFile(null);
+      setProcessingReceipt(accepted);
+
+      const data =
+        accepted.analysis_status === "processing"
+          ? await pollReceiptAnalysis(
+              accepted.id,
+              controller.signal,
+              setProcessingReceipt,
+            )
+          : accepted;
+
+      setProcessingReceipt(null);
+
+      if (data.analysis_status === "failed") {
+        throw new Error(data.analysis_error ?? "Receipt analysis failed.");
+      }
+
+      if (data.analysis_status !== "pending_review") {
+        throw new Error(
+          data.analysis_error ??
+            "This receipt is no longer waiting for review. Please upload it again.",
+        );
+      }
+
       setReviewReceipt(data);
       setMessage(
         `Ready to review ${data.draft_items.length} item${data.draft_items.length === 1 ? "" : "s"} from ${data.store_name ?? "your receipt"}.`,
       );
       await loadReceipts();
     } catch (uploadError) {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setProcessingReceipt(null);
       setError(
         uploadError instanceof Error
           ? uploadError.message
           : "Upload failed.",
       );
+      // Failed receipts are purged by the list endpoint; refresh so history stays clean.
+      void loadReceipts();
     } finally {
+      if (pollAbortRef.current === controller) {
+        pollAbortRef.current = null;
+      }
       setUploading(false);
     }
   }
@@ -439,6 +595,9 @@ export function ReceiptUploadTab({
   }
 
   const currentStep: 1 | 2 | 3 = reviewReceipt ? 2 : uploading ? 1 : 1;
+  const stageCopy = processingReceipt
+    ? (STAGE_COPY[processingReceipt.analysis_stage ?? ""] ?? DEFAULT_STAGE_COPY)
+    : { title: "Uploading your receipt…", detail: "Sending the file to the server." };
 
   return (
     <div className="space-y-6">
@@ -473,15 +632,16 @@ export function ReceiptUploadTab({
       )}
 
       {uploading && (
-        <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-5">
+        <div
+          className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-5"
+          role="status"
+          aria-live="polite"
+        >
           <div className="flex items-start gap-3">
             <div className="mt-0.5 h-5 w-5 animate-spin rounded-full border-2 border-orange-200 border-t-orange-600" />
             <div>
-              <p className="font-medium text-stone-900">Reading your receipt…</p>
-              <p className="mt-1 text-sm text-stone-600">
-                Claude is extracting items and nutrition. This can take up to a
-                minute.
-              </p>
+              <p className="font-medium text-stone-900">{stageCopy.title}</p>
+              <p className="mt-1 text-sm text-stone-600">{stageCopy.detail}</p>
             </div>
           </div>
         </div>

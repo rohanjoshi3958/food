@@ -1,0 +1,11 @@
+# Copy to backend.tf and run `terraform init`. The state contains the RDS
+# master password and DATABASE_URL, so keep it in a private, encrypted bucket.
+terraform {
+  backend "s3" {
+    bucket       = "REPLACE_ME-terraform-state"
+    key          = "food/prod/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}

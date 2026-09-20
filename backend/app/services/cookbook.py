@@ -1,29 +1,39 @@
-import shutil
-import uuid
-from pathlib import Path
+import logging
+import re
 
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.models import CookbookEntry, Meal, User
 from app.services.ingredient_deduction import deduct_meal_ingredients
+from app.storage import (
+    COOKBOOK_PREFIX,
+    MEALS_PREFIX,
+    StorageError,
+    StorageObjectNotFound,
+    build_object_key,
+    delete_quietly,
+    get_storage,
+    resolve_photo_key,
+    safe_filename,
+)
+
+logger = logging.getLogger(__name__)
+
+_UUID_PREFIX = re.compile(r"^[0-9a-f]{32}_(?P<name>.+)$")
 
 
-def _cookbook_photo_path(user_id: str, filename: str) -> Path:
-    return Path(settings.cookbook_upload_dir) / user_id / filename
+def cookbook_photo_key(user_id: str, stored_value: str) -> str:
+    return resolve_photo_key(COOKBOOK_PREFIX, user_id, stored_value)
 
 
-def _meal_photo_path(user_id: str, filename: str) -> Path:
-    return Path(settings.meal_upload_dir) / user_id / filename
+def _meal_photo_key(user_id: str, stored_value: str) -> str:
+    return resolve_photo_key(MEALS_PREFIX, user_id, stored_value)
 
 
-def _remove_cookbook_photo(user_id: str, filename: str | None) -> None:
-    if not filename:
+def _remove_cookbook_photo(user_id: str, stored_value: str | None) -> None:
+    if not stored_value:
         return
-
-    photo_path = _cookbook_photo_path(user_id, filename)
-    if photo_path.exists():
-        photo_path.unlink()
+    delete_quietly(cookbook_photo_key(user_id, stored_value))
 
 
 def remove_cookbook_entry(db: Session, entry: CookbookEntry, user: User) -> None:
@@ -43,24 +53,41 @@ def _copy_meal_macros(meal: Meal) -> dict[str, float | None]:
     }
 
 
-def add_meal_to_cookbook(db: Session, meal: Meal, user: User) -> CookbookEntry:
-    upload_root = Path(settings.cookbook_upload_dir) / user.id
-    upload_root.mkdir(parents=True, exist_ok=True)
+def _copy_meal_photo_to_cookbook(user: User, meal: Meal) -> str | None:
+    """Copy the meal photo under ``cookbook/`` and return the new object key."""
+    if not meal.photo_filename:
+        return None
 
+    source_key = _meal_photo_key(user.id, meal.photo_filename)
+    basename = source_key.rsplit("/", 1)[-1]
+    match = _UUID_PREFIX.match(basename)
+    original_name = safe_filename(match.group("name") if match else basename)
+    destination_key = build_object_key(COOKBOOK_PREFIX, user.id, original_name)
+
+    storage = get_storage()
+    try:
+        storage.copy(source_key, destination_key)
+    except StorageObjectNotFound:
+        # Photo went missing between upload and cookbook save; keep the entry
+        # without a photo rather than failing the whole flow.
+        return None
+    except StorageError:
+        logger.exception("Failed to copy meal photo %s to %s", source_key, destination_key)
+        raise
+    return destination_key
+
+
+def add_meal_to_cookbook(db: Session, meal: Meal, user: User) -> CookbookEntry:
     entry = (
         db.query(CookbookEntry)
         .filter(CookbookEntry.user_id == user.id, CookbookEntry.meal_id == meal.id)
         .first()
     )
 
-    photo_filename = None
-    if meal.photo_filename:
-        source = _meal_photo_path(user.id, meal.photo_filename)
-        if source.exists():
-            photo_filename = f"{uuid.uuid4().hex}_{Path(meal.photo_filename).name}"
-            shutil.copy2(source, upload_root / photo_filename)
+    photo_filename = _copy_meal_photo_to_cookbook(user, meal)
 
     is_new_entry = entry is None
+    previous_photo = None if is_new_entry else entry.photo_filename
 
     try:
         if is_new_entry:
@@ -76,9 +103,6 @@ def add_meal_to_cookbook(db: Session, meal: Meal, user: User) -> CookbookEntry:
             )
             db.add(entry)
         else:
-            if entry.photo_filename and entry.photo_filename != photo_filename:
-                _remove_cookbook_photo(user.id, entry.photo_filename)
-
             entry.title = meal.name
             entry.description = meal.description
             entry.ingredients = meal.ingredients_used
@@ -92,9 +116,11 @@ def add_meal_to_cookbook(db: Session, meal: Meal, user: User) -> CookbookEntry:
 
         db.commit()
         db.refresh(entry)
+        if previous_photo and previous_photo != photo_filename:
+            _remove_cookbook_photo(user.id, previous_photo)
         return entry
     except Exception:
         db.rollback()
-        if is_new_entry and photo_filename:
+        if photo_filename and photo_filename != previous_photo:
             _remove_cookbook_photo(user.id, photo_filename)
         raise
