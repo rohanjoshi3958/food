@@ -1,0 +1,11 @@
+{
+  "case_id": "pdf_01",
+  "store_name": "Instacart",
+  "items": [
+    { "store_item_name": "Organic Gala Apples, 3 lb bag", "ingredient_name": "Organic Gala Apples", "quantity": "3", "unit": "lb", "is_food": true },
+    { "store_item_name": "Oat Milk, 64 fl oz", "ingredient_name": "Oat Milk", "quantity": "64", "unit": "fl oz", "is_food": true },
+    { "store_item_name": "Service fee", "ingredient_name": "Service Fee", "quantity": "1", "unit": "each", "is_food": false }
+  ],
+  "totals": { "subtotal": null, "tax": null, "total": null },
+  "labeler_notes": "PLACEHOLDER. Replace with the real emailed PDF and its actual line items."
+}

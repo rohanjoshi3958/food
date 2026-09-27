@@ -1,0 +1,8 @@
+GREEN ACRES FARM STAND
+TOMATOES            4.00
+PEACHES             6.50
+SWEET CORN          3.00
+CUCUMBERS           2.00
+TOTAL              15.50
+CASH               20.00
+CHANGE              4.50

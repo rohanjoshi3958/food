@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from app.llm_usage import WORKFLOW_INGREDIENT_NORMALIZE, workflow_scope
 from app.models import Ingredient, User
 from app.schemas import DraftIngredientItem, IngredientResponse
 from app.services.ingredient_deduction import normalize_unit, servings_per_pantry_unit
@@ -37,8 +38,20 @@ class AmbiguousPantryMatchError(Exception):
         )
 
 
+def _has_stored_estimate(item: DraftIngredientItem) -> bool:
+    return bool((item.serving_size or "").strip()) or item.calories is not None
+
+
 def resolve_item_nutrition(item: DraftIngredientItem) -> DraftIngredientItem:
     if not item.is_food:
+        return item.model_copy(
+            update={
+                "quantity": item.quantity or "1",
+                "unit": item.unit or "each",
+            }
+        )
+
+    if not item.recheck and not item.is_manual and _has_stored_estimate(item):
         return item.model_copy(
             update={
                 "quantity": item.quantity or "1",
@@ -156,6 +169,7 @@ def create_ingredient(
     receipt_id: str | None = None,
     *,
     allow_llm_merge: bool | None = None,
+    commit: bool = True,
 ) -> IngredientResponse:
     """Create or merge an ingredient into the user's inventory.
 
@@ -166,6 +180,32 @@ def create_ingredient(
     Ambiguous pantry matches raise AmbiguousPantryMatchError instead of
     inserting a near-duplicate row.
     """
+    # One ingredient_normalize run per ingredient; only the Claude calls are
+    # observed, no validation behaviour changes.
+    with workflow_scope(
+        WORKFLOW_INGREDIENT_NORMALIZE,
+        user_id=user.id,
+        receipt_id=receipt_id,
+    ):
+        return _create_ingredient(
+            db,
+            user,
+            item,
+            receipt_id=receipt_id,
+            allow_llm_merge=allow_llm_merge,
+            commit=commit,
+        )
+
+
+def _create_ingredient(
+    db: Session,
+    user: User,
+    item: DraftIngredientItem,
+    receipt_id: str | None,
+    *,
+    allow_llm_merge: bool | None,
+    commit: bool = True,
+) -> IngredientResponse:
     resolved = resolve_item_nutrition(item)
     name = resolved.ingredient_name.strip()
     if allow_llm_merge is None:
@@ -216,7 +256,10 @@ def create_ingredient(
             if getattr(existing, field) is None and getattr(resolved, field) is not None:
                 setattr(existing, field, getattr(resolved, field))
 
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
         db.refresh(existing)
         return IngredientResponse.model_validate(existing)
 
@@ -241,7 +284,10 @@ def create_ingredient(
         nutrition_notes=resolved.nutrition_notes,
     )
     db.add(ingredient)
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(ingredient)
     return IngredientResponse.model_validate(ingredient)
 
@@ -290,6 +336,20 @@ def canonicalize_draft_items(
             **raw,
             "ingredient_name": canonical_name or name,
         }
+        if canonical_name and canonical_name.casefold() != name.casefold():
+            updated["recheck"] = True
+            for field in (
+                "serving_size",
+                "servings_per_container",
+                "calories",
+                "protein_g",
+                "carbs_g",
+                "fat_g",
+                "fiber_g",
+                "sodium_mg",
+                "nutrition_notes",
+            ):
+                updated[field] = None
         canonicalized.append(updated)
 
     return canonicalized

@@ -4,10 +4,19 @@
 
 This directory contains automated backend tests for:
 
+- **Golden-path smoke / cost baseline** (`test_smoke_golden_path.py`) — signup → upload receipt → confirm → generate meal → cookbook through the HTTP API, with per-stage Claude call counts and models pinned. This is the QA gate for cost-optimization PRs; see `docs/qa.md`.
+- **Meal generation call budget** (`test_meal_generator.py`) — parsing, calorie retry loop, attempt cap, and fallback behaviour
 - **Authentication lifecycle** (`test_auth.py`) — login, logout, password reset, expired sessions, and cross-user access
 - **Receipt → inventory E2E flow** (`test_receipt_to_inventory_e2e.py`)
+- **OCR-first receipt pipeline (FOOD-55)** — `test_receipt_preprocess.py` (hash, downsample), `test_receipt_ocr.py` (Tesseract wrapper), `test_receipt_parser.py` (deterministic parser), `test_receipt_gates.py` (confidence gates), `test_receipt_pipeline.py` (cache hit/miss, escalation ladder, outcome fields), `test_receipt_ocr_first_e2e.py` (flag ON end-to-end with mocked OCR text), `test_receipt_evals.py` (eval scaffold + scoring)
 - **Ingredient deduction** — unit conversions, serving sizes, pantry updates (`test_ingredient_deduction.py`)
 - **Ingredient merging** — combining duplicate entries (`test_ingredient_merge.py`)
+- **Prompt caching breakpoints** on every Claude call site (`test_prompt_caching.py`)
+- **Message Batches helper** (FOOD-57): submit/poll/result mapping, partial failure/retry, 1h cache TTL on the batch path only (`test_anthropic_batch.py`). Interactive routers stay on the sync Messages API.
+- **Model routing** policy, flag-off guarantee, and escalation wiring (`test_model_router.py`)
+- **Quality evals (FOOD-58)** — receipt accuracy, ingredient match rate, meal-plan acceptability against documented baselines (`tests/evals/`, see `tests/evals/README.md`)
+- **OCR-first receipt eval scaffold (FOOD-55)** — labelled cases and scoring under `evals/receipts/` (see `evals/receipts/README.md`)
+- **Claude usage instrumentation** — cost math and vision tokens (`test_llm_pricing.py`), recording hooks and workflow attribution with a mocked Anthropic client (`test_llm_usage.py`), and the metrics API: persistence through product flows, 7-day aggregates, access control, Admin API reconciliation (`test_llm_metrics_api.py`)
 
 ## Running Tests
 
@@ -39,6 +48,12 @@ pytest tests/test_ingredient_merge.py
 
 # Auth sessions, password reset, and authorization
 pytest tests/test_auth.py
+
+# Quality evals (mocked; prints a metrics table against baselines.json)
+pytest tests/evals
+
+# Quality evals against a real model tier (paid, opt-in)
+FOOD_EVAL_LIVE=1 FOOD_EVAL_MODEL=claude-haiku-4-5 pytest tests/evals -m live -s
 ```
 
 ### Run with Coverage
@@ -78,7 +93,15 @@ Key features:
 - Isolated SQLite database per test
 - FastAPI TestClient for HTTP requests
 
-Fixtures in `conftest.py`: `test_db`, `client`, `test_user`, `auth_headers`, `mock_receipt_image`, `sample_receipt_response`, `sample_nutrition_estimates`, `create_mock_anthropic_response`
+Fixtures in `conftest.py`: `test_db`, `client`, `test_user`, `auth_headers`, `mock_receipt_image`, `real_receipt_image`, `ocr_receipt_text`, `sample_receipt_response`, `sample_nutrition_estimates`, `create_mock_anthropic_response`, `build_anthropic_router`
+
+### OCR / Tesseract in tests
+
+No test needs a live Anthropic key. Tesseract is **not** required either: the
+OCR-first tests patch `run_tesseract` with text fixtures. The one live smoke
+test (`test_receipt_ocr.py::TestLiveTesseract`) is skipped automatically when
+the `tesseract` binary is not on `PATH`. Install it locally with
+`sudo apt-get install tesseract-ocr` / `brew install tesseract` to run it.
 
 ## Inventory Unit Tests
 
@@ -110,5 +133,13 @@ tests mock provider clients so no real AI calls are made.
     OPENAI_API_KEY: ""
   run: |
     pip install -r requirements.txt
-    pytest
+    pytest --ignore=tests/evals
+
+- name: Quality evals (mocked)
+  working-directory: backend
+  run: pytest tests/evals
 ```
+
+The evals step fails the job when a metric in `tests/evals/baselines.json`
+regresses and appends the metrics table to the GitHub step summary. Live
+(paid) evals never run in CI; they are gated behind `FOOD_EVAL_LIVE=1`.

@@ -1,0 +1,12 @@
+{
+  "case_id": "multi_column_01",
+  "store_name": "Sprouts Farmers Market",
+  "items": [
+    { "store_item_name": "AVOCADOS HASS", "ingredient_name": "Hass Avocados", "quantity": "1", "unit": null, "is_food": true },
+    { "store_item_name": "EGGS LRG 12 CT", "ingredient_name": "Large Eggs", "quantity": "12", "unit": "each", "is_food": true },
+    { "store_item_name": "ORG SPIN 5OZ", "ingredient_name": "Organic Spinach", "quantity": "5", "unit": "oz", "is_food": true },
+    { "store_item_name": "COUPON", "ingredient_name": "Coupon", "quantity": "1", "unit": "each", "is_food": false }
+  ],
+  "totals": { "subtotal": null, "tax": null, "total": 9.78 },
+  "labeler_notes": "PLACEHOLDER labels derived from ocr_text.txt. Prices land on their own lines after OCR column splitting."
+}

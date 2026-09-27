@@ -1,0 +1,43 @@
+{
+  "id": "trader_joes_abbreviations",
+  "description": "Heavily abbreviated line items; response arrives in a markdown fence. The model expands every abbreviation except GRND BF (left as 'Grnd Bf'), which the labelled set counts as a name miss.",
+  "file_suffix": ".jpg",
+  "model_response": {
+    "wrapper": "fenced",
+    "payload": {
+      "store_name": "Trader Joe's",
+      "items": [
+        {"store_item_name": "ORG BNNAS", "ingredient_name": "Organic Bananas", "is_food": true, "quantity": "6", "unit": "each"},
+        {"store_item_name": "GRND BF 85/15", "ingredient_name": "Grnd Bf 85/15", "is_food": true, "quantity": "1", "unit": "lb"},
+        {"store_item_name": "UNSWTND ALMND MLK", "ingredient_name": "Unsweetened Almond Milk", "is_food": true, "quantity": "32", "unit": "fl oz"},
+        {"store_item_name": "SWT PTATO", "ingredient_name": "Sweet Potato", "is_food": true, "quantity": "3", "unit": "each"},
+        {"store_item_name": "EVOO 16OZ", "ingredient_name": "Extra Virgin Olive Oil", "is_food": true, "quantity": "16", "unit": "fl oz"},
+        {"store_item_name": "BLK BNS CAN", "ingredient_name": "Black Beans", "is_food": true, "quantity": "2", "unit": "can"},
+        {"store_item_name": "CHDR CHZ SHRD", "ingredient_name": "Shredded Cheddar Cheese", "is_food": true, "quantity": "8", "unit": "oz"},
+        {"store_item_name": "PAPER BAG", "ingredient_name": "Paper Bag", "is_food": false, "quantity": "1", "unit": "each"}
+      ]
+    }
+  },
+  "nutrition_responses": {
+    "Organic Bananas": {"recognized": true, "serving_size": "1 medium (118g)", "servings_per_container": 1, "calories": 105, "protein_g": 1.3, "carbs_g": 27, "fat_g": 0.4, "fiber_g": 3.1, "sodium_mg": 1, "nutrition_notes": "USDA"},
+    "Grnd Bf 85/15": {"recognized": false, "serving_size": null, "servings_per_container": null, "calories": null, "protein_g": null, "carbs_g": null, "fat_g": null, "fiber_g": null, "sodium_mg": null, "nutrition_notes": "Could not identify this product"},
+    "Unsweetened Almond Milk": {"recognized": true, "serving_size": "1 cup (240ml)", "servings_per_container": 0.125, "calories": 30, "protein_g": 1, "carbs_g": 1, "fat_g": 2.5, "fiber_g": 0, "sodium_mg": 170, "nutrition_notes": "Label"},
+    "Sweet Potato": {"recognized": true, "serving_size": "1 medium (130g)", "servings_per_container": 1, "calories": 112, "protein_g": 2, "carbs_g": 26, "fat_g": 0.1, "fiber_g": 3.9, "sodium_mg": 72, "nutrition_notes": "USDA"},
+    "Extra Virgin Olive Oil": {"recognized": true, "serving_size": "1 tbsp (14g)", "servings_per_container": 2, "calories": 120, "protein_g": 0, "carbs_g": 0, "fat_g": 14, "fiber_g": 0, "sodium_mg": 0, "nutrition_notes": "USDA"},
+    "Black Beans": {"recognized": true, "serving_size": "1/2 cup (130g)", "servings_per_container": 3.5, "calories": 110, "protein_g": 7, "carbs_g": 20, "fat_g": 0.5, "fiber_g": 7, "sodium_mg": 130, "nutrition_notes": "Label"},
+    "Shredded Cheddar Cheese": {"recognized": true, "serving_size": "1/4 cup (28g)", "servings_per_container": 1, "calories": 110, "protein_g": 7, "carbs_g": 1, "fat_g": 9, "fiber_g": 0, "sodium_mg": 180, "nutrition_notes": "Label"}
+  },
+  "expected": {
+    "store_name": "Trader Joe's",
+    "items": [
+      {"store_item_name": "ORG BNNAS", "ingredient_name": "Organic Banana", "is_food": true, "quantity": "6", "unit": "each"},
+      {"store_item_name": "GRND BF 85/15", "ingredient_name": "Ground Beef 85/15", "is_food": true, "quantity": "1", "unit": "lb"},
+      {"store_item_name": "UNSWTND ALMND MLK", "ingredient_name": "Unsweetened Almond Milk", "is_food": true, "quantity": "32", "unit": "fl oz"},
+      {"store_item_name": "SWT PTATO", "ingredient_name": "Sweet Potato", "is_food": true, "quantity": "3", "unit": "each"},
+      {"store_item_name": "EVOO 16OZ", "ingredient_name": "Extra Virgin Olive Oil", "is_food": true, "quantity": "16", "unit": "fl oz"},
+      {"store_item_name": "BLK BNS CAN", "ingredient_name": "Black Beans", "is_food": true, "quantity": "2", "unit": "can"},
+      {"store_item_name": "CHDR CHZ SHRD", "ingredient_name": "Shredded Cheddar Cheese", "is_food": true, "quantity": "8", "unit": "oz"},
+      {"store_item_name": "PAPER BAG", "ingredient_name": "Paper Bag", "is_food": false}
+    ]
+  }
+}

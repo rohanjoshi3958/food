@@ -186,7 +186,7 @@ function draftFromApi(items: DraftItemInput[]): DraftIngredient[] {
     }));
 }
 
-function toPayloadItem(item: DraftIngredient) {
+function toPayloadItem(item: DraftIngredient, recheck = false) {
   return {
     store_item_name: item.store_item_name || item.ingredient_name,
     ingredient_name: item.ingredient_name,
@@ -203,6 +203,7 @@ function toPayloadItem(item: DraftIngredient) {
     nutrition_notes: item.nutrition_notes,
     is_manual: item.is_manual,
     is_food: true,
+    recheck: recheck || item.is_manual,
   };
 }
 
@@ -297,9 +298,31 @@ export function ReceiptReview({
   }
 
   function updateItem(clientKey: string, updates: Partial<DraftIngredient>) {
+    const clearsEstimate =
+      "ingredient_name" in updates ||
+      "unit" in updates ||
+      "quantity" in updates;
     setItems((current) =>
       current.map((item) =>
-        item.clientKey === clientKey ? { ...item, ...updates } : item,
+        item.clientKey === clientKey
+          ? {
+              ...item,
+              ...updates,
+              ...(clearsEstimate
+                ? {
+                    serving_size: null,
+                    servings_per_container: null,
+                    calories: null,
+                    protein_g: null,
+                    carbs_g: null,
+                    fat_g: null,
+                    fiber_g: null,
+                    sodium_mg: null,
+                    nutrition_notes: null,
+                  }
+                : {}),
+            }
+          : item,
       ),
     );
   }
@@ -402,12 +425,15 @@ export function ReceiptReview({
         method: "POST",
         body: JSON.stringify({
           items: validItems.map((item) =>
-            toPayloadItem({
-              ...item,
-              ingredient_name: item.ingredient_name.trim(),
-              unit: item.unit.trim() || "each",
-              quantity: item.quantity.trim() || "1",
-            }),
+            toPayloadItem(
+              {
+                ...item,
+                ingredient_name: item.ingredient_name.trim(),
+                unit: item.unit.trim() || "each",
+                quantity: item.quantity.trim() || "1",
+              },
+              item.is_manual || editedItemKeys.has(item.clientKey),
+            ),
           ),
         }),
       });
@@ -493,11 +519,12 @@ export function ReceiptReview({
                       </span>
                       <input
                         value={item.quantity}
-                        onChange={(event) =>
+                        onChange={(event) => {
+                          markItemEdited(item.clientKey);
                           updateItem(item.clientKey, {
                             quantity: event.target.value,
-                          })
-                        }
+                          });
+                        }}
                         className={inputClassName}
                       />
                     </label>
@@ -583,7 +610,7 @@ export function ReceiptReview({
       </div>
 
       {error && (
-        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
+        <p className="whitespace-pre-line rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
           {error}
         </p>
       )}

@@ -1,0 +1,28 @@
+{
+  "_comment": "sha256 of every cached system prefix and per-request user template (FOOD-56 layout). Changing any prompt busts the Anthropic cache and invalidates eval baselines: update this file and re-run live evals in the same PR.",
+  "receipt.analyze_image": {
+    "system_prefix": "04f43e14973c62511f43a56ad0b3086e13230662cfd4903cdb70bd6f3caf888c",
+    "user_template": null
+  },
+  "receipt.nutrition_estimate": {
+    "system_prefix": "e6c9d26e6029c3a5b43d8604562b0367e9e463ff248317ab1dfbc631bf1fb090",
+    "user_template": "7649eeed6a321b32d00844ef49526ba704d1888c9ba9460405d4260b56e3079b"
+  },
+  "receipt.unit_check": {
+    "system_prefix": "f5ed3d8f79d0a24da273cb945b816e98168dd7336ff8f5ba01fef0ebaf37c9b6",
+    "user_template": "9f9ed8714ca35e7462cf5129e2e77952d6d06b60aa3c23cda24aa5fb9b919c9f"
+  },
+  "receipt.pantry_match": {
+    "system_prefix": "1ac9113719f397c9d7d45a4360218bd4cd83b7ba468559893a613ec98ffeb6dc",
+    "user_template": "9eb1bdd15c5d4e465314ca927214e6db05e5ab81872c6ee5012b1e6fca5bacb2"
+  },
+  "meal.generate": {
+    "system_prefix": "4f2b4d7afabd1b86ca6360fea8d815e21ceb01183f9bcb911a5f7545b9e204db",
+    "user_template": "59a3708976ccc3f7eb6bd818e497ea95f901a133e462f6899042d61d93d6f416",
+    "follow_up_template": "5bb3181183717274db283277a4f5365e5f645dd423436a3852b7114cf8b8bf68"
+  },
+  "meal.image_prompt": {
+    "system_prefix": "1bcd87305781e72bb81fbd84521768f6953bb2b98c3bba20ec2f660e83e98843",
+    "user_template": null
+  }
+}

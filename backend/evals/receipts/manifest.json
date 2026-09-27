@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "description": "FOOD-55 labeled receipt eval set. Food QA gates the OCR-first flag flip on this manifest; see README.md for metrics and the pass bar.",
+  "categories": [
+    "clean_grocery",
+    "sku_abbrevs",
+    "mixed_non_food",
+    "blurry_thermal",
+    "multi_column",
+    "missing_qty_unit",
+    "reupload_hash",
+    "pdf"
+  ],
+  "cases": [
+    {
+      "id": "clean_grocery_01",
+      "category": "clean_grocery",
+      "image": "cases/clean_grocery_01/receipt.jpg",
+      "ocr_text": "cases/clean_grocery_01/ocr_text.txt",
+      "labels": "cases/clean_grocery_01/labels.json",
+      "status": "placeholder",
+      "smoke": true,
+      "expect_path": "ocr",
+      "notes": "Sharp phone photo of a Whole Foods receipt; name line then weight/price line."
+    },
+    {
+      "id": "sku_abbrevs_01",
+      "category": "sku_abbrevs",
+      "image": "cases/sku_abbrevs_01/receipt.jpg",
+      "ocr_text": "cases/sku_abbrevs_01/ocr_text.txt",
+      "labels": "cases/sku_abbrevs_01/labels.json",
+      "status": "placeholder",
+      "smoke": true,
+      "expect_path": "ocr",
+      "notes": "Walmart single-line items with heavy abbreviations, UPC codes and tax flags."
+    },
+    {
+      "id": "mixed_non_food_01",
+      "category": "mixed_non_food",
+      "image": "cases/mixed_non_food_01/receipt.jpg",
+      "ocr_text": "cases/mixed_non_food_01/ocr_text.txt",
+      "labels": "cases/mixed_non_food_01/labels.json",
+      "status": "placeholder",
+      "smoke": true,
+      "expect_path": "ocr",
+      "notes": "Groceries plus household items, bag fee and a coupon; checks is_food precision."
+    },
+    {
+      "id": "blurry_thermal_01",
+      "category": "blurry_thermal",
+      "image": "cases/blurry_thermal_01/receipt.jpg",
+      "ocr_text": "cases/blurry_thermal_01/ocr_text.txt",
+      "labels": "cases/blurry_thermal_01/labels.json",
+      "status": "placeholder",
+      "smoke": false,
+      "expect_path": "haiku",
+      "ocr_confidence": 38.0,
+      "notes": "Faded thermal paper, slight motion blur. Expected to fail the OCR confidence gate and escalate to the Haiku OCR-text cleanup rung."
+    },
+    {
+      "id": "multi_column_01",
+      "category": "multi_column",
+      "image": "cases/multi_column_01/receipt.jpg",
+      "ocr_text": "cases/multi_column_01/ocr_text.txt",
+      "labels": "cases/multi_column_01/labels.json",
+      "status": "placeholder",
+      "smoke": false,
+      "expect_path": "ocr",
+      "notes": "Wide receipt where OCR splits the price column onto separate lines."
+    },
+    {
+      "id": "missing_qty_unit_01",
+      "category": "missing_qty_unit",
+      "image": "cases/missing_qty_unit_01/receipt.jpg",
+      "ocr_text": "cases/missing_qty_unit_01/ocr_text.txt",
+      "labels": "cases/missing_qty_unit_01/labels.json",
+      "status": "placeholder",
+      "smoke": false,
+      "expect_path": "haiku",
+      "notes": "Farm-stand style receipt: produce by name and price only. Should trip the missing qty/unit gate and escalate to the Haiku cleanup rung, which guesses units."
+    },
+    {
+      "id": "reupload_hash_01",
+      "category": "reupload_hash",
+      "image": "cases/clean_grocery_01/receipt.jpg",
+      "ocr_text": "cases/clean_grocery_01/ocr_text.txt",
+      "labels": "cases/clean_grocery_01/labels.json",
+      "status": "placeholder",
+      "smoke": true,
+      "expect_path": "cache",
+      "notes": "Byte-identical re-upload of clean_grocery_01 by the same user. Must be served from the content-hash cache with zero OCR/LLM calls (RECEIPT_ANALYSIS_CACHE=1)."
+    },
+    {
+      "id": "pdf_01",
+      "category": "pdf",
+      "image": "cases/pdf_01/receipt.pdf",
+      "labels": "cases/pdf_01/labels.json",
+      "status": "placeholder",
+      "smoke": true,
+      "expect_path": "sonnet",
+      "notes": "Emailed PDF receipt. OCR rung skips non-images and there is no OCR text for Haiku, so this must parse via Sonnet vision (document block)."
+    }
+  ]
+}

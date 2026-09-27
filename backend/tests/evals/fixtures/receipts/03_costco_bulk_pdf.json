@@ -1,0 +1,39 @@
+{
+  "id": "costco_bulk_pdf",
+  "description": "Emailed PDF receipt (document block, not image). Bulk multi-packs; the model reads the printed pack count for eggs as 2 dozen where the receipt shows '2 x 12CT' (labelled as 24 each).",
+  "file_suffix": ".pdf",
+  "model_response": {
+    "wrapper": "plain",
+    "payload": {
+      "store_name": "Costco Wholesale",
+      "items": [
+        {"store_item_name": "KS ORGANIC EGGS 2 x 12CT", "ingredient_name": "Organic Eggs", "is_food": true, "quantity": "2", "unit": "dozen"},
+        {"store_item_name": "KS CHICKEN BREAST 6.5LB", "ingredient_name": "Chicken Breast", "is_food": true, "quantity": "6.5", "unit": "lb"},
+        {"store_item_name": "QUAKER OLD FASH OATS 10LB", "ingredient_name": "Old Fashioned Oats", "is_food": true, "quantity": "10", "unit": "lb"},
+        {"store_item_name": "KS ALMONDS 3LB", "ingredient_name": "Almonds", "is_food": true, "quantity": "3", "unit": "lb"},
+        {"store_item_name": "KS PAPER TOWELS 12PK", "ingredient_name": "Paper Towels", "is_food": false, "quantity": "1", "unit": "each"},
+        {"store_item_name": "AVOCADOS 6CT", "ingredient_name": "Avocados", "is_food": true, "quantity": "6", "unit": "each"},
+        {"store_item_name": "MEMBERSHIP COUPON", "ingredient_name": "Membership Coupon", "is_food": false, "quantity": null, "unit": null}
+      ]
+    }
+  },
+  "nutrition_responses": {
+    "Organic Eggs": {"recognized": true, "serving_size": "1 egg (50g)", "servings_per_container": 12, "calories": 70, "protein_g": 6, "carbs_g": 0, "fat_g": 5, "fiber_g": 0, "sodium_mg": 70, "nutrition_notes": "USDA"},
+    "Chicken Breast": {"recognized": true, "serving_size": "4 oz (112g)", "servings_per_container": 4, "calories": 120, "protein_g": 26, "carbs_g": 0, "fat_g": 1.5, "fiber_g": 0, "sodium_mg": 70, "nutrition_notes": "USDA"},
+    "Old Fashioned Oats": {"recognized": true, "serving_size": "1/2 cup dry (40g)", "servings_per_container": 11, "calories": 150, "protein_g": 5, "carbs_g": 27, "fat_g": 3, "fiber_g": 4, "sodium_mg": 0, "nutrition_notes": "Label"},
+    "Almonds": {"recognized": true, "serving_size": "1 oz (28g)", "servings_per_container": 16, "calories": 160, "protein_g": 6, "carbs_g": 6, "fat_g": 14, "fiber_g": 3.5, "sodium_mg": 0, "nutrition_notes": "USDA"},
+    "Avocados": {"recognized": true, "serving_size": "1/2 avocado (68g)", "servings_per_container": 2, "calories": 110, "protein_g": 1.3, "carbs_g": 6, "fat_g": 10, "fiber_g": 4.6, "sodium_mg": 5, "nutrition_notes": "USDA"}
+  },
+  "expected": {
+    "store_name": "Costco Wholesale",
+    "items": [
+      {"store_item_name": "KS ORGANIC EGGS 2 x 12CT", "ingredient_name": "Organic Eggs", "is_food": true, "quantity": "24", "unit": "each"},
+      {"store_item_name": "KS CHICKEN BREAST 6.5LB", "ingredient_name": "Chicken Breast", "is_food": true, "quantity": "6.5", "unit": "lb"},
+      {"store_item_name": "QUAKER OLD FASH OATS 10LB", "ingredient_name": "Old Fashioned Oats", "is_food": true, "quantity": "10", "unit": "lb"},
+      {"store_item_name": "KS ALMONDS 3LB", "ingredient_name": "Almonds", "is_food": true, "quantity": "3", "unit": "lb"},
+      {"store_item_name": "KS PAPER TOWELS 12PK", "ingredient_name": "Paper Towels", "is_food": false},
+      {"store_item_name": "AVOCADOS 6CT", "ingredient_name": "Avocado", "is_food": true, "quantity": "6", "unit": "each"},
+      {"store_item_name": "MEMBERSHIP COUPON", "ingredient_name": "Membership Coupon", "is_food": false}
+    ]
+  }
+}

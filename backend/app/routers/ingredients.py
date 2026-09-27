@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.llm_usage import WORKFLOW_INGREDIENT_NORMALIZE, workflow_scope
 from app.models import Ingredient, User
 from app.schemas import (
     CheckUnitRequest,
@@ -96,12 +97,17 @@ def check_unit(
     payload: CheckUnitRequest,
     current_user: User = Depends(get_current_user),
 ) -> CheckUnitResponse:
-    del current_user
     try:
-        warning = check_ingredient_unit(
-            payload.ingredient_name.strip(),
-            payload.unit.strip(),
-        )
+        # Live unit checks count toward normalize spend but are not runs.
+        with workflow_scope(
+            WORKFLOW_INGREDIENT_NORMALIZE,
+            user_id=current_user.id,
+            record_run=False,
+        ):
+            warning = check_ingredient_unit(
+                payload.ingredient_name.strip(),
+                payload.unit.strip(),
+            )
     except ReceiptAnalysisError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -191,7 +197,12 @@ def update_ingredient(
     new_unit = normalize_unit(payload.unit.strip()) or payload.unit.strip()
 
     try:
-        unit_warning = check_ingredient_unit(ingredient.name, new_unit)
+        with workflow_scope(
+            WORKFLOW_INGREDIENT_NORMALIZE,
+            user_id=current_user.id,
+            record_run=False,
+        ):
+            unit_warning = check_ingredient_unit(ingredient.name, new_unit)
     except ReceiptAnalysisError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

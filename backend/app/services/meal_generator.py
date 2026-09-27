@@ -4,8 +4,9 @@ import re
 import anthropic
 from pydantic import BaseModel, Field
 
-from app.config import MEAL_ANTHROPIC_MODEL, settings
+from app.config import settings
 from app.models import Ingredient
+from app.services.anthropic_cache import create_cached_message
 from app.services.ingredient_deduction import (
     clamp_meal_ingredients_to_pantry,
     remaining_servings,
@@ -13,15 +14,18 @@ from app.services.ingredient_deduction import (
     serialize_meal_ingredients,
 )
 from app.services.meal_nutrition import calculate_meal_macros
+from app.services.model_router import route_model
 
 MEAL_CALORIE_MIN = 500
 MEAL_CALORIE_MAX = 800
 MEAL_GENERATION_ATTEMPTS = 4
+STEP_MEAL_GENERATE = "meal_generate"
 
+# Cached system prefix: chef rules + calorie band + JSON schema. Only module
+# constants are formatted in, so the rendered text is byte-stable across
+# requests. The pantry listing and every conversation turn go in `messages`,
+# after the cache breakpoint. See backend/PROMPT_CACHING.md.
 MEAL_GENERATION_PROMPT = """You are a helpful home chef. Given the ingredients available in the user's kitchen, suggest ONE practical meal for a single person (one plate / one bowl).
-
-Available ingredients:
-{ingredients}
 
 HARD REQUIREMENT — calories: the finished meal MUST land between {calorie_min} and {calorie_max} kcal (estimated from the ingredients_used amounts and each item's kcal-per-serving).
 - This is a filling main meal, not a snack. Do not propose meals under {calorie_min} kcal.
@@ -60,6 +64,9 @@ Respond with ONLY valid JSON in this exact shape:
 }}
 
 Put each instruction step in its own array element. Do not combine multiple steps into one string."""
+
+MEAL_GENERATION_USER_PROMPT = """Available ingredients:
+{ingredients}"""
 
 FOLLOW_UP_PROMPT = """Suggest a different single-person meal ({calorie_min}–{calorie_max} kcal) than the one you just proposed.
 Keep using only the available ingredients and the same JSON response format.
@@ -251,10 +258,15 @@ def generate_meal_from_ingredients(
         )
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    base_prompt = MEAL_GENERATION_PROMPT.format(
-        ingredients=_format_ingredients(ingredients),
+    # One routing decision per generation; every retry turn reuses the same
+    # model so the cached prefix keeps hitting (caches are per model).
+    model = route_model("meal.generate").model
+    system_prefix = MEAL_GENERATION_PROMPT.format(
         calorie_min=MEAL_CALORIE_MIN,
         calorie_max=MEAL_CALORIE_MAX,
+    )
+    base_prompt = MEAL_GENERATION_USER_PROMPT.format(
+        ingredients=_format_ingredients(ingredients),
     )
 
     messages: list[dict] = [{"role": "user", "content": base_prompt}]
@@ -296,9 +308,13 @@ def generate_meal_from_ingredients(
             )
 
         try:
-            message = client.messages.create(
-                model=MEAL_ANTHROPIC_MODEL,
+            message = create_cached_message(
+                client,
+                call_site="meal.generate",
+                attempt=attempt + 1,
+                model=model,
                 max_tokens=4096,
+                system_prefix=system_prefix,
                 messages=conversation,
             )
         except Exception as exc:
