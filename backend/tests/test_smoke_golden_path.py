@@ -116,11 +116,13 @@ EXPECTED_MEAL_CALORIES = 774
 # --- Cost baseline (Claude calls per stage) --------------------------------
 # Receipt with N food items today costs:
 #   upload:  1 receipt scan + N nutrition estimates
-#   confirm: N pantry-match (canonicalize) + N × (unit check + nutrition + pantry match)
-# For N = 2 that is 3 + 8 = 11 calls on the receipt model.
+#   confirm: N pantry-match (canonicalize) + N pantry-match (create).
+#            Unedited lines reuse the upload nutrition estimate, so unit
+#            check and nutrition are not called again.
+# For N = 2 that is 3 + 4 = 7 calls on the receipt model.
 GOLDEN_FOOD_ITEM_COUNT = 2
 EXPECTED_UPLOAD_CALLS = 1 + GOLDEN_FOOD_ITEM_COUNT
-EXPECTED_CONFIRM_CALLS = GOLDEN_FOOD_ITEM_COUNT + 3 * GOLDEN_FOOD_ITEM_COUNT
+EXPECTED_CONFIRM_CALLS = 2 * GOLDEN_FOOD_ITEM_COUNT
 EXPECTED_GENERATE_CALLS = 1
 EXPECTED_COMPLETE_CALLS = 0  # skip_photo=true must not call Claude or OpenAI
 

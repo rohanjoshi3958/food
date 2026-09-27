@@ -62,7 +62,7 @@ FRONTEND_URL="http://localhost:3000"
 
 `RESEND_API_KEY` is used to email password-reset links. For local development you can use Resend’s `onboarding@resend.dev` sender (`EMAIL_FROM`); messages only deliver to addresses verified in your Resend account. If `RESEND_API_KEY` is unset, the reset URL is logged in the API console instead of being emailed.
 
-Receipt analysis uses Claude Opus; meal generation uses Claude Sonnet 5; meal images use OpenAI `gpt-image-1`.
+Receipt analysis uses Claude Opus 5.5; meal generation uses Claude Sonnet 5; meal images use OpenAI `gpt-image-1`.
 
 ### Receipt pipeline flags (FOOD-55, default off)
 

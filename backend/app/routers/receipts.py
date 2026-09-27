@@ -442,6 +442,7 @@ def confirm_receipt(
         _validate_draft_item(item)
 
     ambiguous_drafts: list[dict] = []
+    problems: list[str] = []
     try:
         for item in merged_items:
             try:
@@ -451,17 +452,29 @@ def confirm_receipt(
                     item,
                     receipt_id=receipt.id,
                     allow_llm_merge=True,
+                    commit=False,
                 )
             except AmbiguousPantryMatchError as amb:
                 # Keep ambiguous rows pending instead of inserting duplicates.
                 draft = amb.draft_item.model_dump()
                 draft["ingredient_name"] = amb.canonical_name or amb.ingredient_name
                 ambiguous_drafts.append(draft)
-    except ReceiptAnalysisError as exc:
+            except ReceiptAnalysisError as exc:
+                label = item.ingredient_name.strip() or "Item"
+                message = str(exc).strip()
+                if label not in message:
+                    message = f'"{label}": {message}'
+                problems.append(message)
+    except Exception:
+        db.rollback()
+        raise
+
+    if problems:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
+            detail="\n".join(problems),
+        )
 
     if ambiguous_drafts:
         receipt.analysis_status = "pending_review"

@@ -7,7 +7,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 
 # Claude tiers, strongest to cheapest. Anthropic API aliases (dateless ids);
 # see backend/MODEL_ROUTING.md for which call site may use which tier.
-OPUS_ANTHROPIC_MODEL = "claude-opus-5"
+OPUS_ANTHROPIC_MODEL = "claude-opus-5-5"
 SONNET_ANTHROPIC_MODEL = "claude-sonnet-5"
 HAIKU_ANTHROPIC_MODEL = "claude-haiku-4-5"
 

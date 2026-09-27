@@ -76,6 +76,7 @@ class CostBreakdown:
 
 # Keyed by model *family* (the id with any dated / revision suffix removed).
 DEFAULT_PRICING: dict[str, ModelPricing] = {
+    "claude-opus-5-5": ModelPricing(5.0, 25.0, 6.25, 10.0, 0.50),
     "claude-opus-5": ModelPricing(5.0, 25.0, 6.25, 10.0, 0.50),
     "claude-opus-4-8": ModelPricing(5.0, 25.0, 6.25, 10.0, 0.50),
     "claude-opus-4-7": ModelPricing(5.0, 25.0, 6.25, 10.0, 0.50),

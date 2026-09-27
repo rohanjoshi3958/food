@@ -77,6 +77,9 @@ class DraftIngredientItem(BaseModel):
     nutrition_notes: str | None = None
     is_manual: bool = False
     is_food: bool = True
+    # True when the reviewer changed name, quantity, or unit. Unedited lines
+    # keep the nutrition estimate from upload instead of asking again.
+    recheck: bool = False
 
 
 class CreateManualIngredientRequest(BaseModel):

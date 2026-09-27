@@ -70,7 +70,7 @@ def routing_off(monkeypatch):
 
 class TestSharedConstants:
     def test_tier_ids_are_anthropic_api_aliases(self):
-        assert OPUS_ANTHROPIC_MODEL == "claude-opus-5"
+        assert OPUS_ANTHROPIC_MODEL == "claude-opus-5-5"
         assert SONNET_ANTHROPIC_MODEL == "claude-sonnet-5"
         assert HAIKU_ANTHROPIC_MODEL == "claude-haiku-4-5"
         assert TIER_MODELS == {

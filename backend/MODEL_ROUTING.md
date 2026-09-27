@@ -12,7 +12,7 @@ document is the human-readable source of truth — keep the two in sync.
 
 | Tier | Model id (`app/config.py`) | Input / output $ per MTok | Cache min | Notes |
 | --- | --- | --- | --- | --- |
-| Opus | `OPUS_ANTHROPIC_MODEL = claude-opus-5` | 5 / 25 | 512 tokens | Vision extract, nutrition, escalation target |
+| Opus | `OPUS_ANTHROPIC_MODEL = claude-opus-5-5` | 5 / 25 | 512 tokens | Vision extract, nutrition, escalation target |
 | Sonnet | `SONNET_ANTHROPIC_MODEL = claude-sonnet-5` | 2 / 10 | 1,024 tokens | Constrained planning, ambiguous ingredient judgement |
 | Haiku | `HAIKU_ANTHROPIC_MODEL = claude-haiku-4-5` (alias `RECEIPT_HAIKU_MODEL`) | 1 / 5 | 4,096 tokens | Classify / extract over text, soft OCR cleanup, cosmetic text |
 

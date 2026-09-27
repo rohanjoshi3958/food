@@ -71,7 +71,7 @@ on every call.
 ## Minimum cacheable length
 
 Anthropic silently skips caching when the prefix is shorter than the
-model's minimum (currently 512 tokens for Claude Opus 5, 1,024 for Claude
+model's minimum (currently 512 tokens for Claude Opus 5.5, 1,024 for Claude
 Sonnet 5, 4,096 for Claude Haiku 4.5 — so Haiku-routed sites will not cache
 at all; check the
 [prompt caching docs](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
@@ -82,11 +82,11 @@ Current prefix sizes versus those minimums (rough, ~4 chars/token):
 
 | Prefix | Model minimum | Status today |
 | --- | --- | --- |
-| `UNIT_CHECK_PROMPT` | 512 (Opus 5) | well below — will not cache |
-| `PANTRY_MATCH_PROMPT` | 512 (Opus 5) | below — will not cache |
-| `NUTRITION_ESTIMATE_PROMPT` | 512 (Opus 5) | likely below — will not cache |
+| `UNIT_CHECK_PROMPT` | 512 (Opus 5.5) | well below — will not cache |
+| `PANTRY_MATCH_PROMPT` | 512 (Opus 5.5) | below — will not cache |
+| `NUTRITION_ESTIMATE_PROMPT` | 512 (Opus 5.5) | likely below — will not cache |
 | `PROMPT_SYSTEM` (meal image) | 1,024 (Sonnet 5) | well below — will not cache |
-| `RECEIPT_ANALYSIS_PROMPT` | 512 (Opus 5) | near the line — verify in logs |
+| `RECEIPT_ANALYSIS_PROMPT` | 512 (Opus 5.5) | near the line — verify in logs |
 | `MEAL_GENERATION_PROMPT` (rendered) | 1,024 (Sonnet 5) | below — verify in logs |
 
 **Expect near-zero `cache_read_input_tokens` across the board until these
@@ -106,7 +106,7 @@ uvicorn's default logging, which otherwise only configures its own
 loggers):
 
 ```
-anthropic call_site=receipt.pantry_match model=claude-opus-5 input_tokens=143 output_tokens=41 cache_creation_input_tokens=0 cache_read_input_tokens=612
+anthropic call_site=receipt.pantry_match model=claude-opus-5-5 input_tokens=143 output_tokens=41 cache_creation_input_tokens=0 cache_read_input_tokens=612
 ```
 
 - `cache_creation_input_tokens > 0`: prefix was written to the cache.

@@ -85,7 +85,7 @@ cost PR. The same steps run automatically against mocked Claude in
 | --- | --- | --- | --- | --- |
 | 1 | **Signup** | `/login` → **Create account** with a fresh email and a password with upper, digit, symbol (e.g. `Sm0ke-Test!`) | Lands on the dashboard (tabs: Upload a receipt / View ingredients / Generate meal / View cookbook); `GET /api/auth/me` 200; session cookie is HttpOnly | 0 |
 | 2 | **Upload receipt** | **Upload a receipt** → choose a real U.S. grocery receipt (jpg/png/webp/gif/pdf) → **Scan a receipt** | "Reading your receipt…" then within ~60s the review screen lists every food line with a plain-English name (abbreviations expanded), quantity, unit, calories/serving; non-food lines (tax, bags, coupons) absent; store name shown | 1 vision scan + 1 nutrition per food item |
-| 2b | **Confirm** | Optionally edit a quantity → **Save ingredients** | Receipt status `completed`; **View ingredients** shows each item once with the edited quantity, unit, serving size, servings-per-unit, macros; uploading the same item again merges rather than duplicates | per item: 1 canonicalize + 1 unit check + 1 nutrition + 1 pantry match |
+| 2b | **Confirm** | Optionally edit a quantity → **Save ingredients** | Receipt status `completed`; **View ingredients** shows each item once with the edited quantity, unit, serving size, servings-per-unit, macros; uploading the same item again merges rather than duplicates | per unedited item: 1 canonicalize + 1 pantry match. Edited or manual lines also run unit check + nutrition |
 | 3 | **Generate meal** | **Generate meal** tab → **Generate meal** | Step "Suggest": one single-person meal with name, description, ingredients used (each ≤ pantry amount, in pantry units), numbered step-by-step instructions, macros with calories in **500–800 kcal**. **Try another suggestion** returns a differently named meal | 1–4 Sonnet calls per click |
 | 4 | **Cookbook (own photo)** | Step "Cook" → upload a JPG/PNG/WEBP/GIF → **Save to cookbook** | "Meal saved to your cookbook."; **View cookbook** shows the entry with title, photo, macros, instructions; **View ingredients** shows quantities reduced by the amounts used (items fully used are removed); the draft meal is gone from Generate meal | 0 |
 | 4b | **Cookbook (AI photo)** — requires `OPENAI_API_KEY` | Step "Cook" → leave photo empty → **Save to cookbook** | Same as 4 but with a generated photo | 1 Sonnet prompt-writer + 1 OpenAI image |
@@ -223,7 +223,7 @@ prompt string.
 signup            POST /api/auth/register                     0 AI calls
 upload receipt    POST /api/receipts/upload                   1 vision scan + N nutrition (6-thread pool)
 review/edit       PATCH /api/receipts/{id}/draft              0
-confirm           POST /api/receipts/{id}/confirm             N canonicalize + N × (unit check + nutrition + pantry match)
+confirm           POST /api/receipts/{id}/confirm             N canonicalize + N pantry match; edited lines also unit check + nutrition
 generate meal     POST /api/meals/generate                    1–4 (retry until 500–800 kcal; conversation grows per retry)
 add to cookbook   POST /api/meals/{id}/complete[?skip_photo]  0 with photo/skip; else 1 Sonnet + 1 OpenAI image
 cookbook          GET  /api/cookbook                          0
@@ -231,11 +231,12 @@ manual add        POST /api/ingredients/manual                unit check + nutri
 unit check        POST /api/ingredients/unit-check            1
 ```
 
-A receipt with N food items costs **5N + 1** Opus calls (N = 2 → 11;
-N = 20 → 101). Nutrition is estimated twice per item (upload and confirm) and
-pantry-match runs twice per item at confirm, even with an empty pantry. No
+A receipt with N unedited food items costs **3N + 1** Opus calls (N = 2 → 7;
+N = 20 → 61): one vision scan, N nutrition estimates on upload, then N
+canonicalize and N pantry-match calls on confirm. Unedited lines reuse the
+upload estimate, so confirm does not repeat unit check or nutrition. No
 `system` prompts, caching, batching, or structured outputs exist on `main`
 today (FOOD-56 PR #12 introduces the first `system` blocks). Models are fixed
 constants in `backend/app/config.py`: `RECEIPT_ANTHROPIC_MODEL =
-"claude-opus-5"`, `MEAL_ANTHROPIC_MODEL = "claude-sonnet-5"`,
+"claude-opus-5-5"`, `MEAL_ANTHROPIC_MODEL = "claude-sonnet-5"`,
 `OPENAI_IMAGE_MODEL = "gpt-image-1"`.
